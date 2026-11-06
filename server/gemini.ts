@@ -173,6 +173,12 @@ export async function generateContentWithResilience(
         if (model === 'gemini-3.1-flash-lite') {
           config.thinkingConfig = { thinkingLevel: 'low' };
         }
+        // Enforce the admin-configured request timeout at the SDK transport layer.
+        // Without httpOptions.timeout a slow upstream request can leave the worker stuck.
+        config.httpOptions = {
+          ...(config.httpOptions || {}),
+          timeout: Math.max(10_000, Math.min(Number(settings.timeoutSeconds || 90) * 1000, 180_000)),
+        };
         const response = await ai.models.generateContent({
           model,
           contents: params.contents,

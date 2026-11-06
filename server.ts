@@ -32,6 +32,7 @@ import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
 import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
 import { getServerPort, SERVER_HOST } from './server/config/serverPort.js';
+import { startDurableEvaluationQueueRecovery } from './server/services/asyncEvaluationService.js';
 
 let currentStartupStage = 'initialization';
 
@@ -310,6 +311,9 @@ export default {};
     console.log(`Server listening on port ${PORT}`);
     console.log(`CA Exam Checker AI server successfully listening on http://0.0.0.0:${PORT} (PORT=${PORT}, NODE_ENV=${process.env.NODE_ENV || 'development'})`);
   });
+
+  // Recover durable evaluation jobs after Firestore has been hydrated and the HTTP server is live.
+  startDurableEvaluationQueueRecovery();
 
   // Best-effort reconciliation for existing students. This does not block server
   // readiness and creates readable students_by_code/{ST-...} lookup documents.

@@ -170,6 +170,9 @@ jobs:
       - name: Protected persistence regression tests
         run: npm run test:protected
 
+      - name: Durable evaluation job payload recovery regression
+        run: node_modules/.bin/tsx server/tests/durableEvaluationJobPayload.test.ts
+
       - name: Failed evaluation credit refund regression
         run: node_modules/.bin/tsx server/tests/creditPersistenceAndConsumptionMaster.test.ts
 

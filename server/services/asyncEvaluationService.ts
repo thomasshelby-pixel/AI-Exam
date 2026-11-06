@@ -18,6 +18,8 @@ import {
 } from './studentCreditService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
+import { getFirestoreDoc, queryFirestoreDocs, runFirestoreTransaction } from './firestoreDbService.js';
+import { restoreDurableEvaluationJobPayload, serializeDurableEvaluationJobPayload } from './durableEvaluationJobPayload.js';
 import { releaseFacultyMockFreeCopy, releaseFacultyMockPaidCopy } from './facultyMockEntitlementService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
 import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
@@ -75,6 +77,8 @@ export interface EvaluationJobData {
   creditAlreadyConsumed?: boolean;
   /** Retry of an existing evaluation: do not consume or refund its original entitlement again. */
   isRecoveryRetry?: boolean;
+  /** True only when the original PDF has been verified in Cloud Storage. */
+  originalFileStorageConfirmed?: boolean;
 }
 
 // Keep the supervisor correction loop opt-in until its model/pipeline is validated.
@@ -83,6 +87,486 @@ const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED =
 
 // In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId.
 const activeJobs = new Map<string, Promise<void>>();
+const durableQueueStartingJobs = new Set<string>();
+const DURABLE_QUEUE_COLLECTION = 'evaluation_jobs';
+const DURABLE_QUEUE_LEASE_MS = 3 * 60 * 1000;
+const DURABLE_QUEUE_HEARTBEAT_MS = 30 * 1000;
+const DURABLE_QUEUE_POLL_MS = 30 * 1000;
+const DURABLE_QUEUE_MAX_ATTEMPTS = 2;
+const DURABLE_QUEUE_MAX_ACTIVE_JOBS = 1;
+const DURABLE_QUEUE_INSTANCE_ID = [
+  process.env.K_REVISION || 'app-hosting',
+  process.pid,
+  crypto.randomUUID(),
+].join(':');
+let durableQueueRecoveryTimer: NodeJS.Timeout | null = null;
+const durableQueueNudgeTimes = new Map<string, number>();
+
+type DurableEvaluationQueueRecord = {
+  evaluationId: string;
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'COMPLETED_WITH_REVIEW' | 'FAILED';
+  payload: Record<string, any>;
+  originalFileId: string;
+  sourceUploadFileId?: string | null;
+  attempts: number;
+  leaseOwner?: string | null;
+  leaseExpiresAt?: string | null;
+  nextAttemptAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string | null;
+};
+
+function isProductionEvaluationQueue(): boolean {
+  return process.env.NODE_ENV === 'production';
+}
+
+function isDurableQueueTerminal(status: unknown): boolean {
+  return ['COMPLETED', 'COMPLETED_WITH_REVIEW', 'FAILED'].includes(String(status || '').toUpperCase());
+}
+
+function getEvaluationQueueTerminalStatus(evaluationStatus: string): DurableEvaluationQueueRecord['status'] | null {
+  const status = String(evaluationStatus || '').toUpperCase();
+  if (status === 'COMPLETED') return 'COMPLETED';
+  if (status === 'NEEDS_REVIEW') return 'COMPLETED_WITH_REVIEW';
+  if (['FAILED', 'REJECTED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(status)) return 'FAILED';
+  return null;
+}
+
+function getSafeJsonPayload(job: EvaluationJobData): Record<string, any> {
+  return serializeDurableEvaluationJobPayload(job as any);
+}
+
+async function ensureDurableOriginalFiles(job: EvaluationJobData): Promise<string | null> {
+  if (job.pdfBuf.length === 0) {
+    throw new Error('EVALUATION_ORIGINAL_FILE_EMPTY: The uploaded answer sheet is empty.');
+  }
+
+  if (!job.originalFileStorageConfirmed) {
+    const storedPdf = await savePersistentFile(
+      `${job.evaluationId}_original`,
+      `${job.evaluationId}_original.pdf`,
+      'application/pdf',
+      job.pdfBuf,
+      'EVALUATION_ORIGINAL',
+      { ownerUserId: job.studentId, evaluationId: job.evaluationId },
+    );
+    if (storedPdf.status !== 'ACTIVE') {
+      throw new Error('EVALUATION_ORIGINAL_FILE_NOT_DURABLE: The answer sheet could not be verified in Cloud Storage. The evaluation was not queued and no result will be produced.');
+    }
+  }
+
+  // When an image was converted to PDF for checked-copy generation, preserve
+  // the exact original image separately so a restarted worker uses the same input.
+  const sourceBuffer = Buffer.from(job.fileBase64 || '', 'base64');
+  if (sourceBuffer.length > 0 && !sourceBuffer.equals(job.pdfBuf)) {
+    const sourceUploadFileId = `${job.evaluationId}_source_upload`;
+    const storedSource = await savePersistentFile(
+      sourceUploadFileId,
+      job.filename || `${sourceUploadFileId}.bin`,
+      job.mimeType || 'application/octet-stream',
+      sourceBuffer,
+      'EVALUATION_ORIGINAL',
+      { ownerUserId: job.studentId, evaluationId: job.evaluationId },
+    );
+    if (storedSource.status !== 'ACTIVE') {
+      throw new Error('EVALUATION_SOURCE_UPLOAD_NOT_DURABLE: The original uploaded image could not be verified in Cloud Storage.');
+    }
+    return sourceUploadFileId;
+  }
+  return null;
+}
+
+async function persistDurableEvaluationQueueRecord(
+  job: EvaluationJobData,
+  sourceUploadFileId: string | null,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  const record: DurableEvaluationQueueRecord = {
+    evaluationId: job.evaluationId,
+    status: 'QUEUED',
+    payload: getSafeJsonPayload(job),
+    originalFileId: `${job.evaluationId}_original`,
+    sourceUploadFileId,
+    attempts: 0,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    nextAttemptAt: null,
+    createdAt: now,
+    updatedAt: now,
+    lastError: null,
+  };
+
+  const persisted = await runFirestoreTransaction(async (transaction) => {
+    const existingSnapshot = await transaction.get(DURABLE_QUEUE_COLLECTION, job.evaluationId);
+    const existing = existingSnapshot.data() || {};
+    if (existingSnapshot.exists) {
+      const existingStatus = String(existing.status || '').toUpperCase();
+      const leaseUntil = Date.parse(String(existing.leaseExpiresAt || ''));
+      const leaseIsLive = existingStatus === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now();
+      if (
+        ['QUEUED', 'RUNNING'].includes(existingStatus) &&
+        (existingStatus === 'QUEUED' || leaseIsLive)
+      ) {
+        return false;
+      }
+    }
+    transaction.set(DURABLE_QUEUE_COLLECTION, job.evaluationId, record as any);
+    return true;
+  });
+
+  if (persisted === true) return true;
+  if (persisted === false) {
+    // A false result means a duplicate active job only after confirming the
+    // authoritative document. A transaction timeout also returns a falsey
+    // fallback in the Firestore adapter and must never be acknowledged as queued.
+    const existing = await getFirestoreDoc<DurableEvaluationQueueRecord>(
+      DURABLE_QUEUE_COLLECTION,
+      job.evaluationId,
+      { failOnError: true },
+    );
+    const status = String(existing?.status || '').toUpperCase();
+    const leaseUntil = Date.parse(String(existing?.leaseExpiresAt || ''));
+    if (status === 'QUEUED' || (status === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now())) {
+      return false;
+    }
+  }
+
+  throw new Error('EVALUATION_QUEUE_PERSISTENCE_UNCONFIRMED: Firestore did not confirm that the durable evaluation job was saved. Please retry; the evaluation has not been started.');
+}
+
+async function claimDurableEvaluationQueueRecord(evaluationId: string): Promise<DurableEvaluationQueueRecord | null> {
+  let claimed: DurableEvaluationQueueRecord | null = null;
+  await runFirestoreTransaction(async (transaction) => {
+    const snapshot = await transaction.get(DURABLE_QUEUE_COLLECTION, evaluationId);
+    if (!snapshot.exists) return;
+    const current = (snapshot.data() || {}) as any;
+    if (isDurableQueueTerminal(current.status)) return;
+
+    const currentStatus = String(current.status || '').toUpperCase();
+    const leaseUntil = Date.parse(String(current.leaseExpiresAt || ''));
+    if (currentStatus === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now()) return;
+
+    const now = new Date();
+    const updated: DurableEvaluationQueueRecord = {
+      ...current,
+      evaluationId,
+      status: 'RUNNING',
+      attempts: Number(current.attempts || 0) + 1,
+      leaseOwner: DURABLE_QUEUE_INSTANCE_ID,
+      leaseExpiresAt: new Date(now.getTime() + DURABLE_QUEUE_LEASE_MS).toISOString(),
+      nextAttemptAt: null,
+      updatedAt: now.toISOString(),
+    };
+    transaction.set(DURABLE_QUEUE_COLLECTION, evaluationId, updated as any);
+    claimed = updated;
+  });
+  return claimed;
+}
+
+async function updateDurableEvaluationQueueRecord(
+  evaluationId: string,
+  patch: Partial<DurableEvaluationQueueRecord>,
+  requireCurrentLease = true,
+): Promise<boolean> {
+  return await runFirestoreTransaction(async (transaction) => {
+    const snapshot = await transaction.get(DURABLE_QUEUE_COLLECTION, evaluationId);
+    if (!snapshot.exists) return false;
+    const current = (snapshot.data() || {}) as any;
+    if (requireCurrentLease && current.leaseOwner !== DURABLE_QUEUE_INSTANCE_ID) return false;
+    transaction.set(DURABLE_QUEUE_COLLECTION, evaluationId, {
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    } as any);
+    return true;
+  });
+}
+
+async function renewDurableEvaluationQueueLease(evaluationId: string): Promise<void> {
+  try {
+    await updateDurableEvaluationQueueRecord(evaluationId, {
+      status: 'RUNNING',
+      leaseExpiresAt: new Date(Date.now() + DURABLE_QUEUE_LEASE_MS).toISOString(),
+    });
+  } catch (error) {
+    console.warn(`[DurableEvalQueue] Could not renew worker lease for ${evaluationId}:`, error);
+  }
+}
+
+async function finishDurableEvaluationQueueRecord(
+  evaluationId: string,
+  status: DurableEvaluationQueueRecord['status'],
+  lastError?: string,
+): Promise<void> {
+  await updateDurableEvaluationQueueRecord(evaluationId, {
+    status,
+    // The job snapshot is no longer needed once its evaluation reaches a
+    // terminal state. Drop large QP/SA/MS text from Firestore to control storage.
+    payload: {},
+    sourceUploadFileId: null,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    nextAttemptAt: null,
+    lastError: lastError || null,
+  });
+}
+
+async function requeueDurableEvaluation(
+  evaluationId: string,
+  lastError: string,
+): Promise<void> {
+  await updateDurableEvaluationQueueRecord(evaluationId, {
+    status: 'QUEUED',
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    nextAttemptAt: new Date(Date.now() + 10_000).toISOString(),
+    lastError: lastError.slice(0, 500),
+  });
+}
+
+async function failDurableEvaluationBeforeExecution(job: Record<string, any>, reason: string): Promise<void> {
+  const evaluationId = String(job.evaluationId || '');
+  if (!evaluationId) return;
+  const result = db.prepare(`
+    UPDATE evaluations
+    SET status = 'FAILED',
+        error_message = ?,
+        progress_stage = 'FAILED',
+        progress_percentage = 100,
+        progress_message = 'Evaluation worker could not resume the stored answer sheet.',
+        completed_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
+  `).run(reason.slice(0, 500), evaluationId);
+
+  if (result.changes === 1 && job.creditAlreadyConsumed && !job.isRecoveryRetry &&
+    ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(job.entitlementSource || '').toUpperCase())) {
+    try {
+      const restored = refundEvaluationCreditAtomic({
+        userId: String(job.studentId),
+        evaluationId,
+        entitlementSource: String(job.entitlementSource).toUpperCase() as any,
+      });
+      if (restored) {
+        db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+        await syncStudentCreditsToFirestore(String(job.studentId));
+      }
+    } catch (refundError) {
+      console.error(`[DurableEvalQueue] Could not refund unresumable evaluation ${evaluationId}:`, refundError);
+    }
+  }
+
+  const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+  if (failedRow) {
+    await syncRecordToFirestore('evaluations', evaluationId, failedRow).catch((error) =>
+      console.warn(`[DurableEvalQueue] Failed to sync terminal evaluation ${evaluationId}:`, error)
+    );
+  }
+}
+
+async function hydrateDurableEvaluationJob(record: DurableEvaluationQueueRecord): Promise<EvaluationJobData> {
+  const original = await getPersistentFile(record.originalFileId, `${record.evaluationId}_original.pdf`);
+  if (!original?.buffer?.length) {
+    throw new Error('EVALUATION_ORIGINAL_FILE_MISSING: The answer-sheet PDF is not available in durable Cloud Storage.');
+  }
+
+  let originalUploadBuffer: Buffer | null = null;
+  if (record.sourceUploadFileId) {
+    const source = await getPersistentFile(record.sourceUploadFileId, `${record.sourceUploadFileId}.pdf`);
+    if (!source?.buffer?.length) {
+      throw new Error('EVALUATION_SOURCE_UPLOAD_MISSING: The original uploaded image is not available in durable Cloud Storage.');
+    }
+    originalUploadBuffer = source.buffer;
+  }
+  const binary = restoreDurableEvaluationJobPayload(record.payload || {}, original.buffer, originalUploadBuffer);
+
+  return {
+    ...(record.payload as any),
+    evaluationId: record.evaluationId,
+    ...binary,
+    filename: String(record.payload.filename || `${record.evaluationId}_original.pdf`),
+    originalFileStorageConfirmed: true,
+  } as EvaluationJobData;
+}
+
+async function runDurableEvaluationQueueRecord(
+  evaluationId: string,
+  initialJob?: EvaluationJobData,
+): Promise<void> {
+  if (activeJobs.has(evaluationId) || durableQueueStartingJobs.has(evaluationId)) return;
+  durableQueueStartingJobs.add(evaluationId);
+  try {
+    const claimed = await claimDurableEvaluationQueueRecord(evaluationId);
+    if (!claimed) return;
+
+    const attempts = Number(claimed.attempts || 1);
+    if (attempts > DURABLE_QUEUE_MAX_ATTEMPTS) {
+      const payload = claimed.payload || {};
+      await failDurableEvaluationBeforeExecution(payload, 'Evaluation worker could not resume this job after repeated instance interruptions. Your evaluation credit has been restored where applicable.');
+      await finishDurableEvaluationQueueRecord(evaluationId, 'FAILED', 'Durable worker retry limit reached.');
+      return;
+    }
+
+    const workerPromise = (async () => {
+      const heartbeat = setInterval(() => {
+        void renewDurableEvaluationQueueLease(evaluationId);
+      }, DURABLE_QUEUE_HEARTBEAT_MS);
+      heartbeat.unref?.();
+
+      try {
+        const currentStatus = getEvaluationStatus(evaluationId);
+        const alreadyTerminal = getEvaluationQueueTerminalStatus(currentStatus);
+        if (alreadyTerminal) {
+          await finishDurableEvaluationQueueRecord(evaluationId, alreadyTerminal);
+          return;
+        }
+
+        const job = initialJob || await hydrateDurableEvaluationJob(claimed);
+        await executeEvaluationJob(job);
+
+        const finalStatus = getEvaluationStatus(evaluationId);
+        const terminalQueueStatus = getEvaluationQueueTerminalStatus(finalStatus);
+        if (terminalQueueStatus) {
+          await finishDurableEvaluationQueueRecord(evaluationId, terminalQueueStatus);
+          return;
+        }
+
+        if (attempts < DURABLE_QUEUE_MAX_ATTEMPTS) {
+          await requeueDurableEvaluation(evaluationId, 'Worker exited without a terminal evaluation status; scheduling one safe resume attempt.');
+          return;
+        }
+
+        await failDurableEvaluationBeforeExecution(job as any, 'Evaluation processing did not reach a terminal state after the permitted resume attempts. Your evaluation credit has been restored where applicable.');
+        await finishDurableEvaluationQueueRecord(evaluationId, 'FAILED', 'Evaluation worker did not reach a terminal status.');
+      } catch (error: any) {
+        const reason = String(error?.message || error || 'Unknown durable queue worker error').slice(0, 500);
+        const finalStatus = getEvaluationStatus(evaluationId);
+        const terminalQueueStatus = getEvaluationQueueTerminalStatus(finalStatus);
+        if (terminalQueueStatus) {
+          await finishDurableEvaluationQueueRecord(evaluationId, terminalQueueStatus, reason);
+          return;
+        }
+
+        if (attempts < DURABLE_QUEUE_MAX_ATTEMPTS) {
+          await requeueDurableEvaluation(evaluationId, reason);
+          return;
+        }
+
+        await failDurableEvaluationBeforeExecution(claimed.payload || {}, reason);
+        await finishDurableEvaluationQueueRecord(evaluationId, 'FAILED', reason);
+      } finally {
+        clearInterval(heartbeat);
+      }
+    })();
+
+    activeJobs.set(evaluationId, workerPromise);
+    durableQueueStartingJobs.delete(evaluationId);
+    await workerPromise;
+  } finally {
+    activeJobs.delete(evaluationId);
+    durableQueueStartingJobs.delete(evaluationId);
+    if (isProductionEvaluationQueue()) {
+      void processDurableEvaluationQueue().catch((error) =>
+        console.warn('[DurableEvalQueue] Follow-up queue scheduling failed:', error)
+      );
+    }
+  }
+}
+
+async function processDurableEvaluationQueue(initialJobId?: string, initialJob?: EvaluationJobData): Promise<void> {
+  if (!isProductionEvaluationQueue()) return;
+  if (initialJobId && initialJob) {
+    void runDurableEvaluationQueueRecord(initialJobId, initialJob).catch((error) =>
+      console.error(`[DurableEvalQueue] Failed to start accepted job ${initialJobId}:`, error)
+    );
+    return;
+  }
+
+  if (activeJobs.size + durableQueueStartingJobs.size >= DURABLE_QUEUE_MAX_ACTIVE_JOBS) return;
+
+  const [queued, running] = await Promise.all([
+    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'QUEUED' }], { failOnError: true }),
+    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'RUNNING' }], { failOnError: true }),
+  ]);
+  const now = Date.now();
+  const candidates = [...queued, ...running]
+    .filter((record) => {
+      if (!record?.evaluationId || isDurableQueueTerminal(record.status)) return false;
+      if (record.status === 'QUEUED' && record.nextAttemptAt && Date.parse(record.nextAttemptAt) > now) return false;
+      if (record.status === 'RUNNING' && record.leaseExpiresAt && Date.parse(record.leaseExpiresAt) > now) return false;
+      return true;
+    })
+    .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')));
+
+  for (const record of candidates) {
+    if (activeJobs.size + durableQueueStartingJobs.size >= DURABLE_QUEUE_MAX_ACTIVE_JOBS) break;
+    void runDurableEvaluationQueueRecord(record.evaluationId).catch((error) =>
+      console.error(`[DurableEvalQueue] Failed to launch queued evaluation ${record.evaluationId}:`, error)
+    );
+  }
+}
+
+/**
+ * A status poll can wake an interrupted job after a new App Hosting instance
+ * has started. The Firestore lease transaction remains the single-writer guard.
+ * Poll-triggered reads are throttled per evaluation to keep Firestore usage low.
+ */
+export function nudgeDurableEvaluationQueue(evaluationId: string): void {
+  if (!isProductionEvaluationQueue() || !evaluationId) return;
+  if (activeJobs.has(evaluationId) || durableQueueStartingJobs.has(evaluationId)) return;
+
+  const now = Date.now();
+  const lastNudge = durableQueueNudgeTimes.get(evaluationId) || 0;
+  if (now - lastNudge < 10_000) return;
+  durableQueueNudgeTimes.set(evaluationId, now);
+
+  if (durableQueueNudgeTimes.size > 2_000) {
+    for (const [id, timestamp] of durableQueueNudgeTimes) {
+      if (now - timestamp > 60 * 60 * 1000) durableQueueNudgeTimes.delete(id);
+    }
+  }
+
+  void getFirestoreDoc<DurableEvaluationQueueRecord>(
+    DURABLE_QUEUE_COLLECTION,
+    evaluationId,
+    { failOnError: true },
+  ).then(async (record) => {
+    // Keep the throttle entry for missing/terminal records too. A student UI
+    // may poll every few seconds; clearing it here would cause repeated Firestore
+    // reads for an evaluation that has no resumable durable job.
+    if (!record || isDurableQueueTerminal(record.status)) return;
+
+    const status = String(record.status || '').toUpperCase();
+    const leaseUntil = Date.parse(String(record.leaseExpiresAt || ''));
+    const leaseExpired = !Number.isFinite(leaseUntil) || leaseUntil <= Date.now();
+    const retryAt = Date.parse(String(record.nextAttemptAt || ''));
+    const retryReady = !Number.isFinite(retryAt) || retryAt <= Date.now();
+    const resumable =
+      (status === 'QUEUED' && retryReady) ||
+      (status === 'RUNNING' && leaseExpired);
+
+    if (resumable) {
+      await runDurableEvaluationQueueRecord(evaluationId);
+    }
+  }).catch((error) => {
+    console.warn(`[DurableEvalQueue] Status-poll recovery check failed for ${evaluationId}:`, error);
+  });
+}
+
+export function startDurableEvaluationQueueRecovery(): void {
+  if (!isProductionEvaluationQueue() || durableQueueRecoveryTimer) return;
+  void processDurableEvaluationQueue().catch((error) =>
+    console.warn('[DurableEvalQueue] Initial recovery scan failed:', error)
+  );
+  durableQueueRecoveryTimer = setInterval(() => {
+    void processDurableEvaluationQueue().catch((error) =>
+      console.warn('[DurableEvalQueue] Periodic recovery scan failed:', error)
+    );
+  }, DURABLE_QUEUE_POLL_MS);
+  durableQueueRecoveryTimer.unref?.();
+}
+
 const TERMINAL_EVALUATION_STATUSES = new Set([
   'COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED',
 ]);
@@ -1238,7 +1722,8 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       console.warn(`[AsyncEval] Could not sync failed evaluation ${evaluationId}:`, syncErr);
     }
   } finally {
-    activeJobs.delete(evaluationId);
+    // Active-job ownership is released by the queue runner so its durable lease
+    // remains held until status settlement has been written to Firestore.
   }
 }
 
@@ -1246,13 +1731,35 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
  * Safely enqueues an evaluation job to run asynchronously in the background.
  * Returns immediately without blocking the caller.
  */
-export function enqueueEvaluation(job: EvaluationJobData): void {
-  if (activeJobs.has(job.evaluationId)) {
+export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
+  if (activeJobs.has(job.evaluationId) || durableQueueStartingJobs.has(job.evaluationId)) {
     console.log(`[AsyncEval] Evaluation ${job.evaluationId} is already running in background.`);
     return;
   }
 
-  // Update status to QUEUED in database
+  if (isProductionEvaluationQueue()) {
+    // Do not acknowledge a job until its original input is verified in Cloud Storage
+    // and its metadata is durably written to Firestore.
+    const sourceUploadFileId = await ensureDurableOriginalFiles(job);
+    const persisted = await persistDurableEvaluationQueueRecord(job, sourceUploadFileId);
+    if (!persisted) {
+      // A duplicate enqueue for the same evaluation is already safely represented
+      // by an existing QUEUED/RUNNING durable job. Treat it as accepted without
+      // resetting progress or creating another worker.
+      console.log(`[DurableEvalQueue] Existing live queue record retained for ${job.evaluationId}.`);
+      return;
+    }
+    updateEvaluationProgress(
+      job.evaluationId,
+      'QUEUED',
+      'QUEUED',
+      5,
+      'Evaluation job durably queued. Starting processing pipeline...'
+    );
+    await processDurableEvaluationQueue(job.evaluationId, job);
+    return;
+  }
+
   updateEvaluationProgress(
     job.evaluationId,
     'QUEUED',
@@ -1261,10 +1768,15 @@ export function enqueueEvaluation(job: EvaluationJobData): void {
     'Evaluation job safely queued. Starting processing pipeline...'
   );
 
-  // Run in background without blocking
-  const promise = executeEvaluationJob(job).catch((err) => {
-    console.error(`[AsyncEval] Unhandled error in background evaluation ${job.evaluationId}:`, err);
-  });
-
+  // Local/test development keeps the lightweight in-memory worker.
+  const promise = (async () => {
+    try {
+      await executeEvaluationJob(job);
+    } catch (err) {
+      console.error(`[AsyncEval] Unhandled error in background evaluation ${job.evaluationId}:`, err);
+    } finally {
+      activeJobs.delete(job.evaluationId);
+    }
+  })();
   activeJobs.set(job.evaluationId, promise);
 }

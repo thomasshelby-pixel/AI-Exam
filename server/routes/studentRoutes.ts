@@ -34,7 +34,7 @@ import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/m
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
-import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
+import { enqueueEvaluation, nudgeDurableEvaluationQueue } from '../services/asyncEvaluationService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 import { validateSrn } from '../utils/srnValidator.js';
@@ -1510,6 +1510,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Fingerprint the normalized file to detect exact answer-sheet reuse across free-tier accounts.
     let pdfBuf = Buffer.from(fileBase64, 'base64');
     let answerSheetSha256 = '';
+    let originalFileStorageConfirmed = false;
     try {
       const uploadsDir = path.join(process.cwd(), 'uploads');
       if (!fs.existsSync(uploadsDir)) {
@@ -1542,7 +1543,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       fs.writeFileSync(originalFilePath, pdfBuf);
 
       // Persist to Firebase Cloud Storage (Metadata in Cloud Firestore)
-      await savePersistentFile(
+      const originalFileMetadata = await savePersistentFile(
         `${evaluationId}_original`,
         `${evaluationId}_original.pdf`,
         'application/pdf',
@@ -1553,9 +1554,14 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           evaluationId,
           instituteId: (req.user as any)?.instituteId || null,
         }
-      ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
+      );
+      originalFileStorageConfirmed = originalFileMetadata.status === 'ACTIVE';
+      if (process.env.NODE_ENV === 'production' && !originalFileStorageConfirmed) {
+        throw new Error('The answer sheet could not be verified in Cloud Storage. Please retry; no evaluation credit has been consumed.');
+      }
     } catch (saveErr) {
-      console.warn('Could not cache original file to disk:', saveErr);
+      console.warn('Could not durably store original answer sheet:', saveErr);
+      if (process.env.NODE_ENV === 'production') throw saveErr;
     }
 
     // Fetch active evaluation settings
@@ -1784,7 +1790,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }
 
     // Step E: Enqueue Asynchronous Background Evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName: studentName || req.user!.fullName,
@@ -1825,6 +1831,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       requestedEvalSource,
       personalEntitlement,
       creditAlreadyConsumed,
+      originalFileStorageConfirmed,
     });
     // Once enqueueEvaluation returns, the background worker owns final status
     // and entitlement settlement. The request catch must not refund a running job.
@@ -2000,7 +2007,16 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
 
     query += ' ORDER BY e.created_at DESC';
 
-    const records = db.prepare(query).all(...params);
+    const records = db.prepare(query).all(...params) as any[];
+    // Student history is polled while an evaluation is processing. Use that
+    // normal read to wake a durable queued/stale job after an App Hosting
+    // instance restart; the Firestore lease still prevents duplicate workers.
+    for (const record of records) {
+      const recordStatus = String(record.status || '').toUpperCase();
+      if (recordStatus === 'PROCESSING' || recordStatus === 'QUEUED') {
+        nudgeDurableEvaluationQueue(String(record.id));
+      }
+    }
     return res.json({ evaluations: records });
   } catch (error: unknown) {
     console.error('List evaluations error:', error);
@@ -2219,6 +2235,10 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(record.id) || record;
     }
     const normalizedRecord = normalizeEvaluationRejectionStatus(record);
+    const statusForQueueRecovery = String(normalizedRecord.status || record.status || '').toUpperCase();
+    if (statusForQueueRecovery === 'PROCESSING' || statusForQueueRecovery === 'QUEUED') {
+      nudgeDurableEvaluationQueue(String(record.id));
+    }
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const checkedCopyPath = path.join(uploadsDir, `${realEvaluationId}_checked_copy.pdf`);
@@ -4677,6 +4697,7 @@ router.get(['/institute/my-tests', '/institute-tests/my-tests'], (req: AuthReque
 });
 
 router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
+  let createdEvaluationId: string | null = null;
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
@@ -4755,9 +4776,10 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     let pdfBuf = rawBuf;
 
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
+    createdEvaluationId = evaluationId;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
-    await savePersistentFile(
+    const originalFileMetadata = await savePersistentFile(
       `${evaluationId}_original`,
       `${evaluationId}_original.pdf`,
       'application/pdf',
@@ -4768,7 +4790,11 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
         evaluationId,
         instituteId: test.institute_id || null,
       }
-    ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
+    );
+    const originalFileStorageConfirmed = originalFileMetadata.status === 'ACTIVE';
+    if (process.env.NODE_ENV === 'production' && !originalFileStorageConfirmed) {
+      throw new Error('The institute answer sheet could not be verified in Cloud Storage. Please retry.');
+    }
 
     // Generate canonical human-friendly Evaluation ID & continuous sequence
     const { displayId: evalDisplayId, sequence: evalSequence } = generateCanonicalEvaluationId({
@@ -4803,7 +4829,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
     // Enqueue background evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName,
@@ -4832,6 +4858,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       resolvedSponsoringInstituteId: test.institute_id,
       resolvedInstituteName: null,
       requestedEvalSource: 'INSTITUTE',
+      originalFileStorageConfirmed,
     });
 
     return res.json({
@@ -4845,12 +4872,24 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
   } catch (error: unknown) {
     console.error('Submit institute test error:', error);
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
+    if (createdEvaluationId) {
+      db.prepare(`
+        UPDATE evaluations
+        SET status = 'FAILED', progress_stage = 'FAILED', progress_percentage = 100,
+            progress_message = 'The durable evaluation job could not be queued. Please resubmit.',
+            error_message = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('PROCESSING', 'QUEUED')
+      `).run(errMsg.slice(0, 500), createdEvaluationId);
+      const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(createdEvaluationId) as any;
+      if (failedRow) await syncRecordToFirestore('evaluations', createdEvaluationId, failedRow).catch(() => {});
+    }
     return res.status(500).json({ error: errMsg });
   }
 });
 
 // 13. Submit Answer Sheet for Institute Material (100% Institute-Sponsored, Verified Enrollment Required)
 router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
+  let createdEvaluationId: string | null = null;
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
@@ -4898,9 +4937,10 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const pdfBuf = rawBuf;
 
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
+    createdEvaluationId = evaluationId;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
-    await savePersistentFile(
+    const originalFileMetadata = await savePersistentFile(
       `${evaluationId}_original`,
       `${evaluationId}_original.pdf`,
       'application/pdf',
@@ -4911,7 +4951,11 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
         evaluationId,
         instituteId: material.institute_id || null,
       }
-    ).catch((e) => console.warn('[StudentRoutes] Error persisting original upload to Cloud Storage:', e));
+    );
+    const originalFileStorageConfirmed = originalFileMetadata.status === 'ACTIVE';
+    if (process.env.NODE_ENV === 'production' && !originalFileStorageConfirmed) {
+      throw new Error('The institute answer sheet could not be verified in Cloud Storage. Please retry.');
+    }
 
     // Generate canonical human-friendly Evaluation ID & continuous sequence
     const { displayId: evalDisplayId, sequence: evalSequence } = generateCanonicalEvaluationId({
@@ -4945,7 +4989,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
     // Enqueue background evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName,
@@ -4974,6 +5018,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       resolvedSponsoringInstituteId: material.institute_id,
       resolvedInstituteName: material.institute_name,
       requestedEvalSource: 'INSTITUTE',
+      originalFileStorageConfirmed,
     });
 
     return res.json({
@@ -4987,6 +5032,17 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
   } catch (error: unknown) {
     console.error('Submit institute material error:', error);
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
+    if (createdEvaluationId) {
+      db.prepare(`
+        UPDATE evaluations
+        SET status = 'FAILED', progress_stage = 'FAILED', progress_percentage = 100,
+            progress_message = 'The durable evaluation job could not be queued. Please resubmit.',
+            error_message = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('PROCESSING', 'QUEUED')
+      `).run(errMsg.slice(0, 500), createdEvaluationId);
+      const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(createdEvaluationId) as any;
+      if (failedRow) await syncRecordToFirestore('evaluations', createdEvaluationId, failedRow).catch(() => {});
+    }
     return res.status(500).json({ error: errMsg });
   }
 });
