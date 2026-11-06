@@ -67,6 +67,96 @@ import {
 
 const router = Router();
 
+const EVALUATION_QUEUE_STATUS_CACHE_TTL_MS = 2_000;
+const evaluationQueueStatusCache = new Map<string, { expiresAt: number; value: any | null }>();
+const EVALUATION_TERMINAL_STATUSES = new Set([
+  'COMPLETED',
+  'NEEDS_REVIEW',
+  'REJECTED',
+  'FAILED',
+  'PERSISTENCE_FAILED',
+  'CANCELLED',
+]);
+
+async function getCachedEvaluationQueueStatus(evaluationId: string): Promise<any | null> {
+  const now = Date.now();
+  const cached = evaluationQueueStatusCache.get(evaluationId);
+  if (cached && cached.expiresAt > now) return cached.value;
+
+  const value = await getFirestoreDoc<any>('evaluation_jobs', evaluationId).catch(() => null);
+  evaluationQueueStatusCache.set(evaluationId, {
+    expiresAt: now + EVALUATION_QUEUE_STATUS_CACHE_TTL_MS,
+    value: value || null,
+  });
+  return value || null;
+}
+
+function updateLocalEvaluationFromFirestore(evaluation: Record<string, any>): void {
+  const evaluationId = String(evaluation.id || '').trim();
+  if (!evaluationId) return;
+  try {
+    const localColumns = new Set(
+      (db.prepare('PRAGMA table_info(evaluations)').all() as Array<{ name: string }>).map((column) => column.name)
+    );
+    const entries = Object.entries(evaluation).filter(([key, value]) =>
+      key !== 'id' && localColumns.has(key) && value !== undefined
+    );
+    if (!entries.length) return;
+    const assignments = entries.map(([key]) => `"${key.replace(/"/g, '""')}" = ?`).join(', ');
+    db.prepare(`UPDATE evaluations SET ${assignments} WHERE id = ?`)
+      .run(...entries.map(([, value]) => value), evaluationId);
+  } catch (error) {
+    console.warn(`[StudentRoutes] Could not refresh local evaluation cache from Firestore for ${evaluationId}:`, error);
+  }
+}
+
+async function refreshLiveEvaluationRecord<T extends Record<string, any>>(record: T): Promise<T> {
+  const evaluationId = String(record.id || '').trim();
+  if (!evaluationId) return record;
+  const localStatus = String(record.status || '').toUpperCase();
+  if (EVALUATION_TERMINAL_STATUSES.has(localStatus)) return record;
+
+  const queue = await getCachedEvaluationQueueStatus(evaluationId);
+  if (!queue) return record;
+
+  const queueStatus = String(queue.status || '').toUpperCase();
+  const remoteEvaluationStatus = String(queue.evaluationStatus || (
+    queueStatus === 'COMPLETED' || queueStatus === 'NEEDS_REVIEW' || queueStatus === 'FAILED'
+      ? queueStatus
+      : queueStatus === 'QUEUED' || queueStatus === 'RUNNING'
+        ? 'PROCESSING'
+        : ''
+  )).toUpperCase();
+
+  if (EVALUATION_TERMINAL_STATUSES.has(remoteEvaluationStatus) || EVALUATION_TERMINAL_STATUSES.has(queueStatus)) {
+    const cloudEvaluation = await getFirestoreDoc<any>('evaluations', evaluationId).catch(() => null);
+    if (cloudEvaluation) {
+      const normalized = normalizeEvaluationRejectionStatus(cloudEvaluation) as Record<string, any>;
+      updateLocalEvaluationFromFirestore(cloudEvaluation);
+      return {
+        ...record,
+        ...cloudEvaluation,
+        status: String(normalized.status || cloudEvaluation.status || remoteEvaluationStatus).toUpperCase(),
+      } as T;
+    }
+    return {
+      ...record,
+      status: remoteEvaluationStatus || queueStatus,
+      progress_stage: queue.progressStage || record.progress_stage,
+      progress_percentage: queue.progressPercentage ?? 100,
+      progress_message: queue.progressMessage || record.progress_message,
+    } as T;
+  }
+
+  return {
+    ...record,
+    status: remoteEvaluationStatus || record.status,
+    progress_stage: queue.progressStage || record.progress_stage,
+    progress_percentage: queue.progressPercentage ?? record.progress_percentage,
+    progress_message: queue.progressMessage || record.progress_message,
+  } as T;
+}
+
 // Student-specific responses must never be stored in a browser or intermediary cache.
 // This prevents a shared device/browser from reusing one account's private response.
 router.use((_req: AuthRequest, res: Response, next) => {
@@ -1932,7 +2022,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 });
 
 // 3. Get All Student Evaluations
-router.get('/evaluations', (req: AuthRequest, res: Response) => {
+router.get('/evaluations', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
@@ -1953,6 +2043,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       SELECT e.id, e.display_id, e.evaluation_sequence, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
              e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score,
              ${visibleStatusSql} AS status,
+             e.progress_stage, e.progress_percentage,
              CASE
                WHEN ${finalizationReviewSql} THEN NULL
                WHEN UPPER(COALESCE(e.status, '')) = 'REJECTED'
@@ -1989,10 +2080,6 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       query += ' AND e.subject_key = ?';
       params.push(subject);
     }
-    if (status) {
-      query += ` AND ${visibleStatusSql} = ?`;
-      params.push(status);
-    }
     if (search) {
       query += ' AND (e.subject_name LIKE ? OR e.original_filename LIKE ? OR e.display_id LIKE ? OR e.id LIKE ?)';
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
@@ -2000,8 +2087,12 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
 
     query += ' ORDER BY e.created_at DESC';
 
-    const records = db.prepare(query).all(...params);
-    return res.json({ evaluations: records });
+    const records = db.prepare(query).all(...params) as Array<Record<string, any>>;
+    const liveRecords = await Promise.all(records.map((record) => refreshLiveEvaluationRecord(record)));
+    const filteredRecords = status
+      ? liveRecords.filter((record) => String(record.status || '').toUpperCase() === String(status).toUpperCase())
+      : liveRecords;
+    return res.json({ evaluations: filteredRecords });
   } catch (error: unknown) {
     console.error('List evaluations error:', error);
     return res.status(500).json({ error: 'Failed to retrieve evaluations' });
@@ -2026,7 +2117,7 @@ router.get('/entitlement', (req: AuthRequest, res: Response) => {
 });
 
 // 4. Get Specific Evaluation Report Detail
-router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluation_report'), (req: AuthRequest, res: Response) => {
+router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluation_report'), async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const userRole = req.user!.role;
@@ -2086,6 +2177,10 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
       }
 
       return res.status(404).json({ error: 'Evaluation report not found.' });
+    }
+
+    if (record && !EVALUATION_TERMINAL_STATUSES.has(String(record.status || '').toUpperCase())) {
+      record = await refreshLiveEvaluationRecord(record);
     }
 
     let resultJson: EvaluationResult | null = null;
