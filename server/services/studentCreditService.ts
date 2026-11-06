@@ -1121,15 +1121,18 @@ export function refundEvaluationCreditAtomic(params: {
     if (existingRefund) {
       db.exec('COMMIT;');
       transactionStarted = false;
+      if (isMonthlyFree) ensureMonthlyFreeEvaluationsReset(userId);
+      else if (isPurchased) getValidStudentCreditBalance(userId);
+      syncStudentCreditsToFirestore(userId).catch(() => {});
       return true;
     }
 
     const debit = db.prepare(`
-      SELECT id, note FROM credit_ledger
+      SELECT id, note, created_at FROM credit_ledger
       WHERE student_id = ? AND evaluation_id = ? AND source = ? AND amount < 0
       ORDER BY rowid DESC
       LIMIT 1
-    `).get(userId, evalRefId, debitSource) as { id: string; note?: string } | undefined;
+    `).get(userId, evalRefId, debitSource) as { id: string; note?: string; created_at?: string } | undefined;
     if (!debit) {
       db.exec('COMMIT;');
       transactionStarted = false;
@@ -1174,20 +1177,35 @@ export function refundEvaluationCreditAtomic(params: {
       // it reconciles against the ledger before this refund entry exists and
       // would immediately count the just-refunded debit again.
       const profileBefore = db.prepare(`
-        SELECT monthly_free_evaluations_used, monthly_free_evaluations_limit
+        SELECT monthly_free_evaluations_used, monthly_free_evaluations_limit, free_evaluation_reset_month
         FROM student_profiles WHERE user_id = ?
-      `).get(userId) as { monthly_free_evaluations_used: number; monthly_free_evaluations_limit: number } | undefined;
+      `).get(userId) as {
+        monthly_free_evaluations_used: number;
+        monthly_free_evaluations_limit: number;
+        free_evaluation_reset_month?: string | null;
+      } | undefined;
       if (!profileBefore) {
         throw new Error(`Cannot restore monthly free entitlement for ${evalRefId}: student profile is missing.`);
       }
 
-      db.prepare(`
-        UPDATE student_profiles
-        SET monthly_free_evaluations_used = CASE WHEN monthly_free_evaluations_used > 0 THEN monthly_free_evaluations_used - 1 ELSE 0 END,
-            free_evaluations_used = CASE WHEN free_evaluations_used > 0 THEN free_evaluations_used - 1 ELSE 0 END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE user_id = ?
-      `).run(userId);
+      // A free evaluation belongs to the month in which its debit was recorded.
+      // Never reduce the current month's counter when refunding a failed attempt
+      // from an earlier month after the student's quota has already reset.
+      const debitMonth = String(debit.created_at || '').slice(0, 7);
+      const currentMonth = getCurrentServerMonth();
+      const debitBelongsToCurrentMonth =
+        debitMonth === currentMonth &&
+        String(profileBefore.free_evaluation_reset_month || '') === currentMonth;
+
+      if (debitBelongsToCurrentMonth) {
+        db.prepare(`
+          UPDATE student_profiles
+          SET monthly_free_evaluations_used = CASE WHEN monthly_free_evaluations_used > 0 THEN monthly_free_evaluations_used - 1 ELSE 0 END,
+              free_evaluations_used = CASE WHEN free_evaluations_used > 0 THEN free_evaluations_used - 1 ELSE 0 END,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+        `).run(userId);
+      }
 
       const profileAfter = db.prepare(`
         SELECT monthly_free_evaluations_used, monthly_free_evaluations_limit
