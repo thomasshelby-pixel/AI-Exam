@@ -4422,7 +4422,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     try {
-      enqueueEvaluation({
+      await enqueueEvaluation({
         evaluationId,
         studentId: String(evaluation.student_id),
         studentName: String(student?.full_name || 'Student Candidate'),
