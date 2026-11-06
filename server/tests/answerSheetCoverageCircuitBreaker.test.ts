@@ -200,7 +200,7 @@ async function run() {
     analyzePage: async (_base64, pageNumber, _structure, _totalPages, _previous, priorContexts) => {
       observedPriorContexts.push(priorContexts || []);
       const code = pageNumber === 1 || pageNumber === 3 ? 'Q2(a)' : 'Q1(a)';
-      const qNum = code.match(/Q(\\d+)/)?.[1] || '1';
+      const qNum = code.slice(1, code.indexOf('(')) || '1';
       return {
         pageNumber,
         status: 'ATTEMPTED_READABLE',
