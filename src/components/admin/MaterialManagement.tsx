@@ -40,6 +40,8 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
   const [materials, setMaterials] = useState<EvaluationMaterial[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
 
   // Filters
   const [selectedLevel, setSelectedLevel] = useState<string>('ALL');
@@ -374,6 +376,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     try {
       setLoading(true);
       setError('');
+      setSelectedMaterialIds([]);
       const params = new URLSearchParams();
       if (selectedLevel !== 'ALL') params.append('level', selectedLevel);
       if (selectedType !== 'ALL') params.append('materialType', selectedType);
@@ -514,6 +517,77 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to delete material';
       onNotify?.(msg, 'error');
+    }
+  };
+
+  // Select / deselect a single material in the current result set.
+  const handleToggleMaterialSelection = (materialId: string) => {
+    setSelectedMaterialIds((current) =>
+      current.includes(materialId)
+        ? current.filter((id) => id !== materialId)
+        : [...current, materialId]
+    );
+  };
+
+  // Select all materials currently visible after applying filters/search.
+  const handleToggleAllVisibleMaterials = () => {
+    const visibleIds = materials.map((material) => String(material.id));
+    if (!visibleIds.length) return;
+
+    const allVisibleSelected = visibleIds.every((id) => selectedMaterialIds.includes(id));
+    setSelectedMaterialIds((current) =>
+      allVisibleSelected
+        ? current.filter((id) => !visibleIds.includes(id))
+        : Array.from(new Set([...current, ...visibleIds]))
+    );
+  };
+
+  // Bulk delete uses the same protected single-material endpoint so linked
+  // historical evaluations remain protected by the existing server rule.
+  const handleBulkDelete = async () => {
+    const selectedMaterials = materials.filter((material) =>
+      selectedMaterialIds.includes(String(material.id))
+    );
+    if (!selectedMaterials.length) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete ${selectedMaterials.length} selected material(s) and their associated cloud files? Materials linked to existing evaluations will be skipped and preserved. This action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setIsBulkDeleting(true);
+    let deletedCount = 0;
+    const failures: string[] = [];
+
+    try {
+      for (const material of selectedMaterials) {
+        const title = material.question_paper_title || material.questionPaperTitle || String(material.id);
+        try {
+          await apiRequest(`/api/admin/materials/${encodeURIComponent(String(material.id))}`, {
+            method: 'DELETE',
+          });
+          deletedCount += 1;
+        } catch (err: unknown) {
+          const reason = err instanceof Error ? err.message : 'Delete request failed';
+          failures.push(`${title}: ${reason}`);
+        }
+      }
+
+      setSelectedMaterialIds([]);
+      await fetchMaterials();
+
+      if (failures.length > 0) {
+        const failureSummary = failures.slice(0, 3).join(' • ');
+        const more = failures.length > 3 ? ` • and ${failures.length - 3} more` : '';
+        onNotify?.(
+          `Bulk delete completed: ${deletedCount} deleted, ${failures.length} protected / failed. ${failureSummary}${more}`,
+          'error'
+        );
+      } else {
+        onNotify?.(`Successfully deleted all ${deletedCount} selected materials and associated cloud files.`, 'success');
+      }
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -779,12 +853,51 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
         </form>
       </div>
 
+      {/* Bulk delete actions for selected materials */}
+      {selectedMaterialIds.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+          <div className="text-xs text-rose-800">
+            <span className="font-bold">{selectedMaterialIds.length} material(s) selected</span>
+            <span className="ml-1 text-rose-700">from the current filtered list</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedMaterialIds([])}
+              disabled={isBulkDeleting}
+              className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
+            >
+              Clear Selection
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              disabled={isBulkDeleting}
+              className="px-3 py-2 rounded-lg border border-rose-300 bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {isBulkDeleting ? 'Deleting...' : `Delete Selected (${selectedMaterialIds.length})`}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Materials Table */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                <th className="py-3 px-3 font-bold w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all visible materials"
+                    checked={materials.length > 0 && materials.every((material) => selectedMaterialIds.includes(String(material.id)))}
+                    onChange={handleToggleAllVisibleMaterials}
+                    disabled={loading || isBulkDeleting || materials.length === 0}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
+                  />
+                </th>
                 <th className="py-3 px-4 font-bold">Paper Title & Attempt</th>
                 <th className="py-3 px-3 font-bold">Subject & Paper</th>
                 <th className="py-3 px-3 font-bold">Type</th>
@@ -798,7 +911,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
             <tbody className="divide-y divide-slate-100">
               {loading && (
                 <tr>
-                  <td colSpan={8} className="py-10 text-center text-slate-400">
+                  <td colSpan={9} className="py-10 text-center text-slate-400">
                     <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-600" />
                     Loading materials database...
                   </td>
@@ -807,7 +920,7 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
               {!loading && materials.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="py-10 text-center text-slate-400">
+                  <td colSpan={9} className="py-10 text-center text-slate-400">
                     <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                     No evaluation materials found matching criteria. Click &quot;Upload Material&quot; to add reference papers.
                   </td>
@@ -816,7 +929,17 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
 
               {!loading &&
                 materials.map((m) => (
-                  <tr key={m.id} className="hover:bg-slate-50/80 transition">
+                  <tr key={m.id} className={`hover:bg-slate-50/80 transition ${selectedMaterialIds.includes(String(m.id)) ? 'bg-rose-50/40' : ''}`}>
+                    <td className="py-3 px-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${m.question_paper_title || 'material'}`}
+                        checked={selectedMaterialIds.includes(String(m.id))}
+                        onChange={() => handleToggleMaterialSelection(String(m.id))}
+                        disabled={isBulkDeleting}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
+                      />
+                    </td>
                     <td className="py-3 px-4">
                       <div className="font-bold text-slate-900 flex items-center gap-1.5">
                         <span>{m.question_paper_title}</span>
@@ -917,11 +1040,15 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleDelete(m)}
-                          className="p-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
-                          title="Delete Material"
+                          disabled={isBulkDeleting}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-md text-[10px] font-bold transition cursor-pointer disabled:opacity-50"
+                          title="Permanently delete material"
+                          aria-label={`Delete ${m.question_paper_title || 'material'}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete</span>
                         </button>
                       </div>
                     </td>
