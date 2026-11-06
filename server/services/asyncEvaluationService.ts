@@ -509,10 +509,10 @@ export function nudgeDurableEvaluationQueue(evaluationId: string): void {
     evaluationId,
     { failOnError: true },
   ).then(async (record) => {
-    if (!record || isDurableQueueTerminal(record.status)) {
-      durableQueueNudgeTimes.delete(evaluationId);
-      return;
-    }
+    // Keep the throttle entry for missing/terminal records too. A student UI
+    // may poll every few seconds; clearing it here would cause repeated Firestore
+    // reads for an evaluation that has no resumable durable job.
+    if (!record || isDurableQueueTerminal(record.status)) return;
 
     const status = String(record.status || '').toUpperCase();
     const leaseUntil = Date.parse(String(record.leaseExpiresAt || ''));
