@@ -3143,7 +3143,11 @@ router.get('/students', (req: AuthRequest, res: Response) => {
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = p.institute_id
       LEFT JOIN permanent_free_entitlements pfe ON lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
-      LEFT JOIN evaluations e ON e.student_id = u.id
+      LEFT JOIN evaluations e ON e.student_id IN (
+        SELECT linked_user.id
+        FROM users linked_user
+        WHERE LOWER(linked_user.email) = LOWER(u.email)
+      )
       WHERE u.role = 'STUDENT'
     `;
     const params: any[] = [];
@@ -3281,7 +3285,11 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       LEFT JOIN institutes i ON i.id = p.institute_id
       LEFT JOIN batches b ON b.id = p.batch_id
       LEFT JOIN permanent_free_entitlements pfe ON lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
-      LEFT JOIN evaluations e ON e.student_id = u.id
+      LEFT JOIN evaluations e ON e.student_id IN (
+        SELECT linked_user.id
+        FROM users linked_user
+        WHERE LOWER(linked_user.email) = LOWER(u.email)
+      )
       WHERE u.id = ? AND u.role = 'STUDENT'
       GROUP BY u.id
     `).get(studentId) as any;
@@ -3297,12 +3305,14 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
 
     // Recent evaluations
     const recentEvals = db.prepare(`
-      SELECT id, subject_name, level, total_marks, maximum_marks, percentage, status, created_at
-      FROM evaluations
-      WHERE student_id = ?
-      ORDER BY created_at DESC
+      SELECT e.id, e.subject_name, e.level, e.total_marks, e.maximum_marks, e.percentage, e.status, e.created_at
+      FROM evaluations e
+      LEFT JOIN users evaluation_owner ON evaluation_owner.id = e.student_id
+      WHERE e.student_id = ?
+         OR (evaluation_owner.email IS NOT NULL AND LOWER(evaluation_owner.email) = LOWER(?))
+      ORDER BY e.created_at DESC
       LIMIT 10
-    `).all(studentId);
+    `).all(studentId, String(studentRaw.email || '').toLowerCase().trim());
 
     // Recent credit ledger
     const creditLedger = db.prepare(`
