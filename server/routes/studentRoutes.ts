@@ -4697,6 +4697,7 @@ router.get(['/institute/my-tests', '/institute-tests/my-tests'], (req: AuthReque
 });
 
 router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
+  let createdEvaluationId: string | null = null;
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
@@ -4775,6 +4776,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     let pdfBuf = rawBuf;
 
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
+    createdEvaluationId = evaluationId;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
     const originalFileMetadata = await savePersistentFile(
@@ -4870,12 +4872,24 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
   } catch (error: unknown) {
     console.error('Submit institute test error:', error);
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
+    if (createdEvaluationId) {
+      db.prepare(`
+        UPDATE evaluations
+        SET status = 'FAILED', progress_stage = 'FAILED', progress_percentage = 100,
+            progress_message = 'The durable evaluation job could not be queued. Please resubmit.',
+            error_message = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('PROCESSING', 'QUEUED')
+      `).run(errMsg.slice(0, 500), createdEvaluationId);
+      const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(createdEvaluationId) as any;
+      if (failedRow) await syncRecordToFirestore('evaluations', createdEvaluationId, failedRow).catch(() => {});
+    }
     return res.status(500).json({ error: errMsg });
   }
 });
 
 // 13. Submit Answer Sheet for Institute Material (100% Institute-Sponsored, Verified Enrollment Required)
 router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
+  let createdEvaluationId: string | null = null;
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
@@ -4923,6 +4937,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const pdfBuf = rawBuf;
 
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
+    createdEvaluationId = evaluationId;
     const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
     fs.writeFileSync(originalFilePath, pdfBuf);
     const originalFileMetadata = await savePersistentFile(
@@ -5017,6 +5032,17 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
   } catch (error: unknown) {
     console.error('Submit institute material error:', error);
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
+    if (createdEvaluationId) {
+      db.prepare(`
+        UPDATE evaluations
+        SET status = 'FAILED', progress_stage = 'FAILED', progress_percentage = 100,
+            progress_message = 'The durable evaluation job could not be queued. Please resubmit.',
+            error_message = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('PROCESSING', 'QUEUED')
+      `).run(errMsg.slice(0, 500), createdEvaluationId);
+      const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(createdEvaluationId) as any;
+      if (failedRow) await syncRecordToFirestore('evaluations', createdEvaluationId, failedRow).catch(() => {});
+    }
     return res.status(500).json({ error: errMsg });
   }
 });
