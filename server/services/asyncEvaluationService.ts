@@ -1471,7 +1471,7 @@ async function markDurableQueueFinished(
   payloadFileId: string
 ): Promise<void> {
   const finalStatus = getDurableEvaluationFinalQueueStatus(evaluationId);
-  await updateDurableQueueLease(evaluationId, workerId, {
+  const leaseUpdated = await updateDurableQueueLease(evaluationId, workerId, {
     status: finalStatus.queueStatus,
     evaluationStatus: finalStatus.evaluationStatus,
     finishedAt: finalStatus.queueStatus === 'QUEUED' ? null : new Date().toISOString(),
@@ -1483,6 +1483,10 @@ async function markDurableQueueFinished(
       : null,
   });
 
+  if (!leaseUpdated) {
+    console.warn(`[AsyncEval] Queue lease for ${evaluationId} is no longer owned by worker ${workerId}; payload cleanup skipped.`);
+    return;
+  }
   if (finalStatus.queueStatus !== 'QUEUED') {
     await deletePersistentFile(payloadFileId).catch((error) => {
       console.warn(`[AsyncEval] Could not delete completed queue payload ${payloadFileId}:`, error);
@@ -1542,6 +1546,7 @@ async function failDurableQueueJobBeforeExecution(
 }
 
 async function setQueueRecordTerminal(evaluationId: string, status: 'FAILED' | 'COMPLETED' | 'NEEDS_REVIEW', lastError?: string): Promise<void> {
+  const existing = await getFirestoreDoc<any>(DURABLE_EVALUATION_QUEUE_COLLECTION, evaluationId).catch(() => null);
   await runFirestoreTransaction(async (transaction) => {
     const snapshot = await transaction.get(DURABLE_EVALUATION_QUEUE_COLLECTION, evaluationId);
     if (!snapshot.exists) return;
@@ -1555,6 +1560,9 @@ async function setQueueRecordTerminal(evaluationId: string, status: 'FAILED' | '
       updatedAt: new Date().toISOString(),
     });
   });
+  if (existing?.payloadFileId) {
+    await deletePersistentFile(String(existing.payloadFileId)).catch(() => false);
+  }
 }
 
 async function processDurableEvaluationQueueItem(evaluationId: string): Promise<void> {
@@ -1660,7 +1668,7 @@ async function processDurableEvaluationQueueItem(evaluationId: string): Promise<
 }
 
 async function recoverDurableEvaluationQueue(): Promise<void> {
-  if (durableQueueRecoveryInProgress || activeJobs.size >= DURABLE_QUEUE_MAX_LOCAL_CONCURRENCY) return;
+  if (durableQueueRecoveryInProgress || activeJobs.size + activeJobClaims.size >= DURABLE_QUEUE_MAX_LOCAL_CONCURRENCY) return;
   durableQueueRecoveryInProgress = true;
   try {
     const [queued, running] = await Promise.all([
@@ -1742,7 +1750,58 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
     return;
   }
 
-  const record = await persistDurableEvaluationJob(job);
+  let record: DurableEvaluationQueueRecord | null;
+  try {
+    record = await persistDurableEvaluationJob(job);
+  } catch (queueError: any) {
+    const reason = String(queueError?.message || queueError || 'Could not persist evaluation job safely.').slice(0, 500);
+    const failed = db.prepare(`
+      UPDATE evaluations
+      SET status = 'FAILED',
+          error_message = ?,
+          progress_stage = 'FAILED',
+          progress_percentage = 100,
+          progress_message = ?,
+          completed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
+    `).run(reason, reason, job.evaluationId);
+
+    await releaseFacultyMockCopyAccessForFailedEvaluation(job.evaluationId).catch((error) => {
+      console.warn(`[AsyncEval] Could not release faculty mock access after queue setup failure ${job.evaluationId}:`, error);
+    });
+
+    if (
+      failed.changes === 1 &&
+      job.creditAlreadyConsumed &&
+      !job.isRecoveryRetry &&
+      isPersonalEvaluationEntitlement(job.entitlementSource)
+    ) {
+      try {
+        const restored = refundEvaluationCreditAtomic({
+          userId: job.studentId,
+          evaluationId: job.evaluationId,
+          entitlementSource: job.entitlementSource,
+        });
+        if (restored) {
+          db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(job.evaluationId);
+          await syncStudentCreditsToFirestore(job.studentId);
+        }
+      } catch (refundError) {
+        console.error(`[AsyncEval] Could not restore exact entitlement after durable queue setup failed ${job.evaluationId}:`, refundError);
+      }
+    }
+
+    try {
+      const failedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(job.evaluationId) as any;
+      if (failedRow) await syncRecordToFirestore('evaluations', job.evaluationId, failedRow);
+    } catch (syncError) {
+      console.warn(`[AsyncEval] Could not sync durable queue setup failure ${job.evaluationId}:`, syncError);
+    }
+    throw queueError;
+  }
+
   if (!record) {
     console.log(`[AsyncEval] A durable job for ${job.evaluationId} is already queued or running; duplicate enqueue ignored.`);
     return;
