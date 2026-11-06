@@ -55,6 +55,8 @@ const paper = getAuthoritativePaperStructure({
 });
 assert.equal(paper.mcqs.length, 15, 'Generic Advanced Accounting structure must contain all extracted MCQs');
 assert.equal(paper.mcqs.find((mcq) => mcq.fullQuestionCode === 'MCQ4')?.officialKey, 'C');
+assert.equal(paper.mcqs.find((mcq) => mcq.fullQuestionCode === 'MCQ4')?.sourceQuestionLabel, 'Question 1(iv)', 'The fourth flat key must retain its original nested Q1(iv) label.');
+assert.equal(paper.mcqs.find((mcq) => mcq.fullQuestionCode === 'MCQ13')?.sourceQuestionLabel, 'Question 4', 'Standalone Question 4 must retain its own label rather than collide with Q1(iv).');
 
 const scored = evaluateAllAuthoritativeMcqs(
   paper.mcqs,
