@@ -84,6 +84,7 @@ const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED =
 
 // In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId.
 const activeJobs = new Map<string, Promise<void>>();
+const activeJobClaims = new Set<string>();
 const TERMINAL_EVALUATION_STATUSES = new Set([
   'COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED',
 ]);
@@ -1559,7 +1560,12 @@ async function setQueueRecordTerminal(evaluationId: string, status: 'FAILED' | '
 }
 
 async function processDurableEvaluationQueueItem(evaluationId: string): Promise<void> {
-  if (activeJobs.has(evaluationId) || activeJobs.size >= DURABLE_QUEUE_MAX_LOCAL_CONCURRENCY) return;
+  if (
+    activeJobs.has(evaluationId) ||
+    activeJobClaims.has(evaluationId) ||
+    activeJobs.size + activeJobClaims.size >= DURABLE_QUEUE_MAX_LOCAL_CONCURRENCY
+  ) return;
+  activeJobClaims.add(evaluationId);
 
   const existingEvaluationStatus = getEvaluationStatus(evaluationId);
   if (isTerminalEvaluationStatus(existingEvaluationStatus)) {
@@ -1571,8 +1577,18 @@ async function processDurableEvaluationQueueItem(evaluationId: string): Promise<
     return;
   }
 
-  const claim = await claimDurableEvaluationJob(evaluationId);
-  if (claim.state === 'MISSING' || claim.state === 'NOT_CLAIMED') return;
+  let claim: Awaited<ReturnType<typeof claimDurableEvaluationJob>>;
+  try {
+    claim = await claimDurableEvaluationJob(evaluationId);
+  } catch (error) {
+    activeJobClaims.delete(evaluationId);
+    throw error;
+  }
+  if (claim.state === 'MISSING' || claim.state === 'NOT_CLAIMED') {
+    activeJobClaims.delete(evaluationId);
+    return;
+  }
+  activeJobClaims.delete(evaluationId);
   if (claim.state === 'EXHAUSTED') {
     await failDurableQueueJobBeforeExecution(
       claim.record,
@@ -1593,6 +1609,7 @@ async function processDurableEvaluationQueueItem(evaluationId: string): Promise<
   heartbeatTimer.unref?.();
 
   const workerPromise = (async () => {
+    let executionStarted = false;
     try {
       const payload = await getPersistentFile(record.payloadFileId, record.payloadFilename);
       if (!payload?.buffer?.length) {
@@ -1615,14 +1632,25 @@ async function processDurableEvaluationQueueItem(evaluationId: string): Promise<
         fileBase64: pdfBuf.toString('base64'),
       } as EvaluationJobData;
 
+      executionStarted = true;
       console.log(`[AsyncEval] Restored durable job ${evaluationId} (attempt ${record.attemptCount}).`);
       await executeEvaluationJob(job);
-      await markDurableQueueFinished(evaluationId, durableQueueWorkerId, record.payloadFileId);
+      try {
+        await markDurableQueueFinished(evaluationId, durableQueueWorkerId, record.payloadFileId);
+      } catch (queueFinalizeError) {
+        // The evaluation row is already authoritative. Leave the lease to expire;
+        // the next worker will see the terminal evaluation and close the queue row.
+        console.warn(`[AsyncEval] Could not finalize queue metadata for completed evaluation ${evaluationId}:`, queueFinalizeError);
+      }
     } catch (error: any) {
       const reason = String(error?.message || error || 'Durable worker failed before execution').slice(0, 500);
       console.error(`[AsyncEval] Durable queue processing failed for ${evaluationId}:`, error);
-      await failDurableQueueJobBeforeExecution(record, reason);
-      await deletePersistentFile(record.payloadFileId).catch(() => false);
+      if (!executionStarted) {
+        await failDurableQueueJobBeforeExecution(record, reason);
+        await deletePersistentFile(record.payloadFileId).catch(() => false);
+      } else {
+        console.warn(`[AsyncEval] Execution had already started for ${evaluationId}; queue lease will expire for a safe status check.`);
+      }
     } finally {
       clearInterval(heartbeatTimer);
       activeJobs.delete(evaluationId);
@@ -1656,10 +1684,13 @@ async function recoverDurableEvaluationQueue(): Promise<void> {
     }
 
     for (const evaluationId of candidates.keys()) {
-      if (activeJobs.size >= DURABLE_QUEUE_MAX_LOCAL_CONCURRENCY) break;
-      void processDurableEvaluationQueueItem(evaluationId).catch((error) => {
+      if (activeJobs.size + activeJobClaims.size >= DURABLE_QUEUE_MAX_LOCAL_CONCURRENCY) break;
+      try {
+        // Await only until a worker claims/launches; the model evaluation itself remains background work.
+        await processDurableEvaluationQueueItem(evaluationId);
+      } catch (error) {
         console.error(`[AsyncEval] Could not recover durable evaluation ${evaluationId}:`, error);
-      });
+      }
     }
   } catch (error) {
     console.warn('[AsyncEval] Durable queue recovery scan failed:', error);
