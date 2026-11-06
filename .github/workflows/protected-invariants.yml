@@ -188,6 +188,9 @@ jobs:
       - name: Model Test source identity and inventory regression
         run: node_modules/.bin/tsx server/tests/modelTestPaperStructure.test.ts
 
+      - name: MTP two-series and Model Test separation regression
+        run: node_modules/.bin/tsx server/tests/mtpSeriesBoundary.test.ts
+
       - name: Material Question Paper / Suggested Answer / Marking Scheme mapping audit regression
         run: node_modules/.bin/tsx server/tests/materialQuestionMappingAudit.test.ts
 

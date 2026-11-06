@@ -705,6 +705,13 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
           error: 'Please select an MTP Series (Series 1 or Series 2) to continue.',
         });
       }
+      if (norm !== 1 && norm !== 2) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_MTP_SERIES',
+          error: 'MTP supports only Series 1 and Series 2. Model Test Paper numbers are managed separately.',
+        });
+      }
       parsedMtpSeries = norm;
     }
 

@@ -92,6 +92,7 @@ import {
   checkMaterialDuplicate,
   computeMaterialUniqueKey,
   normalizeMtpSeriesNumber,
+  isSupportedMtpSeriesNumber,
   computeFileHash,
   computeContentHash,
   normalizeExtractedContent,
@@ -1910,6 +1911,12 @@ router.post('/materials', async (req: AuthRequest, res: Response) => {
           message: 'Please select an MTP Series (e.g. Series 1, Series 2) to continue.'
         });
       }
+      if (!isSupportedMtpSeriesNumber(parsedMtpSeries)) {
+        return res.status(400).json({
+          error: 'MTP_SERIES_NOT_SUPPORTED',
+          message: 'MTP supports only Series 1 and Series 2. Model Test Paper numbers are managed separately.'
+        });
+      }
     }
 
     const { sourceFormat, source_format } = req.body;
@@ -2313,6 +2320,16 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     const effSeries = parsedMtpSeries !== undefined ? parsedMtpSeries : existing.mtp_series;
     const effModelTestNumber = parsedModelTestNumber !== undefined ? parsedModelTestNumber : existing.model_test_number;
     const maxModelTestNumber = getMaxModelTestNumberForLevel(effLevel);
+    if (
+      effMatType === 'MTP' &&
+      (parsedMtpSeries !== undefined || materialType === 'MTP') &&
+      !isSupportedMtpSeriesNumber(effSeries)
+    ) {
+      return res.status(400).json({
+        error: 'MTP_SERIES_NOT_SUPPORTED',
+        message: 'MTP supports only Series 1 and Series 2. Model Test Paper numbers are managed separately.'
+      });
+    }
     if (effMatType === 'MODEL_TEST_PAPER' && (!Number.isInteger(Number(effModelTestNumber)) || Number(effModelTestNumber) < 1 || Number(effModelTestNumber) > maxModelTestNumber)) {
       return res.status(400).json({ error: `Please select a valid Model Test Paper number (1–${maxModelTestNumber}).` });
     }
@@ -2450,8 +2467,8 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
       UPDATE evaluation_materials
       SET level = COALESCE(?, level),
           material_type = COALESCE(?, material_type),
-          mtp_series = COALESCE(?, mtp_series),
-          model_test_number = COALESCE(?, model_test_number),
+          mtp_series = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, mtp_series) END,
+          model_test_number = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, model_test_number) END,
           source_format = COALESCE(?, source_format),
           model_group = COALESCE(?, model_group),
           subject_key = COALESCE(?, subject_key),
@@ -2481,7 +2498,9 @@ router.put('/materials/:id', async (req: AuthRequest, res: Response) => {
     `).run(
       level || null,
       materialType || null,
+      effMatType !== 'MTP' ? 1 : 0,
       parsedMtpSeries !== undefined ? parsedMtpSeries : null,
+      effMatType !== 'MODEL_TEST_PAPER' ? 1 : 0,
       parsedModelTestNumber !== undefined ? parsedModelTestNumber : null,
       normPutSourceFormat,
       modelGroup || null,
