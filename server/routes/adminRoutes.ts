@@ -26,6 +26,7 @@ import { extractMaterialFromPDF } from '../gemini.js';
 import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
+import { buildMaterialQuestionMappingAudit } from '../services/materialQuestionMappingAudit.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
 import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
@@ -1762,7 +1763,13 @@ router.get('/materials/:id', async (req: AuthRequest, res: Response) => {
       };
     }
 
-    return res.json({ material, paperStructureSummary });
+    const materialMappingAudit = buildMaterialQuestionMappingAudit({
+      questionPaperText: material.question_paper_text || material.questionPaperText,
+      suggestedAnswersText: material.suggested_answers_text || material.suggestedAnswersText,
+      markingSchemeText: material.marking_scheme_text || material.markingSchemeText,
+    });
+
+    return res.json({ material, paperStructureSummary, materialMappingAudit });
   } catch (error: unknown) {
     console.error('Get single material error:', error);
     return res.status(500).json({ error: 'Failed to load material details' });
