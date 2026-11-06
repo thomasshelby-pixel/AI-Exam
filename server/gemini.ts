@@ -566,7 +566,9 @@ export function buildEvaluationReferenceSourceInstructions(
   const isFacultyMock = params.materialType === 'FACULTY_MOCK_TEST';
   const isMtp = params.materialType === 'MTP';
   const isModelTest = params.materialType === 'MODEL_TEST_PAPER';
-  const modelTestNumber = Number.isInteger(Number(params.modelTestNumber))
+  const modelTestNumber = params.modelTestNumber !== undefined &&
+    params.modelTestNumber !== null &&
+    Number.isInteger(Number(params.modelTestNumber))
     ? Number(params.modelTestNumber)
     : 'UNSPECIFIED';
   const mtpSeries = params.mtpSeries === 1 || params.mtpSeries === 2
