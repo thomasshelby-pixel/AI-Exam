@@ -488,7 +488,9 @@ async function processDurableEvaluationQueue(initialJobId?: string, initialJob?:
 
   for (const record of candidates) {
     if (activeJobs.size + durableQueueStartingJobs.size >= DURABLE_QUEUE_MAX_ACTIVE_JOBS) break;
-    await runDurableEvaluationQueueRecord(record.evaluationId);
+    void runDurableEvaluationQueueRecord(record.evaluationId).catch((error) =>
+      console.error(`[DurableEvalQueue] Failed to launch queued evaluation ${record.evaluationId}:`, error)
+    );
   }
 }
 
