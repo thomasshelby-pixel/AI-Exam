@@ -67,6 +67,7 @@ assert.equal(verified.evidencePackage?.markingScheme.metadata.materialId, verifi
 const resolvedSeparateIds = resolveMaterialComponentSourceIds(separateMaterial, separateMaterial.marking_scheme_text);
 assert.deepEqual(resolvedSeparateIds, {
   sourceFormat: 'SEPARATE',
+  combinedSourceMaterialId: undefined,
   questionMaterialId: 'mat_qp_mat_502c892824c23659',
   suggestedAnswerMaterialId: 'mat_sa_mat_502c892824c23659',
   markingSchemeMaterialId: 'mat_ms_mat_502c892824c23659',
@@ -92,6 +93,8 @@ const resolvedCombinedIds = resolveMaterialComponentSourceIds(
 assert.deepEqual(resolvedCombinedIds, {
   sourceFormat: 'COMBINED',
   combinedSourceMaterialId: 'mat_qp_answers_combined_1',
+  questionMaterialId: undefined,
+  suggestedAnswerMaterialId: undefined,
   markingSchemeMaterialId: 'mat_ms_combined_1',
 });
 
