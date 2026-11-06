@@ -4271,7 +4271,9 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       // A missing foreign key is recoverable: match against the evaluation's own
       // subject, level, attempt, paper and material type. The resolver enforces
       // attempt/paper/type filters and requires both reference texts.
-      if (!material && materialSource !== 'INSTITUTE') {
+      // Only metadata-resolve legacy rows that never stored a material ID.
+      // If a previously linked exact ID is gone, do not substitute a newer/different paper.
+      if (!material && !requestedMaterialId && materialSource !== 'INSTITUTE') {
         const rawLevel = String(evaluation.level || 'INTERMEDIATE').toUpperCase();
         const level = rawLevel.replace(/^CA_/, '');
         const subjectKey = String(evaluation.subject_key || evaluation.subject_name || '').trim();
