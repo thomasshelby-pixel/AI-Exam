@@ -91,6 +91,7 @@ export function restoreDeletedEvaluationEntitlementsForStudent(studentId: string
         evaluationId,
         entitlementSource,
         status: String(details.status || '').trim().toUpperCase(),
+        creditRefundedBeforeDelete: details.creditRefundedBeforeDelete === true,
       }];
     } catch {
       return [];
@@ -104,7 +105,6 @@ export function restoreDeletedEvaluationEntitlementsForStudent(studentId: string
       AND entity_type = 'evaluations'
   `).all() as Array<{ entity_id: string }>;
   const restoredIds = new Set(markerRows.map((row) => String(row.entity_id)));
-  const outstandingAudits = parsed.filter((row) => !restoredIds.has(row.evaluationId));
 
   const sources = [
     {
@@ -124,6 +124,7 @@ export function restoreDeletedEvaluationEntitlementsForStudent(studentId: string
     },
   ] as const;
 
+  const sourceByEntitlement = new Map(sources.map((source) => [source.entitlement, source]));
   const refundableStatuses = new Set([
     'FAILED',
     'REJECTED',
@@ -131,6 +132,65 @@ export function restoreDeletedEvaluationEntitlementsForStudent(studentId: string
     'PERSISTENCE_FAILED',
     'CANCELLED',
   ]);
+
+  // When the ledger link survived deletion (or was restored from Firestore),
+  // refund by the exact evaluation ID before considering legacy NULL-linked rows.
+  for (const row of parsed) {
+    if (restoredIds.has(row.evaluationId) || row.creditRefundedBeforeDelete || !refundableStatuses.has(row.status)) continue;
+    const source = sourceByEntitlement.get(row.entitlementSource);
+    if (!source) continue;
+
+    const linkedDebit = db.prepare(`
+      SELECT id
+      FROM credit_ledger
+      WHERE student_id = ? AND evaluation_id = ? AND source = ? AND amount < 0
+      LIMIT 1
+    `).get(studentId, row.evaluationId, source.debit) as { id: string } | undefined;
+    if (!linkedDebit) continue;
+
+    try {
+      const restored = refundEvaluationCreditAtomic({
+        userId: studentId,
+        evaluationId: row.evaluationId,
+        entitlementSource: row.entitlementSource,
+      });
+      if (restored) {
+        const markerId = `aud_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+          VALUES (?, ?, 'DELETED_EVALUATION_ENTITLEMENT_RESTORED', 'evaluations', ?, ?)
+        `).run(
+          markerId,
+          studentId,
+          row.evaluationId,
+          JSON.stringify({
+            evaluationId: row.evaluationId,
+            studentId,
+            entitlementSource: row.entitlementSource,
+            sourceDebitLedgerId: linkedDebit.id,
+            restoredAt: new Date().toISOString(),
+            reason: 'Recovered a ledger-linked entitlement from an immutable EVALUATION_DELETED audit record.',
+          })
+        );
+        restoredIds.add(row.evaluationId);
+      }
+    } catch (error) {
+      console.error('[EvaluationEntitlementRecovery] Could not restore linked deleted evaluation entitlement:', row.evaluationId, error);
+    }
+  }
+
+  // Only unlinked legacy rows remain for the strict one-to-one reconciliation below.
+  const linkedEvaluationRows = db.prepare(`
+    SELECT DISTINCT evaluation_id
+    FROM credit_ledger
+    WHERE student_id = ? AND evaluation_id IS NOT NULL
+  `).all(studentId) as Array<{ evaluation_id: string }>;
+  const linkedEvaluationIds = new Set(linkedEvaluationRows.map((row) => String(row.evaluation_id)));
+  const outstandingAudits = parsed.filter((row) =>
+    !restoredIds.has(row.evaluationId) &&
+    !row.creditRefundedBeforeDelete &&
+    !linkedEvaluationIds.has(row.evaluationId)
+  );
 
   for (const source of sources) {
     const sourceAudits = outstandingAudits.filter((row) => row.entitlementSource === source.entitlement);
