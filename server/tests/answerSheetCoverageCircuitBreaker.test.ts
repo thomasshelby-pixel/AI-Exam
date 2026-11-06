@@ -185,6 +185,60 @@ async function run() {
     mcqs: [],
   };
 
+  // Regression: "UNCERTAIN" is a status, never a canonical question ID.
+  const uncertainVisibleLabelPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    detectedQuestions: [{
+      questionNumber: '2',
+      subQuestion: null,
+      parentQuestionNumberVisible: true,
+      isContinuation: false,
+      authoritativeQuestionCode: 'UNCERTAIN',
+      mappingBasis: 'UNCERTAIN',
+      snippet: 'Balance Sheet with equity and liabilities.',
+    }],
+    mcqSelections: {},
+  }));
+  assert.equal(
+    uncertainVisibleLabelPage.detectedQuestions[0].authoritativeQuestionCode,
+    undefined,
+    'A placeholder status word must not survive as an authoritative question ID.',
+  );
+  const visibleLabelOnlyStructure: any = {
+    ...arbitraryOrderStructure,
+    subQuestions: [
+      { fullQuestionCode: 'Q2', questionNumber: '2', maximumMarks: 10, isMcq: false, topic: 'Balance sheet' },
+    ],
+  };
+  const uncertainButVisibleLabelResolved = resolveContextualQuestionIdentity({
+    ...uncertainVisibleLabelPage.detectedQuestions[0],
+    paperSubQuestions: visibleLabelOnlyStructure.subQuestions,
+  });
+  assert.equal(uncertainButVisibleLabelResolved.canonicalId, 'Q2',
+    'An uncertain content match may use a clearly visible label only when it exactly exists in the selected inventory.');
+  assert.equal(uncertainButVisibleLabelResolved.requiresReview, false);
+
+  const uncertainWithoutVisibleLabel = resolveContextualQuestionIdentity({
+    subQuestion: 'a',
+    parentQuestionNumberVisible: false,
+    isContinuation: false,
+    mappingBasis: 'UNCERTAIN',
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(uncertainWithoutVisibleLabel.requiresReview, true,
+    'An uncertain identity without a visible parent label must remain in manual review.');
+
+  const contentMatchWithoutQuestionId = resolveContextualQuestionIdentity({
+    questionNumber: '2',
+    subQuestion: 'a',
+    parentQuestionNumberVisible: true,
+    mappingBasis: 'MATERIAL_CONTENT',
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(contentMatchWithoutQuestionId.requiresReview, true,
+    'A material-content mapping without a canonical source question ID must not fall back to an unrelated visible label.');
+
   const contentMatchBeatsPreviousPage = resolveContextualQuestionIdentity({
     questionNumber: '2',
     subQuestion: 'a',
