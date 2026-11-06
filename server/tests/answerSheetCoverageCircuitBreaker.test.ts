@@ -5,8 +5,10 @@ import {
   buildPageCoveragePrompt,
   clearCoverageMapCache,
   parseAndValidatePageCoverageOutput,
+  resolveContextualQuestionIdentity,
   type PageCoverageRecord,
 } from '../services/answerSheetCoverageService.js';
+import { buildCanonicalQuestionInventory, detectIndependentAttempts } from '../services/canonicalQuestionInventoryService.js';
 
 async function createPdf(pageCount: number): Promise<Buffer> {
   const document = await PDFDocument.create();
@@ -45,6 +47,8 @@ async function run() {
       subQuestions: [{
         ...paperStructure.subQuestions[0],
         topic: 'Accounting treatment and journal entries',
+        questionText: 'Explain the accounting treatment of an impairment loss under AS 28.',
+        suggestedAnswerAnchor: 'Recoverable amount is compared with carrying amount; recognize the impairment loss in profit and loss.',
       }],
     } as any,
     previousActiveQuestion: 'Q2(a)',
@@ -59,6 +63,11 @@ async function run() {
   assert.match(pagePrompt, /Do not classify descriptive question labels/i);
   assert.match(pagePrompt, /return an empty mcqSelections object/i);
   assert.match(pagePrompt, /Q1\(a\) — 5 marks — Accounting treatment and journal entries/i);
+  assert.match(pagePrompt, /EXACT QUESTION PAPER TEXT: Explain the accounting treatment of an impairment loss under AS 28/i);
+  assert.match(pagePrompt, /SUGGESTED ANSWER REFERENCE: Recoverable amount is compared/i);
+  assert.match(pagePrompt, /Students may answer questions in ANY order/i);
+  assert.match(pagePrompt, /Page 1 is not Q1; Page 2 is not Q2/i);
+  assert.match(pagePrompt, /A continuation can refer to ANY earlier question/i);
 
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_PARTIALLY_READABLE',
@@ -71,15 +80,74 @@ async function run() {
       subQuestion: null,
       parentQuestionNumberVisible: true,
       isContinuation: false,
+      authoritativeQuestionCode: 'Q1(a)',
+      mappingBasis: 'MATERIAL_CONTENT',
+      labelMismatch: true,
       snippet: 'Journal entry with debit and credit columns.',
     }],
     mcqSelections: {},
   }));
   assert.equal(parsedPage.detectedQuestions[0].questionNumber, '6');
+  assert.equal(parsedPage.detectedQuestions[0].authoritativeQuestionCode, 'Q1(a)');
+  assert.equal(parsedPage.detectedQuestions[0].mappingBasis, 'MATERIAL_CONTENT');
+  assert.equal(parsedPage.detectedQuestions[0].labelMismatch, true);
   assert.equal(parsedPage.questionLabelEvidence, 'Circled 6 in the left margin above the journal entry.');
   assert.equal(parsedPage.readingConfidence, 0.82);
   assert.deepEqual(parsedPage.mcqSelections, {}, 'A descriptive answer with no visible MCQ choice must not create MCQ attempts.');
   assert.equal(parsedPage.detectedQuestions.some((question) => String(question.questionNumber).startsWith('MCQ')), false);
+
+  const arbitraryOrderStructure: any = {
+    paperTitle: 'Advanced Accounting Model Test',
+    totalPaperMaxMarks: 100,
+    questions: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false, topic: 'Impairment loss' },
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false, topic: 'Balance sheet' },
+      { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 5, isMcq: false, topic: 'Journal entries' },
+      { fullQuestionCode: 'Q3(a)', questionNumber: '3', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false, topic: 'Revenue recognition' },
+    ],
+    mcqs: [],
+  };
+
+  const contentMatchBeatsPreviousPage = resolveContextualQuestionIdentity({
+    questionNumber: '2',
+    subQuestion: 'a',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q2(a)',
+    authoritativeQuestionCode: 'Q3(a)',
+    mappingBasis: 'MATERIAL_CONTENT',
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(contentMatchBeatsPreviousPage.canonicalId, 'Q3(a)', 'A source-content match must not inherit the preceding page parent.');
+  assert.equal(contentMatchBeatsPreviousPage.requiresReview, false);
+
+  const bareSubpartIsNotOrderEvidence = resolveContextualQuestionIdentity({
+    subQuestion: 'a',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q2(a)',
+    isContinuation: false,
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(bareSubpartIsNotOrderEvidence.requiresReview, true, 'A bare subpart cannot be attached to the previous page without continuation evidence.');
+
+  const explicitContinuation = resolveContextualQuestionIdentity({
+    previousActiveQuestion: 'Q2(a)',
+    isContinuation: true,
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(explicitContinuation.canonicalId, 'Q2(a)', 'A clearly identified continuation can reuse the active answer identity.');
+
+  const inventory = buildCanonicalQuestionInventory({ paperStructure: arbitraryOrderStructure });
+  const independentAttempts = detectIndependentAttempts({
+    inventory,
+    rawPageOccurrences: [
+      { questionCode: 'Q2(b)', pageNumber: 1, studentSnippet: '(b) journal entries and ledger adjustment' },
+      { questionCode: 'Q3(a)', pageNumber: 2, studentSnippet: '(a) revenue recognition under AS 9' },
+    ],
+  });
+  assert.ok(independentAttempts.has('Q2(b)'));
+  assert.ok(independentAttempts.has('Q3(a)'), 'An explicit Q3(a) must not be remapped to Q2(a) merely because Q2 was detected first.');
+  assert.equal(independentAttempts.has('Q2(a)'), false, 'Page-order context must not fabricate Q2(a).');
 
   let providerCalls = 0;
   const analyzePage = async (_base64: string, pageNumber: number): Promise<PageCoverageRecord> => {
@@ -126,7 +194,38 @@ async function run() {
   assert.match(coverage.pages[2].rawSummary, /not analysed/i);
 
   clearCoverageMapCache();
-  console.log('✅ Page coverage circuit-break and diagnostic regression passed (no external AI calls).');
+  const interleavedPdf = await createPdf(3);
+  const observedPriorContexts: any[] = [];
+  const interleavedCoverage = await buildAnswerSheetCoverageMap(interleavedPdf, arbitraryOrderStructure, {
+    analyzePage: async (_base64, pageNumber, _structure, _totalPages, _previous, priorContexts) => {
+      observedPriorContexts.push(priorContexts || []);
+      const code = pageNumber === 1 || pageNumber === 3 ? 'Q2(a)' : 'Q1(a)';
+      const qNum = code.match(/Q(\\d+)/)?.[1] || '1';
+      return {
+        pageNumber,
+        status: 'ATTEMPTED_READABLE',
+        detectedQuestions: [{
+          fullQuestionCode: code,
+          questionNumber: qNum,
+          subQuestionNumber: 'a',
+          status: 'ATTEMPTED_READABLE',
+          isContinuation: pageNumber === 3,
+          pageNumber,
+          snippet: pageNumber === 3 ? 'Continuation of the Q2 balance sheet working.' : `Answer content for ${code}.`,
+        }],
+        rawSummary: pageNumber === 3 ? 'Q2(a) continuation.' : `${code} identified.`,
+        hasHandwriting: true,
+      };
+    },
+  });
+  const q2Attempt = interleavedCoverage.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'Q2(a)');
+  assert.deepEqual(q2Attempt?.pages, [1, 3], 'A Q2 answer continued after an intervening Q1 page must stay merged to Q2.');
+  assert.deepEqual(interleavedCoverage.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'Q1(a)')?.pages, [2]);
+  assert.ok(observedPriorContexts[2].some((context: any) => context.fullQuestionCode === 'Q2(a)' && context.pages.includes(1)));
+  assert.ok(observedPriorContexts[2].some((context: any) => context.fullQuestionCode === 'Q1(a)' && context.pages.includes(2)));
+
+  clearCoverageMapCache();
+  console.log('✅ Page coverage, source-grounded mapping, arbitrary order and non-adjacent continuation regressions passed (no external AI calls).');
 }
 
 run().catch((error) => {
