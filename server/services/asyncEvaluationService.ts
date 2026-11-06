@@ -1666,6 +1666,29 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
     return;
   }
 
+  if (isProductionEvaluationQueue()) {
+    // Do not acknowledge a job until its original input is verified in Cloud Storage
+    // and its metadata is durably written to Firestore.
+    const sourceUploadFileId = await ensureDurableOriginalFiles(job);
+    const persisted = await persistDurableEvaluationQueueRecord(job, sourceUploadFileId);
+    if (!persisted) {
+      // A duplicate enqueue for the same evaluation is already safely represented
+      // by an existing QUEUED/RUNNING durable job. Treat it as accepted without
+      // resetting progress or creating another worker.
+      console.log(`[DurableEvalQueue] Existing live queue record retained for ${job.evaluationId}.`);
+      return;
+    }
+    updateEvaluationProgress(
+      job.evaluationId,
+      'QUEUED',
+      'QUEUED',
+      5,
+      'Evaluation job durably queued. Starting processing pipeline...'
+    );
+    await processDurableEvaluationQueue(job.evaluationId, job);
+    return;
+  }
+
   updateEvaluationProgress(
     job.evaluationId,
     'QUEUED',
@@ -1673,18 +1696,6 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
     5,
     'Evaluation job safely queued. Starting processing pipeline...'
   );
-
-  if (isProductionEvaluationQueue()) {
-    // Do not acknowledge a job until its original input is verified in Cloud Storage
-    // and its metadata is durably written to Firestore.
-    const sourceUploadFileId = await ensureDurableOriginalFiles(job);
-    const persisted = await persistDurableEvaluationQueueRecord(job, sourceUploadFileId);
-    if (!persisted) {
-      throw new Error('EVALUATION_JOB_ALREADY_QUEUED: This evaluation already has a live durable queue record.');
-    }
-    await processDurableEvaluationQueue(job.evaluationId, job);
-    return;
-  }
 
   // Local/test development keeps the lightweight in-memory worker.
   const promise = (async () => {
