@@ -6,6 +6,7 @@ import {
   clearCoverageMapCache,
   parseAndValidatePageCoverageOutput,
   resolveContextualQuestionIdentity,
+  resolveMcqSelectionNumber,
   type PageCoverageRecord,
 } from '../services/answerSheetCoverageService.js';
 import { buildCanonicalQuestionInventory, detectIndependentAttempts } from '../services/canonicalQuestionInventoryService.js';
@@ -94,6 +95,44 @@ async function run() {
   assert.ok(sourcedQ1?.questionText?.includes('impairment loss'), 'The exact QP question wording must be attached to the authoritative ID.');
   assert.ok(sourcedQ1?.suggestedAnswerAnchor?.includes('recoverable amount'), 'The selected Suggested Answer must be attached as a reference anchor.');
 
+  const nestedMcqStructure: any = [
+    { fullQuestionCode: 'MCQ1', questionNumber: '1', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 1(i)' },
+    { fullQuestionCode: 'MCQ4', questionNumber: '4', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 1(iv)' },
+    { fullQuestionCode: 'MCQ13', questionNumber: '13', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 4' },
+  ];
+  assert.equal(resolveMcqSelectionNumber('Q1(iv)', nestedMcqStructure), '4');
+  assert.equal(resolveMcqSelectionNumber('Question 4', nestedMcqStructure), '13');
+  assert.equal(resolveMcqSelectionNumber('MCQ4', nestedMcqStructure), '4');
+  assert.equal(resolveMcqSelectionNumber('Q1', nestedMcqStructure), undefined, 'A parent MCQ group must not be mistaken for its first nested MCQ.');
+
+  const nestedMcqPrompt = buildPageCoveragePrompt({
+    pageNumber: 3,
+    totalPages: 12,
+    paperStructure: {
+      ...paperStructure,
+      subQuestions: [],
+      mcqs: nestedMcqStructure.map((question: any) => ({
+        ...question,
+        maximumMarks: 2,
+        officialKey: question.questionNumber === '4' ? 'C' : 'A',
+        suggestedAnswerAnchor: question.sourceQuestionLabel + ': official key verified.',
+      })),
+    } as any,
+  });
+  assert.match(nestedMcqPrompt, /MCQ4 — source label: Question 1\(iv\)/);
+  assert.match(nestedMcqPrompt, /MCQ13 — source label: Question 4/);
+  assert.match(nestedMcqPrompt, /Question 1\(iv\).*MCQ4/s);
+  assert.match(nestedMcqPrompt, /Question 4.*MCQ13/s);
+
+  const nestedSelections = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    detectedQuestions: [],
+    mcqSelections: { 'Question 1(iv)': 'C', 'Question 4': 'B' },
+  }));
+  assert.equal(nestedSelections.mcqSelections['1(iv)'], 'C');
+  assert.equal(nestedSelections.mcqSelections['4'], 'B');
+
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_PARTIALLY_READABLE',
     hasHandwriting: true,
@@ -145,6 +184,19 @@ async function run() {
   });
   assert.equal(contentMatchBeatsPreviousPage.canonicalId, 'Q3(a)', 'A source-content match must not inherit the preceding page parent.');
   assert.equal(contentMatchBeatsPreviousPage.requiresReview, false);
+
+  const visibleQ6dMappedToQ2dBySourceContent = resolveContextualQuestionIdentity({
+    questionNumber: '6',
+    subQuestion: 'd',
+    parentQuestionNumberVisible: true,
+    authoritativeQuestionCode: 'Q2(d)',
+    mappingBasis: 'MATERIAL_CONTENT',
+    labelMismatch: true,
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(visibleQ6dMappedToQ2dBySourceContent.canonicalId, 'Q2(d)');
+  assert.equal(visibleQ6dMappedToQ2dBySourceContent.requiresReview, false);
+  assert.match(visibleQ6dMappedToQ2dBySourceContent.warning || '', /visible answer label conflicts/i);
 
   const identityWithoutProvenance = resolveContextualQuestionIdentity({
     questionNumber: '3',
