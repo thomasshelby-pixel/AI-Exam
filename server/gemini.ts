@@ -103,6 +103,12 @@ export function getAISettings() {
   }
 }
 
+export function getGeminiRequestTimeoutMs(timeoutSeconds: unknown): number {
+  const parsedSeconds = Number(timeoutSeconds);
+  const effectiveSeconds = Number.isFinite(parsedSeconds) && parsedSeconds > 0 ? parsedSeconds : 90;
+  return Math.min(10 * 60 * 1000, Math.max(10 * 1000, Math.round(effectiveSeconds * 1000)));
+}
+
 /**
  * Robust Gemini generation with dynamic database-configured primary model,
  * automatic fallback model (gemini-3.6-flash) on transient errors (503 / 429),
@@ -172,10 +178,7 @@ export async function generateContentWithResilience(
         // EVAL_TIMEOUT_SECONDS must reach the actual SDK request. Without this,
         // the configured timeout is only displayed in settings and cannot stop
         // a stalled Gemini HTTP call from holding the background job.
-        const requestTimeoutMs = Math.min(
-          10 * 60 * 1000,
-          Math.max(10 * 1000, (Number(settings.timeoutSeconds) || 90) * 1000)
-        );
+        const requestTimeoutMs = getGeminiRequestTimeoutMs(settings.timeoutSeconds);
         const requestHttpOptions = config.httpOptions || {};
         config.httpOptions = {
           ...requestHttpOptions,
