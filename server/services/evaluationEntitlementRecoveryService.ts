@@ -124,7 +124,9 @@ export function restoreDeletedEvaluationEntitlementsForStudent(studentId: string
     },
   ] as const;
 
-  const sourceByEntitlement = new Map(sources.map((source) => [source.entitlement, source]));
+  const sourceByEntitlement = new Map<string, (typeof sources)[number]>(
+    sources.map((source) => [source.entitlement, source] as const)
+  );
   const refundableStatuses = new Set([
     'FAILED',
     'REJECTED',
