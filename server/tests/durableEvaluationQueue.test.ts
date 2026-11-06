@@ -92,6 +92,16 @@ assert.equal(
 );
 assert.equal(
   canSafelyReplayDurableQueueRecord({
+    status: 'QUEUED',
+    leaseExpiresAt: null,
+    executionStartedAt: new Date(now - 10_000).toISOString(),
+    attemptCount: 1,
+  }, now),
+  false,
+  'A non-terminal worker return must not reset an already-started AI job into an automatic replay'
+);
+assert.equal(
+  canSafelyReplayDurableQueueRecord({
     status: 'RUNNING',
     leaseExpiresAt: new Date(now - 1_000).toISOString(),
     executionStartedAt: null,
