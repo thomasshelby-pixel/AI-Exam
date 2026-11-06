@@ -27,6 +27,7 @@ import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
+import { resolveMaterialComponentSourceIds } from './materialComponentSourceIds.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -618,12 +619,23 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
     }
 
     const material = db.prepare(
-      "SELECT id, level, subject_key, subject_name, paper, model_test_number, source_format, question_paper_text, suggested_answers_text, marking_scheme_text FROM evaluation_materials WHERE id = ? AND material_type = 'MODEL_TEST_PAPER' AND status = 'ACTIVE' AND source_type = 'ADMIN' AND admin_approved = 1 LIMIT 1"
+      "SELECT id, level, subject_key, subject_name, paper, model_test_number, source_format, file_id, combined_source_material_id, question_material_id, suggested_answer_material_id, marking_scheme_material_id, question_paper_text, suggested_answers_text, marking_scheme_text FROM evaluation_materials WHERE id = ? AND material_type = 'MODEL_TEST_PAPER' AND status = 'ACTIVE' AND source_type = 'ADMIN' AND admin_approved = 1 LIMIT 1"
     ).get(job.referenceMaterialId) as any;
 
     let authoritativeQuestionPaper = String(material?.question_paper_text || '').trim();
     let authoritativeSuggestedAnswers = String(material?.suggested_answers_text || '').trim();
     const authoritativeMarkingScheme = String(material?.marking_scheme_text || '').trim();
+    const storedComponentSourceIds = material
+      ? resolveMaterialComponentSourceIds(material, authoritativeMarkingScheme)
+      : null;
+    const componentSourceIdsMatch = Boolean(
+      storedComponentSourceIds &&
+      same(storedComponentSourceIds.sourceFormat, job.sourceFormat || 'SEPARATE') &&
+      same(storedComponentSourceIds.combinedSourceMaterialId, job.combinedSourceMaterialId) &&
+      same(storedComponentSourceIds.questionMaterialId, job.questionMaterialId) &&
+      same(storedComponentSourceIds.suggestedAnswerMaterialId, job.suggestedAnswerMaterialId) &&
+      same(storedComponentSourceIds.markingSchemeMaterialId, job.markingSchemeMaterialId)
+    );
     if (material?.source_format === 'COMBINED' &&
         (!authoritativeQuestionPaper || !authoritativeSuggestedAnswers ||
           authoritativeQuestionPaper === authoritativeSuggestedAnswers ||
@@ -639,6 +651,7 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
     }
 
     if (!material ||
+        !componentSourceIdsMatch ||
         Number(material.model_test_number) !== expectedNumber ||
         !same(material.level, job.level) ||
         !same(material.subject_key, job.subjectKey) ||
