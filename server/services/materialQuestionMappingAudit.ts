@@ -27,6 +27,7 @@ export interface MaterialQuestionMappingAudit {
   diagnostics: string[];
 }
 
+const MCQ_ID_LINE = /^\\s*(?:MCQ|OBJECTIVE)(?:\\s*(?:NO\\.?)?)?\\s*(\\d{1,2})\\b/i;
 const QUESTION_LINE =
   /^\s*(?:(?:QUESTION|Q\.?|ANS(?:WER)?\.?\s+TO\s+QUESTION)\s*)(\d{1,2})(?:\s*\(([a-z0-9]+)\))?(?:\s*([.)\-:]))?\s*(.*)$/i;
 const NUMBERED_QUESTION_LINE = /^\s*(\d{1,2})\s*[.)]\s+(.{6,})$/;
@@ -149,6 +150,12 @@ function extractExplicitSourceIds(text: string, allowNumberedHeadings: boolean):
   for (const line of text.replace(/\r/g, '').split('\n')) {
     const trimmed = line.trim();
     if (!trimmed || SECTION_BOUNDARY.test(trimmed)) continue;
+
+    let mcqMatch = trimmed.match(MCQ_ID_LINE);
+    if (mcqMatch) {
+      ids.push(canonical(`MCQ${Number(mcqMatch[1])}`));
+      continue;
+    }
 
     let match = trimmed.match(QUESTION_LINE);
     if (match) {
