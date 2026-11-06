@@ -160,7 +160,7 @@ export function buildCanonicalQuestionInventory(options: {
     }
   }
 
-  const hashContent = JSON.stringify(items.map((i) => `${i.questionId}:${i.maxMarks}:${i.questionType}`));
+  const hashContent = JSON.stringify(items.map((i) => `${i.questionId}:${i.maxMarks}:${i.questionType}:${i.canonicalTextAnchor || ''}`));
   const referenceHash = crypto.createHash('sha256').update(hashContent).digest('hex');
 
   return {
