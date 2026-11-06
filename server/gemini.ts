@@ -169,6 +169,19 @@ export async function generateContentWithResilience(
         // Sanitize configuration: strips deprecated temperature, top_p, top_k, thinking_budget
         // and validates model-specific thinking level (e.g. gemini-3.8-flash never receives minimal)
         const config: any = sanitizeGeminiConfig(params.config, model);
+        // EVAL_TIMEOUT_SECONDS must reach the actual SDK request. Without this,
+        // the configured timeout is only displayed in settings and cannot stop
+        // a stalled Gemini HTTP call from holding the background job.
+        const requestTimeoutMs = Math.min(
+          10 * 60 * 1000,
+          Math.max(10 * 1000, (Number(settings.timeoutSeconds) || 90) * 1000)
+        );
+        const requestHttpOptions = config.httpOptions || {};
+        config.httpOptions = {
+          ...requestHttpOptions,
+          timeout: requestTimeoutMs,
+          headers: { ...(requestHttpOptions.headers || {}) },
+        };
         // For gemini-3.1-flash-lite or fallbacks, ensure low thinking to minimize latency
         if (model === 'gemini-3.1-flash-lite') {
           config.thinkingConfig = { thinkingLevel: 'low' };
