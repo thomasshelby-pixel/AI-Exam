@@ -88,8 +88,8 @@ for (const course of [
 ]) {
   const audit = buildMaterialQuestionMappingAudit({
     questionPaperText: questionPaper.replace('BUSINESS ECONOMICS', course.subject.toUpperCase()),
-    suggestedAnswersText,
-    markingSchemeText,
+    suggestedAnswers,
+    markingScheme,
   });
   assert.equal(audit.status, 'MATCHED', `${course.level} / ${course.subject} must use the same format-neutral audit.`);
 }
@@ -105,7 +105,7 @@ assert.ok(unreadable.diagnostics.some((message) => message.includes('could not b
 
 const missingMarkingScheme = buildMaterialQuestionMappingAudit({
   questionPaperText: questionPaper,
-  suggestedAnswersText,
+  suggestedAnswers,
   markingSchemeText: 'General marking principles: award marks for relevant steps and explanations.',
 });
 assert.equal(missingMarkingScheme.status, 'PARTIAL');
