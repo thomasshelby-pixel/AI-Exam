@@ -182,6 +182,9 @@ jobs:
       - name: Model Test source identity and inventory regression
         run: node_modules/.bin/tsx server/tests/modelTestPaperStructure.test.ts
 
+      - name: Material Question Paper / Suggested Answer / Marking Scheme mapping audit regression
+        run: node_modules/.bin/tsx server/tests/materialQuestionMappingAudit.test.ts
+
       - name: Existing protected-system regression suites
         run: npm run test:protected:ci
 

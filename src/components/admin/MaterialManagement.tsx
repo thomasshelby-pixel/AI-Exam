@@ -1039,60 +1039,86 @@ export const MaterialManagement: React.FC<MaterialManagementProps> = ({ onNotify
                     </section>
                   )}
 
-                  {/* Shared Model Test / PYQ-MTP paper parser summary */}
-                  {inspectFullText.material_type === 'MODEL_TEST_PAPER' && inspectFullText.paperStructureSummary && (
+                  {/* Cross-source question mapping diagnostics for every material type */}
+                  {inspectFullText.materialMappingAudit && (
                     <section className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
-                          <h5 className="font-bold text-slate-900">Shared Paper Structure Parser</h5>
+                          <h5 className="font-bold text-slate-900">Question Mapping Audit</h5>
                           <p className="text-[10px] text-slate-500">
-                            Uses the same subject-aware paper parser as PYQ/MTP. This is a parsed-structure summary, not a separate QP/SA/MS source reconciliation.
+                            Read-only comparison of question IDs independently extracted from the Question Paper, Suggested Answers and Marking Scheme. It does not change evaluation scoring.
                           </p>
                         </div>
                         <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${
-                          inspectFullText.paperStructureSummary.hasParsedQuestions
+                          inspectFullText.materialMappingAudit.status === 'MATCHED'
                             ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-rose-100 text-rose-700'
+                            : inspectFullText.materialMappingAudit.status === 'QUESTION_PAPER_NOT_PARSED'
+                              ? 'bg-rose-100 text-rose-700'
+                              : 'bg-amber-100 text-amber-800'
                         }`}>
-                          {inspectFullText.paperStructureSummary.hasParsedQuestions ? 'QUESTION IDS FOUND' : 'NO QUESTION IDS FOUND'}
+                          {inspectFullText.materialMappingAudit.statusLabel}
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <span className="block text-[10px] font-bold text-slate-500">PARSED QUESTION IDS</span>
-                          <span className="text-lg font-bold text-slate-900">{inspectFullText.paperStructureSummary.questionCount || 0}</span>
+                          <span className="block text-[10px] font-bold text-slate-500">QP QUESTION IDS</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.materialMappingAudit.questionPaperIds?.length || 0}</span>
                         </div>
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <span className="block text-[10px] font-bold text-slate-500">DESCRIPTIVE ITEMS</span>
-                          <span className="text-lg font-bold text-slate-900">{inspectFullText.paperStructureSummary.descriptiveQuestionCount || 0}</span>
+                          <span className="block text-[10px] font-bold text-slate-500">QP MCQs</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.materialMappingAudit.questionPaperMcqIds?.length || 0}</span>
                         </div>
                         <div className="rounded-lg bg-slate-50 p-2">
-                          <span className="block text-[10px] font-bold text-slate-500">MCQ ITEMS</span>
-                          <span className="text-lg font-bold text-slate-900">{inspectFullText.paperStructureSummary.mcqCount || 0}</span>
+                          <span className="block text-[10px] font-bold text-slate-500">SA COVERAGE</span>
+                          <span className="text-lg font-bold text-slate-900">{inspectFullText.materialMappingAudit.suggestedAnswerCoveragePercent ?? 0}%</span>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-2">
+                          <span className="block text-[10px] font-bold text-slate-500">MS COVERAGE</span>
+                          <span className="text-lg font-bold text-slate-900">
+                            {inspectFullText.materialMappingAudit.markingSchemeCoveragePercent === null
+                              ? 'Not indexed'
+                              : `${inspectFullText.materialMappingAudit.markingSchemeCoveragePercent}%`}
+                          </span>
                         </div>
                       </div>
 
-                      <div className="space-y-1">
-                        <span className="block text-[10px] font-bold uppercase text-slate-500">Question IDs returned by the shared parser</span>
-                        <code className="block rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] leading-5 text-slate-800 break-words">
-                          {(inspectFullText.paperStructureSummary.questionIds || []).join(', ') || 'No question IDs were extracted.'}
-                        </code>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {[
+                          { label: 'QUESTION PAPER IDs', values: inspectFullText.materialMappingAudit.questionPaperIds },
+                          { label: 'SUGGESTED ANSWER IDs', values: inspectFullText.materialMappingAudit.suggestedAnswerIds },
+                          { label: 'MARKING SCHEME IDs', values: inspectFullText.materialMappingAudit.markingSchemeIds },
+                        ].map((entry) => (
+                          <div key={entry.label} className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                            <span className="mb-1 block text-[10px] font-bold uppercase text-slate-500">{entry.label}</span>
+                            <code className="block max-h-24 overflow-y-auto break-words text-[10px] leading-5 text-slate-800">
+                              {(entry.values || []).join(', ') || 'No IDs identified'}
+                            </code>
+                          </div>
+                        ))}
                       </div>
 
-                      {(inspectFullText.paperStructureSummary.missingMaximumMarks || []).length > 0 && (
-                        <div className="rounded-lg border border-rose-200 bg-rose-50/60 p-3">
-                          <p className="text-[10px] font-bold uppercase text-rose-800">Parsed items with invalid maximum marks</p>
-                          <p className="text-[11px] text-rose-800">
-                            {(inspectFullText.paperStructureSummary.missingMaximumMarks || []).join(', ')}
-                          </p>
+                      {[
+                        { label: 'Missing from Suggested Answers', values: inspectFullText.materialMappingAudit.missingFromSuggestedAnswers },
+                        { label: 'Extra in Suggested Answers', values: inspectFullText.materialMappingAudit.extraInSuggestedAnswers },
+                        { label: 'Missing from Marking Scheme', values: inspectFullText.materialMappingAudit.missingFromMarkingScheme },
+                        { label: 'Extra in Marking Scheme', values: inspectFullText.materialMappingAudit.extraInMarkingScheme },
+                      ].filter((entry) => (entry.values || []).length > 0).map((entry) => (
+                        <div key={entry.label} className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5">
+                          <span className="block text-[10px] font-bold uppercase text-amber-900">{entry.label}</span>
+                          <code className="block break-words text-[11px] leading-5 text-amber-900">{entry.values.join(', ')}</code>
                         </div>
-                      )}
+                      ))}
 
-                      {!inspectFullText.paperStructureSummary.hasParsedQuestions && (
-                        <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
-                          The shared parser did not identify question IDs in the combined source text. Review the source text before attempting an evaluation.
-                        </p>
+                      {(inspectFullText.materialMappingAudit.diagnostics || []).length > 0 && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                          <span className="mb-1 block text-[10px] font-bold uppercase text-slate-600">Audit notes</span>
+                          <ul className="list-disc space-y-1 pl-4 text-[10px] text-slate-700">
+                            {inspectFullText.materialMappingAudit.diagnostics.map((item: string, index: number) => (
+                              <li key={index}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
                       )}
                     </section>
                   )}
