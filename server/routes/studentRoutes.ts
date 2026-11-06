@@ -555,7 +555,6 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
     `).get(studentId) as Record<string, unknown> | undefined;
 
     // Evaluations summary
-    const studentEmail = req.user!.email?.toLowerCase().trim() || '';
     const evaluations = db.prepare(`
       SELECT e.id, e.display_id, e.evaluation_sequence, e.subject_name, e.level, e.material_type, e.total_marks, e.maximum_marks, e.percentage, e.grade,
              e.confidence_score, e.status, e.document_validation_status, e.created_at, e.completed_at
