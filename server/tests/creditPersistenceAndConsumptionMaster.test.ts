@@ -263,6 +263,62 @@ async function runMasterCreditSuite() {
   );
   assert(getValidStudentCreditBalance(testStudentId) === 1, 'No-debit refund attempt leaves paid-credit balance unchanged');
 
+  // Prior-month failures must not reduce free evaluations already used successfully
+  // in the current month. Use a separate student so later tests remain isolated.
+  console.log('\n--- Verifying Prior-Month Refund Does Not Reduce Current-Month Usage ---');
+  const monthTestStudentId = `usr_test_month_refund_${crypto.randomBytes(6).toString('hex')}`;
+  const monthTestEmail = `test_month_refund_${crypto.randomBytes(4).toString('hex')}@example.com`;
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, full_name, role, status)
+    VALUES (?, ?, 'hash', 'Month Refund Test Student', 'STUDENT', 'ACTIVE')
+  `).run(monthTestStudentId, monthTestEmail);
+  db.prepare(`
+    INSERT INTO student_profiles (
+      user_id, icai_registration_number, ca_level,
+      free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
+      purchased_credits, paid_credits
+    ) VALUES (?, 'WRO1234568', 'INTERMEDIATE', 0, 0, 2, 0, 0)
+  `).run(monthTestStudentId);
+
+  const currentMonthEval = 'eval_current_month_kept';
+  assert(
+    consumeEvaluationEntitlementAtomic({ userId: monthTestStudentId, evaluationId: currentMonthEval }).source === 'PERSONAL_FREE',
+    'Successful current-month evaluation consumes one free slot'
+  );
+  const previousMonthFailedEval = 'eval_previous_month_failed';
+  assert(
+    consumeEvaluationEntitlementAtomic({ userId: monthTestStudentId, evaluationId: previousMonthFailedEval }).source === 'PERSONAL_FREE',
+    'Failed evaluation originally consumes a free slot'
+  );
+  const previousMonth = new Date();
+  previousMonth.setDate(1);
+  previousMonth.setMonth(previousMonth.getMonth() - 1);
+  db.prepare(`
+    UPDATE credit_ledger
+    SET created_at = ?
+    WHERE student_id = ? AND evaluation_id = ? AND source = 'FREE_MONTHLY_EVALUATION'
+  `).run(previousMonth.toISOString(), monthTestStudentId, previousMonthFailedEval);
+
+  ensureMonthlyFreeEvaluationsReset(monthTestStudentId);
+  assert(
+    Number((db.prepare('SELECT monthly_free_evaluations_used FROM student_profiles WHERE user_id = ?').get(monthTestStudentId) as any).monthly_free_evaluations_used) === 1,
+    'Monthly reset retains the one successful evaluation from the current month'
+  );
+  assert(
+    refundEvaluationCreditAtomic({ userId: monthTestStudentId, evaluationId: previousMonthFailedEval, entitlementSource: 'PERSONAL_FREE' }) === true,
+    'Prior-month failed evaluation refund is recorded'
+  );
+  assert(
+    Number((db.prepare('SELECT monthly_free_evaluations_used FROM student_profiles WHERE user_id = ?').get(monthTestStudentId) as any).monthly_free_evaluations_used) === 1,
+    'Prior-month refund does not reduce current-month successful usage'
+  );
+  assert(getStudentCreditDetailedSummary(monthTestStudentId).freeEvaluationsRemaining === 1,
+    'Only the unused current-month free slot remains');
+
+  db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(monthTestStudentId);
+  db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(monthTestStudentId);
+  db.prepare('DELETE FROM users WHERE id = ?').run(monthTestStudentId);
+
   // Clean up test data
   console.log('\n--- Cleaning up test records ---');
   db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(testStudentId);
