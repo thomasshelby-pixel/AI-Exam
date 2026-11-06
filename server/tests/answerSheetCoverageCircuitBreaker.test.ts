@@ -104,6 +104,8 @@ async function run() {
   assert.equal(resolveMcqSelectionNumber('Question 4', nestedMcqStructure), '13');
   assert.equal(resolveMcqSelectionNumber('MCQ4', nestedMcqStructure), '4');
   assert.equal(resolveMcqSelectionNumber('Q1', nestedMcqStructure), undefined, 'A parent MCQ group must not be mistaken for its first nested MCQ.');
+  assert.equal(resolveMcqSelectionNumber('1(iv)', nestedMcqStructure), '4');
+  assert.equal(resolveMcqSelectionNumber('1', nestedMcqStructure), '1', 'A truly flat MCQ1 response remains supported.');
 
   const nestedMcqPrompt = buildPageCoveragePrompt({
     pageNumber: 3,
@@ -132,6 +134,15 @@ async function run() {
   }));
   assert.equal(nestedSelections.mcqSelections['1(iv)'], 'C');
   assert.equal(nestedSelections.mcqSelections['4'], 'B');
+
+  const ambiguousParentSelection = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    detectedQuestions: [],
+    mcqSelections: { 'Q1': 'C' },
+  }));
+  assert.equal(ambiguousParentSelection.mcqSelections['Q1'], 'C', 'A parent-labelled Q1 must not be flattened into MCQ1.');
+  assert.equal(resolveMcqSelectionNumber('Q1', nestedMcqStructure), undefined);
 
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_PARTIALLY_READABLE',
@@ -168,6 +179,7 @@ async function run() {
       { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false, topic: 'Impairment loss' },
       { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false, topic: 'Balance sheet' },
       { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 5, isMcq: false, topic: 'Journal entries' },
+      { fullQuestionCode: 'Q2(d)', questionNumber: '2', subQuestionNumber: 'd', maximumMarks: 2, isMcq: false, topic: 'Short-term provision' },
       { fullQuestionCode: 'Q3(a)', questionNumber: '3', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false, topic: 'Revenue recognition' },
     ],
     mcqs: [],
