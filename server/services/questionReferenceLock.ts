@@ -427,6 +427,12 @@ export function extractLockedQuestionSlice(
     const trimmed = line.trim();
     const lower = trimmed.toLowerCase();
 
+    // A Division A Question Paper slice must not absorb Division B descriptive
+    // questions that restart their own numbering sequence.
+    if (docType === 'QP' && /^Division\\s+B\\b/i.test(trimmed)) {
+      break;
+    }
+
     let isStop = false;
 
     // Check if next sub-question started
