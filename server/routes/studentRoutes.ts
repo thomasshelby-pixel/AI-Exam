@@ -120,31 +120,41 @@ async function refreshLiveEvaluationRecord<T extends Record<string, any>>(record
   if (!queue) return record;
 
   const queueStatus = String(queue.status || '').toUpperCase();
-  const remoteEvaluationStatus = String(queue.evaluationStatus || (
-    queueStatus === 'COMPLETED' || queueStatus === 'NEEDS_REVIEW' || queueStatus === 'FAILED'
-      ? queueStatus
-      : queueStatus === 'QUEUED' || queueStatus === 'RUNNING'
-        ? 'PROCESSING'
-        : ''
-  )).toUpperCase();
+  const queueIsTerminal = EVALUATION_TERMINAL_STATUSES.has(queueStatus);
+  // The durable queue's terminal state wins over a delayed progress merge that
+  // might have written an older evaluationStatus field a moment later.
+  const remoteEvaluationStatus = queueIsTerminal
+    ? queueStatus
+    : String(queue.evaluationStatus || (
+        queueStatus === 'QUEUED' || queueStatus === 'RUNNING'
+          ? 'PROCESSING'
+          : ''
+      )).toUpperCase();
 
-  if (EVALUATION_TERMINAL_STATUSES.has(remoteEvaluationStatus) || EVALUATION_TERMINAL_STATUSES.has(queueStatus)) {
+  if (EVALUATION_TERMINAL_STATUSES.has(remoteEvaluationStatus) || queueIsTerminal) {
     const cloudEvaluation = await getFirestoreDoc<any>('evaluations', evaluationId).catch(() => null);
     if (cloudEvaluation) {
       const normalized = normalizeEvaluationRejectionStatus(cloudEvaluation) as Record<string, any>;
-      updateLocalEvaluationFromFirestore(cloudEvaluation);
-      return {
-        ...record,
+      const cloudStatus = String(normalized.status || cloudEvaluation.status || '').toUpperCase();
+      const resolvedStatus = EVALUATION_TERMINAL_STATUSES.has(cloudStatus)
+        ? cloudStatus
+        : (queueIsTerminal ? queueStatus : remoteEvaluationStatus);
+      const refreshed = {
         ...cloudEvaluation,
-        status: String(normalized.status || cloudEvaluation.status || remoteEvaluationStatus).toUpperCase(),
-      } as T;
+        status: resolvedStatus,
+        progress_stage: queue.progressStage || cloudEvaluation.progress_stage,
+        progress_percentage: queue.progressPercentage ?? cloudEvaluation.progress_percentage,
+        progress_message: queue.progressMessage || queue.lastError || cloudEvaluation.progress_message,
+      };
+      updateLocalEvaluationFromFirestore(refreshed);
+      return { ...record, ...refreshed } as T;
     }
     return {
       ...record,
       status: remoteEvaluationStatus || queueStatus,
       progress_stage: queue.progressStage || record.progress_stage,
       progress_percentage: queue.progressPercentage ?? 100,
-      progress_message: queue.progressMessage || record.progress_message,
+      progress_message: queue.progressMessage || queue.lastError || record.progress_message,
     } as T;
   }
 
