@@ -38,7 +38,8 @@ const SECTION_BOUNDARY =
   /^(?:SECTION\s+[A-Z0-9]+|DIVISION\s+[A-Z0-9]+|PART\s+[IVX0-9]+|DESCRIPTIVE\s+QUESTIONS|OBJECTIVE\s+QUESTIONS)\b/i;
 
 function canonical(raw: string): string {
-  return toCanonicalQuestionId(raw).toUpperCase();
+  // Preserve the canonical service's public casing (Q5(a), MCQ1).
+  return toCanonicalQuestionId(raw);
 }
 
 function uniqueSorted(values: Iterable<string>): string[] {
@@ -64,12 +65,21 @@ function extractQuestionPaperInventory(text: string): {
   if (!text?.trim()) return { allIds: [], mcqIds: [], descriptiveIds: [] };
 
   const lines = text.replace(/\r/g, '').split('\n');
-  const objectiveSectionPresent =
-    /multiple\s*choice\s*questions|objective(?:\s*type)?\s*questions|division\s*a\b|mcq/i.test(text);
-  const candidates: Array<{ lineIndex: number; questionNumber: string; inlineSub?: string; stem: string }> = [];
+  const objectiveHeader = /multiple\s*choice\s*questions|objective(?:\s*type)?\s*questions|division\s*a\b|\bMCQ\b/i;
+  const descriptiveHeader = /descriptive\s*questions|division\s*b\b|subjective\s*questions|long\s*answer\s*questions/i;
+  let currentObjectiveSection: boolean | null = null;
+  const candidates: Array<{
+    lineIndex: number;
+    questionNumber: string;
+    inlineSub?: string;
+    stem: string;
+    objectiveSection: boolean | null;
+  }> = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
+    if (descriptiveHeader.test(line)) currentObjectiveSection = false;
+    else if (objectiveHeader.test(line)) currentObjectiveSection = true;
     if (!line || line.length < 6 || SECTION_BOUNDARY.test(line)) continue;
 
     let match = line.match(QUESTION_LINE);
@@ -81,6 +91,7 @@ function extractQuestionPaperInventory(text: string): {
           questionNumber,
           inlineSub: match[2] || undefined,
           stem: String(match[4] || '').trim(),
+          objectiveSection: currentObjectiveSection,
         });
       }
       continue;
@@ -97,7 +108,7 @@ function extractQuestionPaperInventory(text: string): {
         !/^\([a-d]\)$/i.test(stem) &&
         !/^(?:page|time|marks?|maximum marks?)\b/i.test(stem)
       ) {
-        candidates.push({ lineIndex: i, questionNumber, stem });
+        candidates.push({ lineIndex: i, questionNumber, stem, objectiveSection: currentObjectiveSection });
       }
     }
   }
@@ -110,11 +121,21 @@ function extractQuestionPaperInventory(text: string): {
     const nextQuestionLine = candidates[i + 1]?.lineIndex ?? lines.length;
     const scanEnd = Math.min(nextQuestionLine, candidate.lineIndex + 22);
     const windowLines = lines.slice(candidate.lineIndex + 1, scanEnd);
-    const optionLines = windowLines.filter((line) => MCQ_OPTION_LINE.test(line));
-    const hasOptions = optionLines.length >= 2;
+    const optionMatches = windowLines
+      .map((line) => line.match(MCQ_OPTION_LINE))
+      .filter((match): match is RegExpMatchArray => Boolean(match));
+    const optionLabels = optionMatches.map((match) => String(match[1] || match[2] || '').toLowerCase());
+    const hasOptions = optionMatches.length >= 2;
+    const hasCompleteMcqOptionSet = ['a', 'b', 'c', 'd'].every((label) => optionLabels.includes(label));
     const isMcq =
       hasOptions &&
-      (objectiveSectionPresent || optionLines.length >= 3 || /\b(?:select|choose)\s+the\s+correct\s+option\b/i.test(candidate.stem));
+      (
+        candidate.objectiveSection === true ||
+        (candidate.objectiveSection === null && (
+          hasCompleteMcqOptionSet ||
+          /\b(?:select|choose)\s+the\s+correct\s+option\b/i.test(candidate.stem)
+        ))
+      );
 
     if (isMcq) {
       mcqIds.push(canonical(`MCQ${candidate.questionNumber}`));
