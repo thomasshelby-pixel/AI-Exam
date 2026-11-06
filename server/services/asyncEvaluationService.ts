@@ -88,8 +88,8 @@ const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED =
 const activeJobs = new Map<string, Promise<void>>();
 const durableQueueStartingJobs = new Set<string>();
 const DURABLE_QUEUE_COLLECTION = 'evaluation_jobs';
-const DURABLE_QUEUE_LEASE_MS = 15 * 60 * 1000;
-const DURABLE_QUEUE_HEARTBEAT_MS = 60 * 1000;
+const DURABLE_QUEUE_LEASE_MS = 3 * 60 * 1000;
+const DURABLE_QUEUE_HEARTBEAT_MS = 30 * 1000;
 const DURABLE_QUEUE_POLL_MS = 30 * 1000;
 const DURABLE_QUEUE_MAX_ATTEMPTS = 2;
 const DURABLE_QUEUE_MAX_ACTIVE_JOBS = 2;
@@ -450,6 +450,7 @@ async function runDurableEvaluationQueueRecord(
     })();
 
     activeJobs.set(evaluationId, workerPromise);
+    durableQueueStartingJobs.delete(evaluationId);
     await workerPromise;
   } finally {
     activeJobs.delete(evaluationId);
@@ -468,6 +469,7 @@ async function processDurableEvaluationQueue(initialJobId?: string, initialJob?:
     void runDurableEvaluationQueueRecord(initialJobId, initialJob).catch((error) =>
       console.error(`[DurableEvalQueue] Failed to start accepted job ${initialJobId}:`, error)
     );
+    return;
   }
 
   if (activeJobs.size + durableQueueStartingJobs.size >= DURABLE_QUEUE_MAX_ACTIVE_JOBS) return;
