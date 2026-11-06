@@ -1148,11 +1148,15 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       });
     }
 
-    const parsedMtpSeries = (req.body.mtpSeries !== undefined && req.body.mtpSeries !== null && req.body.mtpSeries !== '')
-      ? Number(req.body.mtpSeries)
-      : (req.body.mtp_series !== undefined && req.body.mtp_series !== null && req.body.mtp_series !== '')
-        ? Number(req.body.mtp_series)
-        : undefined;
+    // MTP Series is not a shared mock/model number. Ignore stale MTP fields
+    // unless this request is explicitly an MTP evaluation.
+    const parsedMtpSeries = materialType === 'MTP'
+      ? (req.body.mtpSeries !== undefined && req.body.mtpSeries !== null && req.body.mtpSeries !== '')
+        ? Number(req.body.mtpSeries)
+        : (req.body.mtp_series !== undefined && req.body.mtp_series !== null && req.body.mtp_series !== '')
+          ? Number(req.body.mtp_series)
+          : undefined
+      : undefined;
 
     const rawSourceFormat = (req.body.sourceFormat || req.body.source_format || '').toString().trim().toUpperCase();
     const sourceFormat = (rawSourceFormat === 'COMBINED' || rawSourceFormat === 'SEPARATE') ? (rawSourceFormat as 'SEPARATE' | 'COMBINED') : undefined;
