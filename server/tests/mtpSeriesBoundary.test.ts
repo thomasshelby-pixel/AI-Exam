@@ -7,7 +7,10 @@ import {
   normalizeMtpSeriesNumber,
 } from '../services/materialDuplicateProtectionService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
-import { buildEvaluationReferenceSourceInstructions } from '../gemini.js';
+import {
+  buildEvaluationReferenceSourceInstructions,
+  buildReferenceSourceAntiInjectionInstruction,
+} from '../gemini.js';
 import { buildChunkReferenceSourceInstructions } from '../services/questionChunkEvaluator.js';
 
 // MTP retains the official two-series identity. The permissive normalizer is
@@ -96,6 +99,35 @@ assert.match(modelPromptSource.referenceBasisInstruction, /NOT an MTP series/i);
 assert.match(modelPromptSource.referenceBasisInstruction, /Never substitute or borrow an MTP Series 1\/2 paper/i);
 assert.doesNotMatch(modelPromptSource.referenceBasisLabel, /MTP Series/i);
 
+// PYQ gets its own authoritative source labels and may not borrow MTP or Model Test references.
+const pyqPromptSource = buildEvaluationReferenceSourceInstructions({
+  materialType: 'PYQ',
+});
+assert.match(pyqPromptSource.referenceBasisLabel, /Past Year Question Paper/i);
+assert.match(pyqPromptSource.referenceBasisInstruction, /Do not substitute MTP or Model Test references/i);
+assert.match(pyqPromptSource.questionPaperHeading, /PAST YEAR QUESTION PAPER/i);
+
+// Faculty Mock is identified by the exact published mock ID and its private TXT.
+const facultyPromptSource = buildEvaluationReferenceSourceInstructions({
+  materialType: 'FACULTY_MOCK_TEST',
+  facultyMockTestId: 'faculty-mock-07',
+});
+assert.match(facultyPromptSource.referenceBasisLabel, /Faculty Mock faculty-mock-07/i);
+assert.match(facultyPromptSource.referenceBasisInstruction, /exact published Faculty Mock with ID faculty-mock-07/i);
+assert.match(facultyPromptSource.referenceBasisInstruction, /private TXT evaluation reference stored against that mock/i);
+assert.match(facultyPromptSource.referenceBasisInstruction, /Do not substitute or supplement it with global ICAI PYQ\/MTP keys/i);
+
+const pyqAntiInjection = buildReferenceSourceAntiInjectionInstruction(
+  pyqPromptSource.referenceBasisInstruction,
+);
+assert.match(pyqAntiInjection, /strictly using this authoritative source-isolation rule: Use only/i);
+assert.doesNotMatch(pyqAntiInjection, /strictly against Use only/i);
+
+const facultyAntiInjection = buildReferenceSourceAntiInjectionInstruction(
+  facultyPromptSource.referenceBasisInstruction,
+);
+assert.match(facultyAntiInjection, /Faculty Mock with ID faculty-mock-07/i);
+
 const mtpChunkPrompt = buildChunkReferenceSourceInstructions({
   sourceType: 'GLOBAL',
   materialType: 'MTP',
@@ -113,6 +145,23 @@ const modelChunkPrompt = buildChunkReferenceSourceInstructions({
 assert.match(modelChunkPrompt.questionPaperHeading, /MODEL TEST PAPER 4/i);
 assert.match(modelChunkPrompt.isolationInstruction, /not an MTP series/i);
 assert.doesNotMatch(modelChunkPrompt.isolationInstruction, /MTP Series 1\/2 question/i);
+
+const pyqChunkPrompt = buildChunkReferenceSourceInstructions({
+  sourceType: 'GLOBAL',
+  materialType: 'PYQ',
+});
+assert.match(pyqChunkPrompt.questionPaperHeading, /PAST YEAR QUESTION PAPER/i);
+assert.match(pyqChunkPrompt.isolationInstruction, /Do not substitute an MTP or Model Test reference/i);
+
+const facultyChunkPrompt = buildChunkReferenceSourceInstructions({
+  sourceType: 'FACULTY_MOCK',
+  materialType: 'FACULTY_MOCK_TEST',
+  facultyMockTestId: 'faculty-mock-07',
+});
+assert.match(facultyChunkPrompt.questionPaperHeading, /FACULTY MOCK faculty-mock-07/i);
+assert.match(facultyChunkPrompt.isolationInstruction, /exact selected Faculty Mock with ID faculty-mock-07/i);
+assert.match(facultyChunkPrompt.isolationInstruction, /private TXT reference/i);
+assert.match(facultyChunkPrompt.isolationInstruction, /Never borrow a global ICAI PYQ\/MTP answer/i);
 
 // Runtime guards must not parse/pass an MTP series for a Model Test request,
 // and the final evaluator call must discard stale queued cross-type identifiers.
@@ -135,5 +184,13 @@ const geminiSource = readFileSync(
 );
 assert.match(geminiSource, /if \(params\.materialType === 'MTP'\) \{/);
 assert.doesNotMatch(geminiSource, /params\.materialType === 'MTP' \|\| \(params\.mtpSeries/);
+assert.match(geminiSource, /buildReferenceSourceAntiInjectionInstruction\(referenceBasisInstruction\)/);
 
-console.log('MTP two-series / Model Test separation and AI prompt isolation tests passed.');
+const chunkEvaluatorSource = readFileSync(
+  new URL('../services/questionChunkEvaluator.ts', import.meta.url),
+  'utf8',
+);
+assert.match(chunkEvaluatorSource, /\$\{sourceInstructions\.isolationInstruction\}/);
+assert.match(chunkEvaluatorSource, /\$\{sourceInstructions\.questionPaperHeading\}/);
+
+console.log('MTP, Model Test, PYQ and Faculty Mock prompt/source-isolation regression tests passed.');
