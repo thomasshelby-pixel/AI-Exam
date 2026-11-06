@@ -438,9 +438,6 @@ export function resolveContextualQuestionIdentity(options: {
     if (!mappingBasis) {
       return { requiresReview: true, reason: 'The AI supplied a question ID without stating whether it came from the visible label, source content, or a verified continuation.' };
     }
-    if (mappingBasis === 'UNCERTAIN') {
-      return { requiresReview: true, reason: 'The AI marked the source-content question identity as uncertain.' };
-    }
     if (mappingBasis === 'CONTINUATION' && !isContinuation) {
       return { requiresReview: true, reason: 'The answer was mapped as a continuation but the continuation flag was not confirmed.' };
     }
