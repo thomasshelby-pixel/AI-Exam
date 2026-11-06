@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { refundEvaluationCreditAtomic, syncStudentCreditsToFirestore } from './studentCreditService.js';
 import { buildStudentOwnershipSql, getStudentOwnershipParams } from './studentOwnershipService.js';
