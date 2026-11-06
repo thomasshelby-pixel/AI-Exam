@@ -2007,7 +2007,16 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
 
     query += ' ORDER BY e.created_at DESC';
 
-    const records = db.prepare(query).all(...params);
+    const records = db.prepare(query).all(...params) as any[];
+    // Student history is polled while an evaluation is processing. Use that
+    // normal read to wake a durable queued/stale job after an App Hosting
+    // instance restart; the Firestore lease still prevents duplicate workers.
+    for (const record of records) {
+      const recordStatus = String(record.status || '').toUpperCase();
+      if (recordStatus === 'PROCESSING' || recordStatus === 'QUEUED') {
+        nudgeDurableEvaluationQueue(String(record.id));
+      }
+    }
     return res.json({ evaluations: records });
   } catch (error: unknown) {
     console.error('List evaluations error:', error);
