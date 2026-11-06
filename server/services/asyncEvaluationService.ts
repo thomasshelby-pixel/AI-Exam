@@ -1293,6 +1293,15 @@ export function isDurableQueueLeaseExpired(record: { status?: string; leaseExpir
   return !Number.isFinite(expiry) || expiry <= nowMs;
 }
 
+export function canSafelyReplayDurableQueueRecord(
+  record: { status?: string; leaseExpiresAt?: string | null; executionStartedAt?: string | null; attemptCount?: number },
+  nowMs = Date.now()
+): boolean {
+  if (!isDurableQueueLeaseExpired(record, nowMs)) return false;
+  if (String(record.status || '').toUpperCase() === 'RUNNING' && record.executionStartedAt) return false;
+  return Number(record.attemptCount || 0) < DURABLE_QUEUE_MAX_ATTEMPTS;
+}
+
 function isPersonalEvaluationEntitlement(source: unknown): source is 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' {
   return source === 'PROMO' || source === 'PERSONAL_FREE' || source === 'PERSONAL_PURCHASED_CREDIT';
 }
@@ -1434,7 +1443,7 @@ async function claimDurableEvaluationJob(evaluationId: string): Promise<
       status === 'RUNNING' &&
       isDurableQueueLeaseExpired(current, Date.now()) &&
       Boolean(current.executionStartedAt);
-    if (workerDiedAfterExecutionStarted || attempts >= DURABLE_QUEUE_MAX_ATTEMPTS) {
+    if (workerDiedAfterExecutionStarted || !canSafelyReplayDurableQueueRecord(current, Date.now())) {
       const lastError = workerDiedAfterExecutionStarted
         ? 'The worker lease expired after the AI evaluation pipeline had started. Automatic replay was blocked to prevent duplicate AI charges; the evaluation was failed and its exact entitlement will be restored.'
         : `The evaluation worker lease expired ${attempts} times before execution started. Automatic retries stopped.`;
