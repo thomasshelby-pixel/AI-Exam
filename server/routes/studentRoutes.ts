@@ -110,7 +110,7 @@ function updateLocalEvaluationFromFirestore(evaluation: Record<string, any>): vo
   }
 }
 
-async function refreshLiveEvaluationRecord<T extends Record<string, any>>(record: T): Promise<T> {
+async function refreshLiveEvaluationRecord<T extends Record<string, any>>(record: T, includeFullCloudRecord = false): Promise<T> {
   const evaluationId = String(record.id || '').trim();
   if (!evaluationId) return record;
   const localStatus = String(record.status || '').toUpperCase();
@@ -140,13 +140,30 @@ async function refreshLiveEvaluationRecord<T extends Record<string, any>>(record
         ? cloudStatus
         : (queueIsTerminal ? queueStatus : remoteEvaluationStatus);
       const refreshed = {
-        ...cloudEvaluation,
+        ...(includeFullCloudRecord ? cloudEvaluation : {
+          total_marks: cloudEvaluation.total_marks,
+          maximum_marks: cloudEvaluation.maximum_marks,
+          percentage: cloudEvaluation.percentage,
+          grade: cloudEvaluation.grade,
+          confidence_score: cloudEvaluation.confidence_score,
+          completed_at: cloudEvaluation.completed_at,
+          rejection_reason: normalized.rejection_reason ?? cloudEvaluation.rejection_reason,
+          error_message: cloudEvaluation.error_message,
+          evaluation_source: cloudEvaluation.evaluation_source,
+          material_source: cloudEvaluation.material_source,
+          sponsoring_institute_id: cloudEvaluation.sponsoring_institute_id,
+          institute_id: cloudEvaluation.institute_id,
+          batch_id: cloudEvaluation.batch_id,
+          entitlement_source: cloudEvaluation.entitlement_source,
+          consumed_from_institute_allocation: cloudEvaluation.consumed_from_institute_allocation,
+          consumed_from_personal_credits: cloudEvaluation.consumed_from_personal_credits,
+        }),
         status: resolvedStatus,
         progress_stage: queue.progressStage || cloudEvaluation.progress_stage,
         progress_percentage: queue.progressPercentage ?? cloudEvaluation.progress_percentage,
         progress_message: queue.progressMessage || queue.lastError || cloudEvaluation.progress_message,
       };
-      updateLocalEvaluationFromFirestore(refreshed);
+      updateLocalEvaluationFromFirestore(cloudEvaluation);
       return { ...record, ...refreshed } as T;
     }
     return {
@@ -2190,7 +2207,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
     }
 
     if (record && !EVALUATION_TERMINAL_STATUSES.has(String(record.status || '').toUpperCase())) {
-      record = await refreshLiveEvaluationRecord(record);
+      record = await refreshLiveEvaluationRecord(record, true);
     }
 
     let resultJson: EvaluationResult | null = null;
