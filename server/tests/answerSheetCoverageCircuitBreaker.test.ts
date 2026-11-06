@@ -80,15 +80,15 @@ async function run() {
       'Explain the accounting treatment of impairment loss under AS 28.',
       'QUESTION 2(a) - 5 Marks',
       'Prepare a Balance Sheet after considering the given adjustments.',
-    ].join('\\n'),
+    ].join('\n'),
     suggestedAnswersText: [
       'SUGGESTED ANSWERS',
       'QUESTION 1(a)',
       'Compare carrying amount with recoverable amount and recognise impairment loss.',
       'QUESTION 2(a)',
       'Prepare the Balance Sheet with correct classification of assets and liabilities.',
-    ].join('\\n'),
-    markingSchemeText: 'QUESTION 1(a) - 5 Marks\\nQUESTION 2(a) - 5 Marks',
+    ].join('\n'),
+    markingSchemeText: 'QUESTION 1(a) - 5 Marks\nQUESTION 2(a) - 5 Marks',
   });
   const sourcedQ1 = sourceStructure.subQuestions.find((question) => question.fullQuestionCode === 'Q1(a)');
   assert.ok(sourcedQ1?.questionText?.includes('impairment loss'), 'The exact QP question wording must be attached to the authoritative ID.');
