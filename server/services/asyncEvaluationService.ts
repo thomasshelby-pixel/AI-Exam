@@ -1298,7 +1298,10 @@ export function canSafelyReplayDurableQueueRecord(
   nowMs = Date.now()
 ): boolean {
   if (!isDurableQueueLeaseExpired(record, nowMs)) return false;
-  if (String(record.status || '').toUpperCase() === 'RUNNING' && record.executionStartedAt) return false;
+  // Once set, executionStartedAt is intentionally permanent for this queue record.
+  // A worker that returns with a non-terminal DB state must not reset the queue to
+  // QUEUED and accidentally replay the same Gemini request.
+  if (record.executionStartedAt) return false;
   return Number(record.attemptCount || 0) < DURABLE_QUEUE_MAX_ATTEMPTS;
 }
 
@@ -1440,9 +1443,11 @@ async function claimDurableEvaluationJob(evaluationId: string): Promise<
     // Once the AI pipeline has started, replaying after a lost lease could incur
     // duplicate Gemini calls. Fail/refund exactly once instead of auto-restarting it.
     const workerDiedAfterExecutionStarted =
-      status === 'RUNNING' &&
-      isDurableQueueLeaseExpired(current, Date.now()) &&
-      Boolean(current.executionStartedAt);
+      Boolean(current.executionStartedAt) &&
+      (
+        (status === 'RUNNING' && isDurableQueueLeaseExpired(current, Date.now())) ||
+        status === 'QUEUED'
+      );
     if (workerDiedAfterExecutionStarted || !canSafelyReplayDurableQueueRecord(current, Date.now())) {
       const lastError = workerDiedAfterExecutionStarted
         ? 'The worker lease expired after the AI evaluation pipeline had started. Automatic replay was blocked to prevent duplicate AI charges; the evaluation was failed and its exact entitlement will be restored.'
