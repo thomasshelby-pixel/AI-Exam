@@ -52,11 +52,10 @@ export function restoreFailedEvaluationEntitlementsForStudent(studentId: string,
       console.error('[EvaluationEntitlementRecovery] Could not restore terminal failed evaluation entitlement:', failed.id, refundError);
     }
   }
-}
 
   // Also recover legacy deletions whose evaluation row no longer exists.
   restoreDeletedEvaluationEntitlementsForStudent(studentId);
-
+}
 
 /**
  * Reconciles legacy evaluations deleted before credit-ledger links were preserved.
