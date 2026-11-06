@@ -1546,7 +1546,6 @@ async function failDurableQueueJobBeforeExecution(
   if (
     (update.changes === 1 || getEvaluationStatus(record.evaluationId) !== 'COMPLETED') &&
     record.creditAlreadyConsumed &&
-    !record.isRecoveryRetry &&
     isPersonalEvaluationEntitlement(record.entitlementSource)
   ) {
     try {
@@ -1808,7 +1807,6 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
     if (
       failed.changes === 1 &&
       job.creditAlreadyConsumed &&
-      !job.isRecoveryRetry &&
       isPersonalEvaluationEntitlement(job.entitlementSource)
     ) {
       try {
