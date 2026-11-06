@@ -88,8 +88,8 @@ for (const course of [
 ]) {
   const audit = buildMaterialQuestionMappingAudit({
     questionPaperText: questionPaper.replace('BUSINESS ECONOMICS', course.subject.toUpperCase()),
-    suggestedAnswers,
-    markingScheme,
+    suggestedAnswersText: suggestedAnswers,
+    markingSchemeText: markingScheme,
   });
   assert.equal(audit.status, 'MATCHED', `${course.level} / ${course.subject} must use the same format-neutral audit.`);
 }
