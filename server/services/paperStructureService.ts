@@ -32,6 +32,8 @@ export interface PaperStructureSubQuestion {
   questionText?: string;
   /** Compact answer-reference anchor extracted from the selected Suggested Answers. */
   suggestedAnswerAnchor?: string;
+  /** Original label in the source MCQ section, including nested Roman numbering. */
+  sourceQuestionLabel?: string;
   section: 'A' | 'B' | 'GENERAL';
   division?: 'A' | 'B';     // 'A' = MCQs, 'B' = Descriptive
 }
@@ -152,6 +154,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   officialKey: string;
   explanation: string;
   provision?: string;
+  sourceQuestionLabel?: string;
 }> {
   const result = new Map<string, { officialKey: string; explanation: string; provision?: string }>();
   if (!suggestedAnswersText || typeof suggestedAnswersText !== 'string') return result;
@@ -240,6 +243,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
         officialKey: entry.key,
         explanation,
         provision: provisionMatch?.[0],
+        sourceQuestionLabel: entry.sourceLabel,
       });
     });
     return result;
@@ -260,6 +264,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
         officialKey: rawKey,
         explanation: rawExplanation,
         provision: provisionMatch?.[0],
+        sourceQuestionLabel: `Question ${qNum}`,
       });
     }
   }
@@ -578,6 +583,8 @@ function buildGenericPaperStructure(options: {
       compulsory: true,
       isMcq: true,
       officialKey: data.officialKey,
+      officialExplanation: data.explanation,
+      sourceQuestionLabel: data.sourceQuestionLabel,
       topic: `Multiple Choice Question ${qNum}`,
       section: parseInt(qNum, 10) > 8 ? 'B' : 'A',
       division: 'A',
