@@ -50,9 +50,9 @@ export interface PageCoverageModelOutput {
  * must not all collapse to the parent number 1. */
 function normalizeMcqSelectionLabel(raw: string): string {
   const value = String(raw || '').trim()
-    .replace(/^(?:QUESTION|MCQ|OBJECTIVE|Q\\.?)\\s*/i, '')
-    .replace(/\\s+/g, '');
-  const match = value.match(/^(\\d{1,2})(?:\\(([a-z0-9]+)\\))?$/i);
+    .replace(/^(?:QUESTION|MCQ|OBJECTIVE|Q\.?)\s*/i, '')
+    .replace(/\s+/g, '');
+  const match = value.match(/^(\d{1,2})(?:\(([a-z0-9]+)\))?$/i);
   return match ? (match[2] ? `${match[1]}(${match[2].toLowerCase()})` : match[1]) : '';
 }
 
@@ -69,8 +69,8 @@ export function resolveMcqSelectionNumber(
   );
   if (matchingSource) return String(matchingSource.questionNumber).replace(/[^0-9]/g, '') || undefined;
   const raw = String(rawKey || '').trim();
-  const isFlatIdentifier = /^(?:MCQ|OBJECTIVE)\\s*\\d{1,2}$/i.test(raw) || /^\\d{1,2}$/.test(raw);
-  if (!isFlatIdentifier || !/^\\d{1,2}$/.test(normalized)) return undefined;
+  const isFlatIdentifier = /^(?:MCQ|OBJECTIVE)\s*\d{1,2}$/i.test(raw) || /^\d{1,2}$/.test(raw);
+  if (!isFlatIdentifier || !/^\d{1,2}$/.test(normalized)) return undefined;
   return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === normalized)
     ? normalized
     : undefined;
