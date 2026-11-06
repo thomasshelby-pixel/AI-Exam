@@ -62,7 +62,7 @@ const standaloneQ4Paper = [
   '(b) Second option',
   'Division B',
   '1. Descriptive question follows.',
-].join('\\n');
+].join('\n');
 const lockedStandaloneQ4 = extractLockedQuestionSlice(standaloneQ4Paper, '4', undefined, 'QP');
 assert.equal(lockedStandaloneQ4.found, true, 'A standalone numeric QP heading like "4. ..." must be extractable.');
 assert.match(lockedStandaloneQ4.snippet, /standalone objective answer/i);
