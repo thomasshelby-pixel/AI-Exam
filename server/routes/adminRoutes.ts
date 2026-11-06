@@ -28,6 +28,7 @@ import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
+import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { canManuallyRestoreFreeTrialForReason } from '../services/freeTrialAbuseService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
@@ -85,7 +86,7 @@ import { generateDetailedReportPdf, isEvaluationPendingReview } from '../service
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
-import { findAuthoritativeMaterialWithFallback, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
+import { findAuthoritativeMaterialWithFallback, findEvaluationMaterialByExactIdForRecovery, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
   checkMaterialDuplicate,
   computeMaterialUniqueKey,
@@ -2597,6 +2598,17 @@ router.delete('/materials/:id', async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Material not found' });
     }
 
+    const linkedEvaluations = db.prepare(
+      'SELECT COUNT(*) AS count FROM evaluations WHERE material_id = ?'
+    ).get(materialId) as { count: number };
+    if (Number(linkedEvaluations?.count || 0) > 0) {
+      return res.status(409).json({
+        code: 'MATERIAL_IN_USE_BY_EVALUATIONS',
+        error: 'This material is linked to existing evaluations and cannot be permanently deleted. Set it to INACTIVE to stop new submissions while preserving historical recovery.',
+        linkedEvaluations: Number(linkedEvaluations.count),
+      });
+    }
+
     // 1. Delete associated files from Firebase Cloud Storage and clean up Firestore file_storage_metadata
     let filesDeleted = 0;
     try {
@@ -3131,7 +3143,11 @@ router.get('/students', (req: AuthRequest, res: Response) => {
       LEFT JOIN student_profiles p ON p.user_id = u.id
       LEFT JOIN institutes i ON i.id = p.institute_id
       LEFT JOIN permanent_free_entitlements pfe ON lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
-      LEFT JOIN evaluations e ON e.student_id = u.id
+      LEFT JOIN evaluations e ON e.student_id IN (
+        SELECT linked_user.id
+        FROM users linked_user
+        WHERE LOWER(linked_user.email) = LOWER(u.email)
+      )
       WHERE u.role = 'STUDENT'
     `;
     const params: any[] = [];
@@ -3151,6 +3167,15 @@ router.get('/students', (req: AuthRequest, res: Response) => {
 
     query += ' GROUP BY u.id ORDER BY u.created_at DESC LIMIT 200';
     const rawStudents = db.prepare(query).all(...params) as any[];
+
+    // Reconcile terminal failed/review-required evaluations before showing quota balances.
+    // The credit ledger is the source of truth; PROCESSING rows are never refunded here.
+    for (const student of rawStudents) {
+      restoreFailedEvaluationEntitlementsForStudent(
+        String(student.id),
+        String(student.email || '').toLowerCase().trim()
+      );
+    }
 
     // Authoritative enrichment using existing student evaluation entitlement and credit status systems
     const students = rawStudents.map((st) => {
@@ -3260,7 +3285,11 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       LEFT JOIN institutes i ON i.id = p.institute_id
       LEFT JOIN batches b ON b.id = p.batch_id
       LEFT JOIN permanent_free_entitlements pfe ON lower(pfe.email) = lower(u.email) AND pfe.is_active = 1
-      LEFT JOIN evaluations e ON e.student_id = u.id
+      LEFT JOIN evaluations e ON e.student_id IN (
+        SELECT linked_user.id
+        FROM users linked_user
+        WHERE LOWER(linked_user.email) = LOWER(u.email)
+      )
       WHERE u.id = ? AND u.role = 'STUDENT'
       GROUP BY u.id
     `).get(studentId) as any;
@@ -3269,14 +3298,21 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
       return res.status(404).json({ error: 'Student not found.' });
     }
 
+    restoreFailedEvaluationEntitlementsForStudent(
+      studentId,
+      String(studentRaw.email || '').toLowerCase().trim()
+    );
+
     // Recent evaluations
     const recentEvals = db.prepare(`
-      SELECT id, subject_name, level, total_marks, maximum_marks, percentage, status, created_at
-      FROM evaluations
-      WHERE student_id = ?
-      ORDER BY created_at DESC
+      SELECT e.id, e.subject_name, e.level, e.total_marks, e.maximum_marks, e.percentage, e.status, e.created_at
+      FROM evaluations e
+      LEFT JOIN users evaluation_owner ON evaluation_owner.id = e.student_id
+      WHERE e.student_id = ?
+         OR (evaluation_owner.email IS NOT NULL AND LOWER(evaluation_owner.email) = LOWER(?))
+      ORDER BY e.created_at DESC
       LIMIT 10
-    `).all(studentId);
+    `).all(studentId, String(studentRaw.email || '').toLowerCase().trim());
 
     // Recent credit ledger
     const creditLedger = db.prepare(`
@@ -4227,13 +4263,43 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       if (requestedMaterialId && materialSource === 'INSTITUTE') {
         material = db.prepare('SELECT * FROM institute_materials WHERE id = ?').get(requestedMaterialId) as any;
       } else if (requestedMaterialId) {
-        material = db.prepare("SELECT * FROM evaluation_materials WHERE id = ? AND status = 'ACTIVE'").get(requestedMaterialId) as any;
+        // This is the exact material already bound when the evaluation was accepted.
+        // Archived materials remain valid historical inputs for a safe recovery retry.
+        material = findEvaluationMaterialByExactIdForRecovery(requestedMaterialId);
+
+        // SQLite may be missing/stale after a partial Firestore hydration. Recover
+        // only the same saved ID from Firestore; never substitute another paper.
+        const hasLocalReferencePair = Boolean(
+          String(material?.question_paper_text || '').trim() &&
+          String(material?.suggested_answers_text || '').trim()
+        );
+        if (!hasLocalReferencePair) {
+          const cloudMaterial = await getFirestoreDoc<any>('evaluation_materials', requestedMaterialId).catch(() => null);
+          const cloudMaterialId = String(cloudMaterial?.id || requestedMaterialId);
+          const hasExactCloudPair = Boolean(
+            cloudMaterial &&
+            cloudMaterialId === requestedMaterialId &&
+            String(cloudMaterial.question_paper_text || '').trim() &&
+            String(cloudMaterial.suggested_answers_text || '').trim()
+          );
+          if (hasExactCloudPair) {
+            material = { ...cloudMaterial, id: requestedMaterialId };
+            try {
+              syncMaterialRowToSqlite(material);
+              material = findEvaluationMaterialByExactIdForRecovery(requestedMaterialId) || material;
+            } catch (cacheRestoreError) {
+              console.warn('[AdminRecovery] Exact Firestore source found but SQLite cache refresh failed:', requestedMaterialId, cacheRestoreError);
+            }
+          }
+        }
       }
 
       // A missing foreign key is recoverable: match against the evaluation's own
       // subject, level, attempt, paper and material type. The resolver enforces
       // attempt/paper/type filters and requires both reference texts.
-      if (!material && materialSource !== 'INSTITUTE') {
+      // Only metadata-resolve legacy rows that never stored a material ID.
+      // If a previously linked exact ID is gone, do not substitute a newer/different paper.
+      if (!material && !requestedMaterialId && materialSource !== 'INSTITUTE') {
         const rawLevel = String(evaluation.level || 'INTERMEDIATE').toUpperCase();
         const level = rawLevel.replace(/^CA_/, '');
         const subjectKey = String(evaluation.subject_key || evaluation.subject_name || '').trim();
