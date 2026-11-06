@@ -29,6 +29,7 @@ export interface QuestionReferenceLockMetadata {
   materialVersions?: string;
   sourceType?: ReferenceSourceType;
   materialType?: string;
+  mtpSeries?: number;
   modelTestNumber?: number;
   facultyMockTestId?: string;
   materialTitle?: string;
@@ -56,6 +57,7 @@ export interface LockedQuestionReference {
     retrievedCharacterCount: number;
     sourceType: ReferenceSourceType;
     materialType?: string;
+    mtpSeries?: number;
     modelTestNumber?: number;
     facultyMockTestId?: string;
     materialTitle?: string;
@@ -567,6 +569,7 @@ export function lockQuestionReference(
       retrievedCharacterCount: combinedRef.length,
       sourceType: metadata?.sourceType || 'GLOBAL',
       materialType: metadata?.materialType,
+      ...(metadata?.mtpSeries !== undefined ? { mtpSeries: metadata.mtpSeries } : {}),
       modelTestNumber: metadata?.modelTestNumber,
       facultyMockTestId: metadata?.facultyMockTestId,
       materialTitle: metadata?.materialTitle,
