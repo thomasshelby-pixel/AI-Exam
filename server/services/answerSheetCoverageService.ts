@@ -85,6 +85,31 @@ export function resolveMcqSelectionNumber(
     : undefined;
 }
 
+const PLACEHOLDER_AUTHORITATIVE_QUESTION_CODES = new Set([
+  'UNCERTAIN',
+  'UNKNOWN',
+  'UNSURE',
+  'NOTIDENTIFIED',
+  'NOTFOUND',
+  'UNMAPPED',
+  'NONE',
+  'NULL',
+  'NA',
+]);
+
+/**
+ * Model output sometimes puts a status word such as "UNCERTAIN" in the
+ * authoritativeQuestionCode field. That is not a question ID. Treat these
+ * values as absent so they can never be canonicalized into a fabricated Q1.
+ */
+function normalizeAuthoritativeQuestionCode(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const cleaned = value.trim().slice(0, 80);
+  if (!cleaned) return undefined;
+  const normalized = cleaned.toUpperCase().replace(/[\\s_-]+/g, '');
+  return PLACEHOLDER_AUTHORITATIVE_QUESTION_CODES.has(normalized) ? undefined : cleaned;
+}
+
 /** Validate page-auditor output before accepting a provider, enabling model fallback. */
 export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverageModelOutput {
   let clean = String(rawText || '').trim();
@@ -209,11 +234,19 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       if (question.snippet !== undefined && snippet === undefined) {
         warnings.push('A detected answer contained a non-text evidence snippet.');
       }
-      const authoritativeQuestionCode = typeof question.authoritativeQuestionCode === 'string'
-        ? question.authoritativeQuestionCode.trim().slice(0, 80)
-        : undefined;
-      if (question.authoritativeQuestionCode !== undefined && !authoritativeQuestionCode) {
+      const rawAuthoritativeQuestionCode = question.authoritativeQuestionCode;
+      const authoritativeQuestionCode = normalizeAuthoritativeQuestionCode(rawAuthoritativeQuestionCode);
+      if (
+        rawAuthoritativeQuestionCode !== undefined &&
+        rawAuthoritativeQuestionCode !== null &&
+        typeof rawAuthoritativeQuestionCode !== 'string'
+      ) {
         warnings.push('A detected answer contained an invalid authoritative question code.');
+      } else if (
+        typeof rawAuthoritativeQuestionCode === 'string' &&
+        !rawAuthoritativeQuestionCode.trim()
+      ) {
+        warnings.push('A detected answer contained an empty authoritative question code.');
       }
       const allowedMappingBases = new Set(['VISIBLE_LABEL', 'MATERIAL_CONTENT', 'CONTINUATION', 'UNCERTAIN']);
       const mappingBasis = typeof question.mappingBasis === 'string' &&
@@ -356,17 +389,41 @@ export function resolveContextualQuestionIdentity(options: {
   } = options;
   const detectedId = toCanonicalQuestionId(questionNumber, subQuestion, paperSubQuestions);
   const detected = parseCanonicalQuestionIdentity(detectedId);
+  const normalizedAuthoritativeCode = normalizeAuthoritativeQuestionCode(authoritativeQuestionCode);
+  const hasVisibleParentLabel = parentQuestionNumberVisible === true && Boolean(String(questionNumber || '').trim());
+
+  // An uncertain source-content match may still be mapped from a clearly
+  // visible question label, but only by an exact match in the selected paper.
+  // Without that independent label evidence it must remain a manual-review item.
+  if (mappingBasis === 'UNCERTAIN' && (!hasVisibleParentLabel || labelMismatch)) {
+    return {
+      requiresReview: true,
+      reason: 'The AI could not establish the question identity and no unambiguous visible question label was available for exact mapping.',
+    };
+  }
+
+  if (mappingBasis === 'MATERIAL_CONTENT' && !normalizedAuthoritativeCode) {
+    return {
+      requiresReview: true,
+      reason: 'The AI reported a material-content match but did not provide a valid authoritative question ID.',
+    };
+  }
 
   // MCQ numbers are their own canonical identity; parent-question context does
-  // not apply to them.
+  // not apply to them. An explicit UNCERTAIN result is never auto-scored.
   if (detected.isMcq || subQuestion.toUpperCase() === 'MCQ') {
+    if (mappingBasis === 'UNCERTAIN') {
+      return { requiresReview: true, reason: 'The AI marked the MCQ identity as uncertain.' };
+    }
     return { canonicalId: detected.canonicalId, requiresReview: false };
   }
 
   // Source-grounded identity wins over the last page's answer context.
-  if (authoritativeQuestionCode) {
+  // When the model says UNCERTAIN but has a clearly visible label, ignore the
+  // unresolved content ID and validate that visible label against the inventory.
+  if (normalizedAuthoritativeCode && mappingBasis !== 'UNCERTAIN') {
     const normalized = parseCanonicalQuestionIdentity(
-      toCanonicalQuestionId(authoritativeQuestionCode, undefined, paperSubQuestions)
+      toCanonicalQuestionId(normalizedAuthoritativeCode, undefined, paperSubQuestions)
     ).canonicalId;
     const authoritativeMatch = paperSubQuestions.find((question) =>
       !question.isMcq && toCanonicalQuestionId(
@@ -851,6 +908,9 @@ HANDWRITING AND MAPPING:
 - Use mappingBasis: VISIBLE_LABEL when the visible label agrees with the question, MATERIAL_CONTENT
   when exact material content establishes identity, CONTINUATION for a verified continuation, or
   UNCERTAIN when the identity cannot be safely established.
+- If identity is UNCERTAIN, omit authoritativeQuestionCode entirely. NEVER put words such as
+  "UNCERTAIN", "UNKNOWN", "N/A" or "NOT IDENTIFIED" in authoritativeQuestionCode; those are not question IDs.
+  A clear visible label may be mapped only by exact validation against the authoritative inventory.
 - For a continuation, use a matching item from the full prior-answer list even when another question
   was answered on an intervening page.
 - Never infer identity from PDF page index, sequence, marks or subject stereotypes. Never invent IDs.
