@@ -716,7 +716,8 @@ export async function evaluateCAAnswerSheet(params: EvaluateAnswerSheetParams): 
     materialVersions: params.referenceMaterialVersion || '1.0',
     sourceType: referenceSourceType,
     materialType: params.materialType,
-    modelTestNumber: params.modelTestNumber,
+    mtpSeries: params.materialType === 'MTP' ? params.mtpSeries : undefined,
+    modelTestNumber: params.materialType === 'MODEL_TEST_PAPER' ? params.modelTestNumber : undefined,
     facultyMockTestId: params.facultyMockTestId,
     materialTitle: params.referenceMaterialTitle,
   };
