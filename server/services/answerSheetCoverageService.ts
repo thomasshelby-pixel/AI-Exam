@@ -56,8 +56,8 @@ function normalizeMcqSelectionLabel(raw: string): string {
     .replace(/\s+/g, '');
   const match = value.match(/^(\d{1,2})(?:\(([a-z0-9]+)\))?$/i);
   if (!match) return '';
-  const suffix = match[2] ? \`(\${match[2].toLowerCase()})\` : '';
-  return \`\${hasQuestionPrefix ? 'Q' : ''}\${match[1]}\${suffix}\`;
+  const suffix = match[2] ? '(' + match[2].toLowerCase() + ')' : '';
+  return (hasQuestionPrefix ? 'Q' : '') + match[1] + suffix;
 }
 
 /** Resolve a source-labeled Model Test response to the flattened MCQ index. */
