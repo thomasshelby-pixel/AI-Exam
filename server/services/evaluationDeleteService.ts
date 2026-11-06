@@ -237,35 +237,6 @@ export function deleteEvaluation(
     if (inst) instituteName = inst.name;
   }
 
-  // 3. Remove disk files directly associated with this evaluation ID
-  const uploadDirs = [
-    path.join(process.cwd(), 'uploads'),
-    path.join(process.cwd(), 'data', 'uploads'),
-  ];
-
-  let filesRemoved = 0;
-  for (const dir of uploadDirs) {
-    try {
-      if (fs.existsSync(dir)) {
-        const files = fs.readdirSync(dir);
-        for (const file of files) {
-          // Match files starting with this specific evaluationId or displayId
-          if (file.startsWith(realEvaluationId) || file.startsWith(evaluationId) || (evaluation.display_id && file.startsWith(evaluation.display_id))) {
-            try {
-              const fullPath = path.join(dir, file);
-              fs.unlinkSync(fullPath);
-              filesRemoved++;
-            } catch (unlinkErr) {
-              console.warn(`[EvaluationDelete] Could not delete disk file ${file}:`, unlinkErr);
-            }
-          }
-        }
-      }
-    } catch (dirErr) {
-      console.warn(`[EvaluationDelete] Could not scan directory ${dir}:`, dirErr);
-    }
-  }
-
   // A terminal failed/review-required evaluation must not lose its credit
   // when the record is administratively deleted. Refund first, while the
   // exact evaluation_id debit link still exists. PROCESSING/COMPLETED rows
@@ -299,6 +270,35 @@ export function deleteEvaluation(
       error.code = 'EVALUATION_CREDIT_REFUND_FAILED';
       error.cause = refundError;
       throw error;
+    }
+  }
+
+  // 3. Remove disk files directly associated with this evaluation ID
+  const uploadDirs = [
+    path.join(process.cwd(), 'uploads'),
+    path.join(process.cwd(), 'data', 'uploads'),
+  ];
+
+  let filesRemoved = 0;
+  for (const dir of uploadDirs) {
+    try {
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          // Match files starting with this specific evaluationId or displayId
+          if (file.startsWith(realEvaluationId) || file.startsWith(evaluationId) || (evaluation.display_id && file.startsWith(evaluation.display_id))) {
+            try {
+              const fullPath = path.join(dir, file);
+              fs.unlinkSync(fullPath);
+              filesRemoved++;
+            } catch (unlinkErr) {
+              console.warn(`[EvaluationDelete] Could not delete disk file ${file}:`, unlinkErr);
+            }
+          }
+        }
+      }
+    } catch (dirErr) {
+      console.warn(`[EvaluationDelete] Could not scan directory ${dir}:`, dirErr);
     }
   }
 
