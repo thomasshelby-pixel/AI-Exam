@@ -5,6 +5,9 @@ runConfig:
   maxInstances: 10
   concurrency: 80
   cpu: 1
+  # Background evaluation workers use durable Firestore leases and must keep CPU
+  # while a request has returned. minInstances remains 0 to avoid idle-instance charges.
+  cpuAlwaysAllocated: true
   memoryMiB: 1024
 
 scripts:
