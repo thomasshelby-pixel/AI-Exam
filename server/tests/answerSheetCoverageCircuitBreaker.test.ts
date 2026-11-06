@@ -146,6 +146,14 @@ async function run() {
   assert.equal(contentMatchBeatsPreviousPage.canonicalId, 'Q3(a)', 'A source-content match must not inherit the preceding page parent.');
   assert.equal(contentMatchBeatsPreviousPage.requiresReview, false);
 
+  const identityWithoutProvenance = resolveContextualQuestionIdentity({
+    questionNumber: '3',
+    subQuestion: 'a',
+    authoritativeQuestionCode: 'Q3(a)',
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(identityWithoutProvenance.requiresReview, true, 'An AI-selected ID without a mapping basis must not be silently trusted.');
+
   const bareSubpartIsNotOrderEvidence = resolveContextualQuestionIdentity({
     subQuestion: 'a',
     parentQuestionNumberVisible: false,
