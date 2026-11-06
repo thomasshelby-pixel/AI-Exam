@@ -4266,6 +4266,31 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         // This is the exact material already bound when the evaluation was accepted.
         // Archived materials remain valid historical inputs for a safe recovery retry.
         material = findEvaluationMaterialByExactIdForRecovery(requestedMaterialId);
+
+        // SQLite may be missing/stale after a partial Firestore hydration. Recover
+        // only the same saved ID from Firestore; never substitute another paper.
+        const hasLocalReferencePair = Boolean(
+          String(material?.question_paper_text || '').trim() &&
+          String(material?.suggested_answers_text || '').trim()
+        );
+        if (!hasLocalReferencePair) {
+          const cloudMaterial = await getFirestoreDoc<any>('evaluation_materials', requestedMaterialId).catch(() => null);
+          const hasExactCloudPair = Boolean(
+            cloudMaterial &&
+            String(cloudMaterial.id || '') === requestedMaterialId &&
+            String(cloudMaterial.question_paper_text || '').trim() &&
+            String(cloudMaterial.suggested_answers_text || '').trim()
+          );
+          if (hasExactCloudPair) {
+            material = cloudMaterial;
+            try {
+              syncMaterialRowToSqlite(cloudMaterial);
+              material = findEvaluationMaterialByExactIdForRecovery(requestedMaterialId) || cloudMaterial;
+            } catch (cacheRestoreError) {
+              console.warn('[AdminRecovery] Exact Firestore source found but SQLite cache refresh failed:', requestedMaterialId, cacheRestoreError);
+            }
+          }
+        }
       }
 
       // A missing foreign key is recoverable: match against the evaluation's own
