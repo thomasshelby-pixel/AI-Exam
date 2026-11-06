@@ -188,6 +188,17 @@ export function syncMaterialRowToSqlite(m: any): void {
   );
 }
 
+/**
+ * Returns the exact material previously bound to an accepted evaluation.
+ * Historical recovery must not require ACTIVE status: deactivation only blocks new submissions.
+ * This intentionally does not perform fuzzy lookup or substitute a different paper.
+ */
+export function findEvaluationMaterialByExactIdForRecovery(materialId: string): any | null {
+  const exactId = String(materialId || '').trim();
+  if (!exactId) return null;
+  return (db.prepare('SELECT * FROM evaluation_materials WHERE id = ?').get(exactId) as any) || null;
+}
+
 export interface MaterialLookupOptions {
   level: string;
   subjectKey: string;
