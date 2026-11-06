@@ -34,7 +34,7 @@ import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/m
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
-import { enqueueEvaluation } from '../services/asyncEvaluationService.js';
+import { enqueueEvaluation, nudgeDurableEvaluationQueue } from '../services/asyncEvaluationService.js';
 import { findAuthoritativeMaterialWithFallback, normalizeMtpSeries } from '../services/materialLookupService.js';
 import { getStudentExaminerProfile, updateStudentExaminerProfile } from '../services/examinerProfileService.js';
 import { validateSrn } from '../utils/srnValidator.js';
@@ -2226,6 +2226,10 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       record = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(record.id) || record;
     }
     const normalizedRecord = normalizeEvaluationRejectionStatus(record);
+    const statusForQueueRecovery = String(normalizedRecord.status || record.status || '').toUpperCase();
+    if (statusForQueueRecovery === 'PROCESSING' || statusForQueueRecovery === 'QUEUED') {
+      nudgeDurableEvaluationQueue(String(record.id));
+    }
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const checkedCopyPath = path.join(uploadsDir, `${realEvaluationId}_checked_copy.pdf`);
