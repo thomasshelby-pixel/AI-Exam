@@ -111,6 +111,18 @@ function attachQuestionSourceContext(
   suggestedAnswersText: string
 ): AuthoritativePaperStructure {
   const attach = (question: PaperStructureSubQuestion): PaperStructureSubQuestion => {
+    if (question.isMcq && question.sourceQuestionLabel) {
+      const answerAnchor = [
+        `${question.sourceQuestionLabel}: official option (${question.officialKey || 'UNVERIFIED'})`,
+        question.officialExplanation || '',
+        question.provision ? `Provision: ${question.provision}` : '',
+      ].filter(Boolean).join(' — ');
+      return {
+        ...question,
+        ...(question.officialKey ? { suggestedAnswerAnchor: answerAnchor } : {}),
+      };
+    }
+
     const qpSlice = extractLockedQuestionSlice(
       questionPaperText,
       question.questionNumber,
