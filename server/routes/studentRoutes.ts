@@ -1784,7 +1784,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     }
 
     // Step E: Enqueue Asynchronous Background Evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName: studentName || req.user!.fullName,
@@ -4803,7 +4803,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
     // Enqueue background evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName,
@@ -4945,7 +4945,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
     // Enqueue background evaluation
-    enqueueEvaluation({
+    await enqueueEvaluation({
       evaluationId,
       studentId,
       studentName,
