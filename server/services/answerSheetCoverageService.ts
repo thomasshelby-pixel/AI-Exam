@@ -695,7 +695,6 @@ export async function buildAnswerSheetCoverageMap(
       enableTargetedRecovery &&
       !analysis.analysisFailure &&
       analysis.status !== 'CLEARLY_UNATTEMPTED' &&
-      (analysis.hasHandwriting || analysis.status === 'QUESTION_NOT_IDENTIFIED' || analysis.status === 'PAGE_UNREADABLE') &&
       (
         analysis.status === 'QUESTION_NOT_IDENTIFIED' ||
         analysis.status === 'PAGE_UNREADABLE' ||
