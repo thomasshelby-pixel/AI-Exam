@@ -75,6 +75,20 @@ test('enforces explicit subject boundaries between Foundation and Intermediate',
   });
   assert.equal(intermediateCosting?.topicId, 'numerical-practice');
 
+  const foundationAccounting = searchStudyKnowledge({
+    message: 'How should I practise Accounting sums?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  });
+  assert.equal(foundationAccounting?.topicId, 'numerical-practice');
+
+  const intermediateAccounting = searchStudyKnowledge({
+    message: 'How should I practise Accounting sums?',
+    course: 'CA_INTERMEDIATE',
+    language: 'english',
+  });
+  assert.equal(intermediateAccounting?.topicId, 'numerical-practice');
+
   const foundationAdvancedAccounting = searchStudyKnowledge({
     message: 'How should I practise Advanced Accounting sums?',
     course: 'CA_FOUNDATION',
