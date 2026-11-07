@@ -261,7 +261,7 @@ export function searchStudyKnowledge(input: {
   const course = input.course;
   const courseSubjectAliases: Record<string, string[]> = {
     CA_FOUNDATION: [
-      'business laws', 'quantitative aptitude', 'business economics',
+      'business laws', 'business law', 'quantitative aptitude', 'business economics',
       'accounting', 'accounts', 'maths', 'mathematics', 'economics',
     ],
     CA_INTERMEDIATE: [
