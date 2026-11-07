@@ -685,7 +685,7 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       filename,
     } = req.body;
 
-    if (materialType === 'MODEL_TEST_PAPER') {
+    if (String(materialType || req.body.material_type || '').trim().toUpperCase() === 'MODEL_TEST_PAPER') {
       return res.status(503).json({
         success: false,
         code: 'MODEL_TEST_EVALUATION_UNAVAILABLE',
@@ -1045,7 +1045,7 @@ const inFlightStudentEvaluations = new Set<string>();
 // 2. Upload and Evaluate Answer Sheet
 router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluation'), evaluationSubmissionRateLimiter, requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   // Reject Model Test submissions before creating an evaluation or consuming credits / institute quota.
-  if (req.body?.materialType === 'MODEL_TEST_PAPER') {
+  if (String(req.body?.materialType || req.body?.material_type || '').trim().toUpperCase() === 'MODEL_TEST_PAPER') {
     return res.status(503).json({
       success: false,
       code: 'MODEL_TEST_EVALUATION_UNAVAILABLE',
