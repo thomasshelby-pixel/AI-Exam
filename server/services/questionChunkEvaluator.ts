@@ -237,6 +237,7 @@ export function parseAndValidateQuestionChunkOutput(
       component.assessment = component.assessment === 'OMITTED' ? 'OMITTED' : 'INCORRECT';
       component.deductionReason = `ICAI examiner explicitly awarded zero for this question. Evidence: ${evidence}`;
       component.annotationInstructions = 'ICAI examiner-awarded 0 retained; do not add partial marks.';
+      component.icaiExaminerZeroLock = true;
     }
     awardedTotal = 0;
     raw.marksAwarded = 0;
