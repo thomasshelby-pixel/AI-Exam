@@ -1233,7 +1233,11 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           return createTechnicalReview(emptyCoverageMap, sourcePreflight.failedInvariants);
         }
 
-        coverageMap = await buildAnswerSheetCoverageMap(pdfBuffer, paperStructure);
+        coverageMap = await buildAnswerSheetCoverageMap(pdfBuffer, paperStructure, {
+          // The extra targeted OCR/vision pass is scoped to PYQ checked-copy coverage.
+          // MTP and Model Test retain their existing page-audit call count.
+          enableTargetedRecovery: params.materialType === 'PYQ',
+        });
 
         const preGate = validatePreEvaluationGate({
           paperStructure,
