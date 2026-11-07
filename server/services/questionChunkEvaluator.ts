@@ -638,8 +638,10 @@ Return strictly valid JSON with this schema:
       marksLost,
       status: effectiveStatus,
       reasonForDeduction: raw.reasonForDeduction || (marksLost > 0 ? `${marksLost} mark(s) deducted based on step-marking rubric.` : 'Full marks awarded.'),
-      icaiExaminerZeroVisible: raw.icaiExaminerZeroVisible === true,
-      icaiExaminerZeroEvidence: raw.icaiExaminerZeroVisible === true ? raw.icaiExaminerZeroEvidence : undefined,
+      ...(isPyqCheckedCopyFlow ? {
+        icaiExaminerZeroVisible: raw.icaiExaminerZeroVisible === true,
+        icaiExaminerZeroEvidence: raw.icaiExaminerZeroVisible === true ? raw.icaiExaminerZeroEvidence : undefined,
+      } : {}),
       detailedFeedback: [
         raw.detailedFeedback || `Evaluated candidate solution for ${fullCode} across pages ${mapping.pages.join(', ')}.`,
         referenceDisposition.reason,
