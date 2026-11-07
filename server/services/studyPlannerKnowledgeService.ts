@@ -363,6 +363,14 @@ export function searchStudyKnowledge(input: {
   if (!best || best.score < 3) return null;
   if (mode === 'answer' && best.topic.id === 'numerical-practice' && !/\b(practis|practice|solve|solving|sum|sums|numerical|calculation|calculations)\b/i.test(message)) return null;
   if (mode === 'answer' && best.topic.id === 'law-tax-answer-writing' && !/\b(answer|write|writing|case study|case-based|presentation)\b/i.test(message)) return null;
+  const subjectStrategyTopics = new Set([
+    'foundation-qa-strategy',
+    'foundation-economics-strategy',
+    'intermediate-audit-strategy',
+    'intermediate-fm-sm-strategy',
+  ]);
+  const asksForStudyMethod = /\b(study|studying|revise|revision|prepare|preparation|practice|practise|strategy|strategies|tips|improve|how to|how do i|how should i|how can i)\b/i.test(message);
+  if (mode === 'answer' && subjectStrategyTopics.has(best.topic.id) && !asksForStudyMethod) return null;
 
   const course = input.course;
   const courseSubjectAliases: Array<{ alias: string; courses: string[] }> = [
