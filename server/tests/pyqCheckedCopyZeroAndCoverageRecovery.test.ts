@@ -98,10 +98,6 @@ async function run() {
   assert.equal(filteredLocked.components[0].marksAwarded, 0);
   assert.equal(filteredLocked.rejectedDeductions.length, 0);
 
-  const numericalAudit = auditNumericalReasoningIntegrity([modeLockedQuestion]);
-  assert.equal(numericalAudit.auditedQuestions[0].marksAwarded, 0);
-  assert.equal(numericalAudit.auditedQuestions[0].consequentialErrorDetected, false);
-  assert.ok(numericalAudit.auditedQuestions[0].markingComponents?.every((component) => component.marksAwarded === 0));
 
   // Moderate/lenient mode must not restore marks through consequential-credit logic.
   const modeLockedQuestion: any = {
@@ -124,6 +120,11 @@ async function run() {
     assert.equal(modeResult.activeQuestions[0].marksAwarded, 0, `ICAI zero must remain zero in ${mode} mode`);
     assert.equal(modeResult.activeTotalMarks, 0, `ICAI zero total must remain zero in ${mode} mode`);
   }
+
+  const numericalAudit = auditNumericalReasoningIntegrity([modeLockedQuestion]);
+  assert.equal(numericalAudit.auditedQuestions[0].marksAwarded, 0);
+  assert.equal(numericalAudit.auditedQuestions[0].consequentialErrorDetected, false);
+  assert.ok(numericalAudit.auditedQuestions[0].markingComponents?.every((component) => component.marksAwarded === 0));
 
   // A non-zero examiner score remains eligible for normal question-wise evaluation;
   // the override runs only for explicit, attributable zero marks.
