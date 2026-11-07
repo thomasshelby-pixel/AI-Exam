@@ -35,6 +35,7 @@ test('detects short knowledge follow-ups from prefixed or raw assistant topic hi
   assert.equal(isStudyKnowledgeFollowUp('Give me an example', ['Planner: **Topic: Active recall**']), true);
   assert.equal(isStudyKnowledgeFollowUp('Explain simpler', ['**Topic: Active recall**']), true);
   assert.equal(isStudyKnowledgeFollowUp('Quiz me', ['Assistant: **Topic: Active recall**']), true);
+  assert.equal(isStudyKnowledgeFollowUp('Tell me more', ['Planner: **Topic: Active recall**']), true);
   assert.equal(isStudyKnowledgeFollowUp('Give me an example', []), false);
   assert.equal(isStudyKnowledgeFollowUp('How do I study accounting?', ['Planner: **Topic: Active recall**']), false);
 
