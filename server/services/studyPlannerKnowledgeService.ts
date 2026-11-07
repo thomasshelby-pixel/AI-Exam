@@ -202,8 +202,8 @@ function getMode(message: string): 'example' | 'simpler' | 'quiz' | 'answer' {
 }
 
 function isTopicHistoryEntry(entry: string): boolean {
-  return /^(?:(?:planner|assistant):\\s*)?(?:\\*\\*)?topic:/i.test(entry.trim())
-    || /^(?:planner|assistant):.*\\btopic:/i.test(entry.trim());
+  return /^(?:(?:planner|assistant):\s*)?(?:\*\*)?topic:/i.test(entry.trim())
+    || /^(?:planner|assistant):.*\btopic:/i.test(entry.trim());
 }
 
 export function isStudyKnowledgeFollowUp(message: string, history: string[] = []): boolean {
