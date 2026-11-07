@@ -154,7 +154,7 @@ export function parseAndValidateQuestionChunkOutput(
     throw new Error('QUESTION_CHUNK_INVALID_TOTAL: awarded marks are missing or outside the authoritative range.');
   }
 
-    const components = raw.markingComponents;
+  const components = raw.markingComponents;
   if (!Array.isArray(components) || components.length === 0) {
     throw new Error('QUESTION_CHUNK_COMPONENTS_MISSING: a question-level score without step evidence is not accepted.');
   }
@@ -209,7 +209,7 @@ export function parseAndValidateQuestionChunkOutput(
   if (Math.abs(availableTotal - maxMarks) > 0.05) {
     throw new Error(`QUESTION_CHUNK_ALLOCATION_MISMATCH: component allocations total ${availableTotal}, but the authoritative maximum is ${maxMarks}.`);
   }
-    if (Math.abs(awardedTotal - raw.marksAwarded) > 0.26) {
+  if (Math.abs(awardedTotal - raw.marksAwarded) > 0.26) {
     throw new Error(`QUESTION_CHUNK_SCORE_MISMATCH: component awards total ${awardedTotal}, but the model reported ${raw.marksAwarded}.`);
   }
 
@@ -593,7 +593,7 @@ Return strictly valid JSON with this schema:
       marksLost,
       status: effectiveStatus,
       reasonForDeduction: raw.reasonForDeduction || (marksLost > 0 ? `${marksLost} mark(s) deducted based on step-marking rubric.` : 'Full marks awarded.'),
-      detailedFeedback: [      detailedFeedback: [
+      detailedFeedback: [
         raw.detailedFeedback || `Evaluated candidate solution for ${fullCode} across pages ${mapping.pages.join(', ')}.`,
         referenceDisposition.reason,
       ].filter(Boolean).join('\n\n'),
