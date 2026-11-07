@@ -174,3 +174,44 @@ test('allows general numerical practice for both supported courses', () => {
     assert.equal(result?.topicId, 'numerical-practice');
   }
 });
+
+test('retrieves subject-specific Foundation and Intermediate study strategies', () => {
+  const qa = searchStudyKnowledge({
+    message: 'How should I revise probability?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  });
+  assert.equal(qa?.topicId, 'foundation-qa-strategy');
+
+  const economics = searchStudyKnowledge({
+    message: 'How do I study demand and supply?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  });
+  assert.equal(economics?.topicId, 'foundation-economics-strategy');
+
+  const audit = searchStudyKnowledge({
+    message: 'How do I prepare audit evidence?',
+    course: 'CA_INTERMEDIATE',
+    language: 'english',
+  });
+  assert.equal(audit?.topicId, 'intermediate-audit-strategy');
+
+  const fmSm = searchStudyKnowledge({
+    message: 'How should I revise Financial Management and Strategic Management?',
+    course: 'CA_INTERMEDIATE',
+    language: 'english',
+  });
+  assert.equal(fmSm?.topicId, 'intermediate-fm-sm-strategy');
+
+  assert.equal(searchStudyKnowledge({
+    message: 'What is probability?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  }), null);
+  assert.equal(searchStudyKnowledge({
+    message: 'How do I prepare audit evidence?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  }), null);
+});
