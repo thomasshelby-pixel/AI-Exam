@@ -267,7 +267,7 @@ export function searchStudyKnowledge(input: {
     CA_INTERMEDIATE: [
       'financial management and strategic management', 'corporate and other laws',
       'cost and management accounting', 'advanced accounting', 'auditing and ethics',
-      'taxation', 'income tax', 'direct tax', 'indirect tax', 'gst',
+      'taxation', 'tax', 'income tax', 'direct tax', 'indirect tax', 'gst',
       'costing', 'cost accounting', 'management accounting', 'corporate law',
       'company law', 'auditing', 'audit', 'financial management',
       'strategic management', 'accounting', 'accounts', 'fm-sm',
