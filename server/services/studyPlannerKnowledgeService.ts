@@ -201,6 +201,16 @@ function getMode(message: string): 'example' | 'simpler' | 'quiz' | 'answer' {
   return 'answer';
 }
 
+function isTopicHistoryEntry(entry: string): boolean {
+  return /^(?:(?:planner|assistant):\\s*)?(?:\\*\\*)?topic:/i.test(entry.trim())
+    || /^(?:planner|assistant):.*\\btopic:/i.test(entry.trim());
+}
+
+export function isStudyKnowledgeFollowUp(message: string, history: string[] = []): boolean {
+  if (getMode(message) === 'answer') return false;
+  return Array.isArray(history) && history.slice(-6).some(isTopicHistoryEntry);
+}
+
 function scoreTopic(topic: KnowledgeTopic, queryTerms: string[]): number {
   if (!queryTerms.length) return 0;
   const title = terms(topic.title);
@@ -246,7 +256,7 @@ export function searchStudyKnowledge(input: {
   const ranked = TOPICS.map((topic) => ({ topic, score: scoreTopic(topic, queryTerms) }))
     .sort((a, b) => b.score - a.score);
   const lastAssistantTopic = isFollowUp
-    ? [...history].reverse().find((entry) => /^Planner:.*\bTopic:/i.test(entry))
+    ? [...history].reverse().find(isTopicHistoryEntry)
     : undefined;
   const rememberedTopic = lastAssistantTopic
     ? TOPICS.find((topic) => normalize(lastAssistantTopic).includes(normalize(topic.title)))
