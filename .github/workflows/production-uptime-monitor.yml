@@ -26,7 +26,7 @@ jobs:
           set +e
           homepage_code="$(curl --silent --show-error --location --max-time 20 --retry 2 --retry-delay 2 --output /dev/null --write-out '%{http_code}' https://caexamcheckerai.com)"
           homepage_rc=$?
-          health_code="$(curl --silent --show-error --location --max-time 20 --retry 2 --retry-delay 2 --output /dev/null --write-out '%{http_code}' https://caexamcheckerai.com/healthz)"
+          health_code="$(curl --silent --show-error --location --max-time 20 --retry 2 --retry-delay 2 --output /dev/null --write-out '%{http_code}' https://caexamcheckerai.com/api/health)"
           health_rc=$?
           echo "homepage_code=$homepage_code" >> "$GITHUB_OUTPUT"
           echo "homepage_rc=$homepage_rc" >> "$GITHUB_OUTPUT"
