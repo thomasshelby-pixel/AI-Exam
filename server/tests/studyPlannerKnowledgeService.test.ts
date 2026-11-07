@@ -50,6 +50,34 @@ test('follow-up resolves to the most recently discussed topic', () => {
   assert.equal(result?.topicId, 'mock-analysis');
 });
 
+test('example and quiz follow-ups remain available for gated numerical and Law topics', () => {
+  const numericalHistory = [
+    'Student: How should I practise costing sums?',
+    'Planner: **Topic: Numerical subject practice**',
+  ];
+  const numericalExample = searchStudyKnowledge({
+    message: 'Give me an example',
+    course: 'CA_INTERMEDIATE',
+    language: 'english',
+    history: numericalHistory,
+  });
+  assert.equal(numericalExample?.topicId, 'numerical-practice');
+  assert.equal(numericalExample?.mode, 'example');
+
+  const lawHistory = [
+    'Student: How do I write a Business Laws case study answer?',
+    'Planner: **Topic: Law and Tax answer writing**',
+  ];
+  const lawExample = searchStudyKnowledge({
+    message: 'Give me an example',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+    history: lawHistory,
+  });
+  assert.equal(lawExample?.topicId, 'law-tax-answer-writing');
+  assert.equal(lawExample?.mode, 'example');
+});
+
 test('does not confuse a costing concept question with a request for numerical practice', () => {
   const result = searchStudyKnowledge({ message: 'What is marginal costing?', course: 'CA_INTERMEDIATE', language: 'english' });
   assert.equal(result, null);
