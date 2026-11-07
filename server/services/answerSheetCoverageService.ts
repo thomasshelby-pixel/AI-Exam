@@ -695,6 +695,8 @@ export async function buildAnswerSheetCoverageMap(
       (
         analysis.status === 'QUESTION_NOT_IDENTIFIED' ||
         analysis.status === 'PAGE_UNREADABLE' ||
+        analysis.status === 'ATTEMPTED_UNCLEAR' ||
+        analysis.status === 'ATTEMPTED_PARTIALLY_READABLE' ||
         Boolean(analysis.mappingReviewReason) ||
         analysis.detectedQuestions.length === 0
       );
@@ -719,7 +721,7 @@ export async function buildAnswerSheetCoverageMap(
             if (!existing) {
               recoveredByCode.set(key, { ...detected });
             } else if (detected.snippet && !existing.snippet?.includes(detected.snippet)) {
-              existing.snippet = [existing.snippet, detected.snippet].filter(Boolean).join('\\n\\n').slice(-1200);
+              existing.snippet = [existing.snippet, detected.snippet].filter(Boolean).join('\n\n').slice(-1200);
             }
           }
 
@@ -738,7 +740,7 @@ export async function buildAnswerSheetCoverageMap(
             rawSummary: [
               `Initial page read: ${analysis.rawSummary}`,
               `Targeted recovery read: ${recovery.rawSummary}`,
-            ].join('\\n'),
+            ].join('\n'),
             mappingReviewReason: recoveryResolvedPage
               ? undefined
               : [analysis.mappingReviewReason, recovery.mappingReviewReason || 'Targeted re-read still could not safely identify every handwritten answer block.']
@@ -750,7 +752,7 @@ export async function buildAnswerSheetCoverageMap(
         } else {
           analysis = {
             ...analysis,
-            rawSummary: `${analysis.rawSummary}\\nTargeted recovery read was unavailable: ${recovery.analysisFailure.code}.`,
+            rawSummary: `${analysis.rawSummary}\nTargeted recovery read was unavailable: ${recovery.analysisFailure.code}.`,
             mappingReviewReason: [analysis.mappingReviewReason, 'Targeted recovery could not complete; this handwritten page remains in manual mapping review.']
               .filter(Boolean)
               .join(' | '),
@@ -758,10 +760,10 @@ export async function buildAnswerSheetCoverageMap(
           };
         }
       } catch (recoveryError: any) {
-        const recoveryMessage = sanitizeSecretStrings(recoveryError?.message || String(recoveryError)).replace(/[\\r\\n]+/g, ' ').slice(0, 180);
+        const recoveryMessage = sanitizeSecretStrings(recoveryError?.message || String(recoveryError)).replace(/[\r\n]+/g, ' ').slice(0, 180);
         analysis = {
           ...analysis,
-          rawSummary: `${analysis.rawSummary}\\nTargeted recovery failed: ${recoveryMessage}`,
+          rawSummary: `${analysis.rawSummary}\nTargeted recovery failed: ${recoveryMessage}`,
           mappingReviewReason: [analysis.mappingReviewReason, 'Targeted recovery failed; this handwritten page remains in manual mapping review.']
             .filter(Boolean)
             .join(' | '),
