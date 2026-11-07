@@ -1,0 +1,51 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { buildKnowledgeChatReply, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+
+test('retrieves relevant study guidance without exact wording', () => {
+  const result = searchStudyKnowledge({
+    message: 'Bhai notes band karke yaad kaise karu?',
+    course: 'CA_INTERMEDIATE',
+    language: 'hinglish',
+  });
+  assert.equal(result?.topicId, 'active-recall');
+  assert.match(buildKnowledgeChatReply(result!, 'hinglish'), /Active recall/);
+});
+
+test('returns language-matched answers', () => {
+  const hindi = searchStudyKnowledge({ message: 'याद रखने का तरीका बताओ', course: 'CA_FOUNDATION', language: 'hindi' });
+  assert.equal(hindi?.topicId, 'active-recall');
+  assert.match(buildKnowledgeChatReply(hindi!, 'hindi'), /याद/);
+  const english = searchStudyKnowledge({ message: 'How do I analyse a mock test?', course: 'CA_INTERMEDIATE', language: 'english' });
+  assert.equal(english?.topicId, 'mock-analysis');
+});
+
+test('supports follow-up requests for examples, simpler explanations and quizzes', () => {
+  const history = ['Student: How do I remember provisions?', 'Planner: Topic: Active recall'];
+  const example = searchStudyKnowledge({ message: 'Give me an example', course: 'CA_INTERMEDIATE', language: 'english', history });
+  assert.equal(example?.mode, 'example');
+  assert.equal(example?.topicId, 'active-recall');
+  const simpler = searchStudyKnowledge({ message: 'Explain simpler', course: 'CA_INTERMEDIATE', language: 'english', history });
+  assert.equal(simpler?.mode, 'simpler');
+  const quiz = searchStudyKnowledge({ message: 'Quiz me', course: 'CA_INTERMEDIATE', language: 'english', history });
+  assert.equal(quiz?.mode, 'quiz');
+});
+
+test('recognises topic-specific study techniques', () => {
+  const numerical = searchStudyKnowledge({ message: 'How should I practise costing sums?', course: 'CA_INTERMEDIATE', language: 'english' });
+  assert.equal(numerical?.topicId, 'numerical-practice');
+  const law = searchStudyKnowledge({ message: 'How do I write a law case study answer?', course: 'CA_INTERMEDIATE', language: 'english' });
+  assert.equal(law?.topicId, 'law-tax-answer-writing');
+  const revision = searchStudyKnowledge({ message: 'How to revise a chapter?', course: 'CA_FOUNDATION', language: 'english' });
+  assert.equal(revision?.topicId, 'revision-cycle');
+});
+
+test('does not invent a verified answer for unsupported syllabus-specific questions', () => {
+  const result = searchStudyKnowledge({ message: 'What is the current GST rate for this supply?', course: 'CA_INTERMEDIATE', language: 'english' });
+  assert.equal(result, null);
+});
+
+test('does not return subject-specific guidance for a different course', () => {
+  const result = searchStudyKnowledge({ message: 'How should I practise costing sums?', course: 'CA_FOUNDATION', language: 'english' });
+  assert.equal(result, null);
+});
