@@ -569,7 +569,8 @@ export type PageCoverageAnalyzer = (
   paperStructure: AuthoritativePaperStructure,
   totalPages: number,
   previousActiveQuestion?: string,
-  priorQuestionContexts?: PriorQuestionContext[]
+  priorQuestionContexts?: PriorQuestionContext[],
+  recoveryMode?: boolean
 ) => Promise<PageCoverageRecord>;
 
 export interface AttemptedQuestionMapping {
@@ -601,7 +602,7 @@ export interface AnswerCoverageMap {
 export async function buildAnswerSheetCoverageMap(
   pdfBuffer: Buffer,
   paperStructure: AuthoritativePaperStructure,
-  options: { analyzePage?: PageCoverageAnalyzer } = {}
+  options: { analyzePage?: PageCoverageAnalyzer; enableTargetedRecovery?: boolean } = {}
 ): Promise<AnswerCoverageMap> {
   const pdfHash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
   const structureSignature = JSON.stringify({
@@ -623,7 +624,9 @@ export async function buildAnswerSheetCoverageMap(
     })),
   });
   const structureHash = crypto.createHash('sha256').update(structureSignature).digest('hex');
-  const cacheKey = `${pdfHash}:${structureHash}`;
+  const enableTargetedRecovery = options.enableTargetedRecovery === true;
+  // Keep normal and PYQ-recovery coverage maps isolated for the same PDF/paper.
+  const cacheKey = `${pdfHash}:${structureHash}:pyqRecovery=${enableTargetedRecovery ? '1' : '0'}`;
   if (coverageMapCache.has(cacheKey)) {
     return coverageMapCache.get(cacheKey)!;
   }
@@ -637,6 +640,7 @@ export async function buildAnswerSheetCoverageMap(
   const priorQuestionContextMap = new Map<string, PriorQuestionContext>();
   let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
   const analyzePage = options.analyzePage || analyzeSinglePageCoverage;
+
 
   // For each page, analyze with AI to detect question numbers, continuations, and content.
   // Once the full provider fallback chain fails for one page, do not repeat that
@@ -673,14 +677,104 @@ export async function buildAnswerSheetCoverageMap(
         pages: [...context.pages],
         snippet: String(context.snippet || '').slice(0, 140),
       }));
-    const analysis = await analyzePage(
+    let analysis = await analyzePage(
       pageBase64,
       pageNum,
       paperStructure,
       totalPages,
       activeQuestionContext,
-      priorQuestionContexts
+      priorQuestionContexts,
+      false
     );
+
+    // A page can contain a real attempted answer whose label/content match was
+    // inconclusive on the first pass. Re-read only those ambiguous handwritten
+    // pages once with an explicit recovery instruction; do not retry provider
+    // failures (which would multiply cost) and never guess an unresolved identity.
+    const needsTargetedRecovery =
+      enableTargetedRecovery &&
+      !analysis.analysisFailure &&
+      analysis.status !== 'CLEARLY_UNATTEMPTED' &&
+      (
+        analysis.status === 'QUESTION_NOT_IDENTIFIED' ||
+        analysis.status === 'PAGE_UNREADABLE' ||
+        analysis.status === 'ATTEMPTED_UNCLEAR' ||
+        analysis.status === 'ATTEMPTED_PARTIALLY_READABLE' ||
+        Boolean(analysis.mappingReviewReason) ||
+        analysis.detectedQuestions.length === 0
+      );
+
+    if (needsTargetedRecovery) {
+      try {
+        const recovery = await analyzePage(
+          pageBase64,
+          pageNum,
+          paperStructure,
+          totalPages,
+          activeQuestionContext,
+          priorQuestionContexts,
+          true
+        );
+
+        if (!recovery.analysisFailure) {
+          const recoveredByCode = new Map<string, DetectedQuestionOccurrence>();
+          for (const detected of [...analysis.detectedQuestions, ...recovery.detectedQuestions]) {
+            const key = detected.fullQuestionCode.toLowerCase();
+            const existing = recoveredByCode.get(key);
+            if (!existing) {
+              recoveredByCode.set(key, { ...detected });
+            } else if (detected.snippet && !existing.snippet?.includes(detected.snippet)) {
+              existing.snippet = [existing.snippet, detected.snippet].filter(Boolean).join('\n\n').slice(-1200);
+            }
+          }
+
+          const recoveredQuestions = Array.from(recoveredByCode.values());
+          const recoveryResolvedPage =
+            recovery.status !== 'QUESTION_NOT_IDENTIFIED' &&
+            recovery.status !== 'PAGE_UNREADABLE' &&
+            recovery.status !== 'CLEARLY_UNATTEMPTED' &&
+            !recovery.mappingReviewReason &&
+            recoveredQuestions.length > 0;
+
+          analysis = {
+            ...analysis,
+            status: recoveryResolvedPage ? recovery.status : 'QUESTION_NOT_IDENTIFIED',
+            detectedQuestions: recoveredQuestions,
+            rawSummary: [
+              `Initial page read: ${analysis.rawSummary}`,
+              `Targeted recovery read: ${recovery.rawSummary}`,
+            ].join('\n'),
+            mappingReviewReason: recoveryResolvedPage
+              ? undefined
+              : [analysis.mappingReviewReason, recovery.mappingReviewReason || 'Targeted re-read still could not safely identify every handwritten answer block.']
+                  .filter(Boolean)
+                  .join(' | '),
+            questionLabelEvidence: recovery.questionLabelEvidence || analysis.questionLabelEvidence,
+            readingConfidence: recovery.readingConfidence ?? analysis.readingConfidence,
+          };
+        } else {
+          analysis = {
+            ...analysis,
+            rawSummary: `${analysis.rawSummary}\nTargeted recovery read was unavailable: ${recovery.analysisFailure.code}.`,
+            mappingReviewReason: [analysis.mappingReviewReason, 'Targeted recovery could not complete; this handwritten page remains in manual mapping review.']
+              .filter(Boolean)
+              .join(' | '),
+            status: 'QUESTION_NOT_IDENTIFIED',
+          };
+        }
+      } catch (recoveryError: any) {
+        const recoveryMessage = sanitizeSecretStrings(recoveryError?.message || String(recoveryError)).replace(/[\r\n]+/g, ' ').slice(0, 180);
+        analysis = {
+          ...analysis,
+          rawSummary: `${analysis.rawSummary}\nTargeted recovery failed: ${recoveryMessage}`,
+          mappingReviewReason: [analysis.mappingReviewReason, 'Targeted recovery failed; this handwritten page remains in manual mapping review.']
+            .filter(Boolean)
+            .join(' | '),
+          status: 'QUESTION_NOT_IDENTIFIED',
+        };
+      }
+    }
+
     pageRecords.push(analysis);
     if (analysis.analysisFailure) {
       providerFailureCircuit = { failedOnPage: pageNum, failure: analysis.analysisFailure };
@@ -814,8 +908,9 @@ export function buildPageCoveragePrompt(params: {
   paperStructure: AuthoritativePaperStructure;
   previousActiveQuestion?: string;
   priorQuestionContexts?: PriorQuestionContext[];
+  recoveryMode?: boolean;
 }): string {
-  const { pageNumber, totalPages, paperStructure, previousActiveQuestion, priorQuestionContexts = [] } = params;
+  const { pageNumber, totalPages, paperStructure, previousActiveQuestion, priorQuestionContexts = [], recoveryMode = false } = params;
   const compactSourceText = (value: string | undefined, limit: number): string =>
     String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
   const validDescriptiveList = paperStructure.subQuestions
@@ -841,6 +936,15 @@ export function buildPageCoveragePrompt(params: {
       ].filter(Boolean).join('\n');
     })
     .join('\n');
+  const recoveryModeInstruction = recoveryMode ? `
+TARGETED SECOND-PASS RECOVERY:
+- The first pass found visible handwriting but could not safely map every answer block on this page.
+- Re-read the ENTIRE page, not just the previously noticed heading. Split every distinct answer block and every separately labelled sub-part.
+- Recompare each answer's actual subject matter, facts, amounts, journal entries, workings and legal/accounting treatment against ALL authoritative question texts and Suggested Answer anchors listed above.
+- A faint or missing question label does not make an answer disappear: use a strong source-content match and set mappingBasis = MATERIAL_CONTENT when the answer content uniquely identifies one listed question.
+- If a visible label conflicts with a unique source-content match, retain the source-content match and report labelMismatch = true.
+- Do not merge two independent answer blocks. Return every block you can safely map. Keep any genuinely ambiguous block unresolved for review; never guess.
+` : '';
   const priorContextList = priorQuestionContexts
     .map((context) => {
       const pages = context.pages.length ? context.pages.join(', ') : 'unknown';
@@ -882,6 +986,7 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
 - The previous page active question is only a weak clue and must never override an explicit label or
   a stronger match against the selected Question Paper / Suggested Answer.
 
+${recoveryModeInstruction}
 HANDWRITING AND MAPPING:
 - Inspect the whole page, especially top/bottom and left/right margins, answer-block starts,
   circles, underlines and headings. Labels may be faint, cursive, slanted, overwritten or in margins.
@@ -959,7 +1064,8 @@ async function analyzeSinglePageCoverage(
   paperStructure: AuthoritativePaperStructure,
   totalPages: number = 1,
   previousActiveQuestion?: string,
-  priorQuestionContexts: PriorQuestionContext[] = []
+  priorQuestionContexts: PriorQuestionContext[] = [],
+  recoveryMode: boolean = false
 ): Promise<PageCoverageRecord> {
   const prompt = buildPageCoveragePrompt({
     pageNumber,
@@ -967,6 +1073,7 @@ async function analyzeSinglePageCoverage(
     paperStructure,
     previousActiveQuestion,
     priorQuestionContexts,
+    recoveryMode,
   });
 
   try {
