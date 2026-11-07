@@ -246,7 +246,7 @@ export function searchStudyKnowledge(input: {
   const ranked = TOPICS.map((topic) => ({ topic, score: scoreTopic(topic, queryTerms) }))
     .sort((a, b) => b.score - a.score);
   const lastAssistantTopic = isFollowUp
-    ? [...history].reverse().find((entry) => /^Planner:.*\\bTopic:/i.test(entry))
+    ? [...history].reverse().find((entry) => /^Planner:.*\bTopic:/i.test(entry))
     : undefined;
   const rememberedTopic = lastAssistantTopic
     ? TOPICS.find((topic) => normalize(lastAssistantTopic).includes(normalize(topic.title)))
