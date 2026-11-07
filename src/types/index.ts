@@ -462,6 +462,9 @@ export interface QuestionEvaluation {
   marksLost: number;
   status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear';
   reasonForDeduction?: string;
+  /** Explicit ICAI examiner-awarded numeric zero detected on a checked PYQ copy. */
+  icaiExaminerZeroVisible?: boolean;
+  icaiExaminerZeroEvidence?: string;
   detailedFeedback: string;
   confidence?: number;
   technicalEvaluation?: string;
