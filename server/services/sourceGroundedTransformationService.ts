@@ -751,26 +751,6 @@ export function auditNumericalReasoningIntegrity(
   let consequentialMarksPreserved = 0;
 
   for (const q of questions) {
-    if (q.icaiExaminerZeroVisible === true || q.flags?.includes('ICAI_EXAMINER_ZERO_CONFIRMED')) {
-      const maxMarks = Math.max(0, Number(q.maximumMarks) || 0);
-      const lockedComponents = (q.markingComponents || []).map((component) => ({
-        ...component,
-        marksAwarded: 0,
-        marksDeducted: Math.max(0, Number(component.marksAvailable) || 0),
-        icaiExaminerZeroLock: true,
-      }));
-      auditedQuestions.push({
-        ...q,
-        marksAwarded: 0,
-        marksLost: maxMarks,
-        status: 'incorrect',
-        markingComponents: lockedComponents,
-        consequentialErrorDetected: false,
-        consequentialErrorNotes: undefined,
-      });
-      continue;
-    }
-
     const canonId = q.canonicalId || q.fullQuestionCode || q.questionNumber;
     const matchingTransformations = allTransformations.filter((t) => t.questionId === canonId);
 

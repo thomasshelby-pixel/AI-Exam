@@ -177,8 +177,6 @@ export interface MarkingComponent {
   pageNumber?: number;
   boundingBox?: BoundingBox;
   annotationInstructions?: string;
-  /** Locks a component to zero when an ICAI checked PYQ copy explicitly awards zero. */
-  icaiExaminerZeroLock?: boolean;
   modeDifferenceCategory?: string;
   modeDifferenceJustification?: string;
 }
@@ -464,9 +462,6 @@ export interface QuestionEvaluation {
   marksLost: number;
   status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear';
   reasonForDeduction?: string;
-  /** Explicit ICAI examiner-awarded numeric zero detected on a checked PYQ copy. */
-  icaiExaminerZeroVisible?: boolean;
-  icaiExaminerZeroEvidence?: string;
   detailedFeedback: string;
   confidence?: number;
   technicalEvaluation?: string;

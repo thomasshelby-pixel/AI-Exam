@@ -43,8 +43,7 @@ export type ZeroScoreReason =
   | 'WHOLLY_IRRELEVANT'
   | 'NO_CREDITWORTHY_COMPONENT'
   | 'MATERIALLY_INCORRECT_WITH_NO_CREDITABLE_STEP'
-  | 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED'
-  | 'ICAI_EXAMINER_ZERO_CONFIRMED';
+  | 'HANDWRITING_UNCLEAR_HUMAN_REVIEW_RECOMMENDED';
 
 export interface ZeroMarkValidationResult {
   isZeroAllowed: boolean;
@@ -157,10 +156,6 @@ export function filterAndRejectPresentationDeductions(
   const rejectedDeductions: Array<{ componentId: string; reason: string; marksRestored: number }> = [];
 
   const processedComponents = components.map((comp) => {
-    if (comp.icaiExaminerZeroLock === true) {
-      return comp;
-    }
-
     if (presentationAllowed) {
       return comp;
     }
@@ -230,7 +225,6 @@ export function evaluateZeroMarkSafetyGate(params: {
   reasonForDeduction?: string;
   isMcq: boolean;
   applicableProvisions?: string[];
-  icaiExaminerZeroVisible?: boolean;
 }): ZeroMarkValidationResult {
   const {
     maxMarks,
@@ -243,18 +237,7 @@ export function evaluateZeroMarkSafetyGate(params: {
     reasonForDeduction = '',
     isMcq,
     applicableProvisions = [],
-    icaiExaminerZeroVisible = false,
   } = params;
-
-  if (icaiExaminerZeroVisible) {
-    return {
-      isZeroAllowed: true,
-      creditworthyComponentsFound: [],
-      zeroScoreReason: 'ICAI_EXAMINER_ZERO_CONFIRMED',
-      zeroScoreEvidence: 'The uploaded PYQ checked copy contains a clearly attributable numeric zero awarded by the ICAI examiner. The official zero overrides the generic partial-credit safety gate.',
-      auditNotes: ['ICAI examiner-awarded zero preserved; automatic partial-credit restoration skipped.'],
-    };
-  }
 
   // MCQs have distinct objective rules (0 for wrong/unattempted, or negative marking)
   if (isMcq) {
@@ -1028,9 +1011,7 @@ export function processEvaluationIntegrity(
     let components: MarkingComponent[] = Array.isArray(rawQ.markingComponents) ? rawQ.markingComponents : [];
 
     // Step B: Reject unjustified presentation deductions (Rule 1 & Rule 10)
-    const { components: filteredComps, rejectedDeductions } = rawQ.icaiExaminerZeroVisible === true
-      ? { components, rejectedDeductions: [] as Array<{ componentId: string; reason: string; marksRestored: number }> }
-      : filterAndRejectPresentationDeductions(components, presentationAllowed);
+    const { components: filteredComps, rejectedDeductions } = filterAndRejectPresentationDeductions(components, presentationAllowed);
     components = filteredComps;
     rejectedPresentationDeductionsCount += rejectedDeductions.length;
 
@@ -1079,7 +1060,6 @@ export function processEvaluationIntegrity(
           reasonForDeduction: rawQ.reasonForDeduction,
           isMcq,
           applicableProvisions: rawQ.applicableProvisions,
-          icaiExaminerZeroVisible: rawQ.icaiExaminerZeroVisible === true,
         });
 
     let finalAwarded = needsHumanReview
@@ -1169,10 +1149,6 @@ export function processEvaluationIntegrity(
       marksAwarded: verifiedAwarded,
       marksLost: verifiedLost,
       status,
-      ...(typeof rawQ.icaiExaminerZeroVisible === 'boolean' ? {
-        icaiExaminerZeroVisible: rawQ.icaiExaminerZeroVisible,
-        icaiExaminerZeroEvidence: rawQ.icaiExaminerZeroVisible === true ? rawQ.icaiExaminerZeroEvidence : undefined,
-      } : {}),
       reasonForDeduction:
         rawQ.reasonForDeduction ||
         (needsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on component evaluation.` : 'Full marks awarded.'),

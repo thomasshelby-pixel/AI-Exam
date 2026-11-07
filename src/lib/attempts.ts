@@ -26,7 +26,7 @@ export interface ExamAttempt {
 export const ALLOWED_MATERIAL_TYPES = [
   { value: 'MTP', label: 'MTP (Mock Test Paper)' },
   { value: 'PYQ', label: 'PYQ (Past Year Question Paper)' },
-  { value: 'MODEL_TEST_PAPER', label: 'Model Test Paper' },
+  { value: 'MODEL_TEST_PAPER', label: 'Model Test Paper (Currently Unavailable)' },
 ] as const;
 
 /**
