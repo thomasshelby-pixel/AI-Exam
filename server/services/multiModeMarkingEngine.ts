@@ -68,16 +68,6 @@ export function applyMultiModeMarkingPhilosophy(
   const standardQuestions: QuestionEvaluation[] = dedupedQuestions.map((q) => {
     const qMax = Math.max(0, Number(q.maximumMarks) || 0);
 
-    // An explicit ICAI examiner-awarded zero on a checked PYQ copy is immutable.
-    // It must not be raised by generic component, consequential-credit or mode rules.
-    if (q.icaiExaminerZeroVisible === true || q.flags?.includes('ICAI_EXAMINER_ZERO_CONFIRMED')) {
-      return {
-        ...q,
-        marksAwarded: 0,
-        marksLost: qMax,
-        status: 'incorrect' as const,
-      };
-    }
     const isMcqQuestion = Boolean(
       String(q.questionNumber || '').toUpperCase().startsWith('MCQ') ||
       String(q.canonicalId || q.questionId || '').toUpperCase().startsWith('MCQ') ||
@@ -140,10 +130,6 @@ export function applyMultiModeMarkingPhilosophy(
     );
 
     const qMax = Number(sq.maximumMarks) || 0;
-
-    if (sq.icaiExaminerZeroVisible === true || sq.flags?.includes('ICAI_EXAMINER_ZERO_CONFIRMED')) {
-      return { ...sq, marksAwarded: 0, marksLost: qMax, status: 'incorrect' as const };
-    }
 
     // Unclear questions remain provisional across every marking mode. Do not apply
     // strict deductions or moderate bonuses to unresolved/technical evaluations.
