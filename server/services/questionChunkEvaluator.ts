@@ -515,7 +515,7 @@ Return strictly valid JSON with this schema:
   "confidence": number,
   "technicalEvaluation": string,
   "finalConclusionAssessment": string,
-  "markingComponents": [  "markingComponents": [
+  "markingComponents": [
     {
       "componentId": string,
       "componentType": "PROVISION" | "PRINCIPLE" | "CONDITION" | "APPLICATION" | "CALCULATION" | "WORKING" | "TREATMENT" | "REASONING" | "CONCLUSION" | "PRESENTATION",
