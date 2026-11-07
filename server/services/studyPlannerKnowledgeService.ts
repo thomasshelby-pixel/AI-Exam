@@ -259,12 +259,51 @@ export function searchStudyKnowledge(input: {
   if (best.topic.id === 'law-tax-answer-writing' && !/\b(answer|write|writing|case study|case-based|presentation)\b/i.test(message)) return null;
 
   const course = input.course;
-  const topicAllowed = !best.topic.subjects.length || best.topic.subjects.some((subject) => {
-    const normalized = normalize(subject);
-    return searchText.toLowerCase().includes(normalized)
-      || (course === 'CA_FOUNDATION' && ['Accounting','Business Laws','Quantitative Aptitude','Business Economics'].includes(subject))
-      || (course === 'CA_INTERMEDIATE' && ['Advanced Accounting','Corporate and Other Laws','Taxation','Cost and Management Accounting','Auditing and Ethics','Financial Management and Strategic Management'].includes(subject));
-  });
+  const courseSubjectAliases: Record<string, string[]> = {
+    CA_FOUNDATION: [
+      'business laws', 'quantitative aptitude', 'business economics',
+      'accounting', 'accounts', 'maths', 'mathematics', 'economics',
+    ],
+    CA_INTERMEDIATE: [
+      'financial management and strategic management', 'corporate and other laws',
+      'cost and management accounting', 'advanced accounting', 'auditing and ethics',
+      'taxation', 'income tax', 'direct tax', 'indirect tax', 'gst',
+      'costing', 'cost accounting', 'management accounting', 'corporate law',
+      'company law', 'auditing', 'audit', 'financial management',
+      'strategic management', 'accounting', 'accounts', 'fm-sm',
+    ],
+  };
+  const courseSubjectNames: Record<string, string[]> = {
+    CA_FOUNDATION: ['Accounting', 'Business Laws', 'Quantitative Aptitude', 'Business Economics'],
+    CA_INTERMEDIATE: [
+      'Advanced Accounting', 'Corporate and Other Laws', 'Taxation',
+      'Cost and Management Accounting', 'Auditing and Ethics',
+      'Financial Management and Strategic Management',
+    ],
+  };
+  const normalizedMessage = normalize(message);
+  const matchedAliases = Object.entries(courseSubjectAliases).flatMap(([matchedCourse, aliases]) =>
+    aliases
+      .filter((alias) => normalizedMessage.includes(normalize(alias)))
+      .map((alias) => ({ course: matchedCourse, alias: normalize(alias) })),
+  );
+  // Prefer a full subject name over a shorter alias contained inside it:
+  // "Advanced Accounting" must not also be treated as Foundation "Accounting".
+  const explicitSubjectMatches = matchedAliases.filter((match) =>
+    !matchedAliases.some((other) =>
+      other.alias.length > match.alias.length && other.alias.includes(match.alias),
+    ),
+  );
+  const hasWrongCourseSubject = explicitSubjectMatches.some((match) => match.course !== course);
+  const topicSupportsCourse = (courseSubjectNames[course] || []).some((subject) =>
+    best.topic.subjects.includes(subject),
+  );
+  const topicAllowed = !best.topic.subjects.length
+    || (!hasWrongCourseSubject && (
+      explicitSubjectMatches.length > 0
+        ? explicitSubjectMatches.some((match) => match.course === course)
+        : topicSupportsCourse
+    ));
   if (!topicAllowed) return null;
 
   const answer = best.topic.answers[input.language];
