@@ -49,8 +49,9 @@ async function createPdf(pageCount: number): Promise<Buffer> {
 }
 
 async function run() {
-  // A clearly attributable ICAI examiner zero must override generic partial-credit rules.
-  const checkedZero = parseAndValidateQuestionChunkOutput(
+  // Existing ICAI examiner scores (including a written zero) are annotations, not the AI score.
+  // The PYQ evaluator must independently grade the same candidate evidence.
+  const checkedCopyWithZero = parseAndValidateQuestionChunkOutput(
     JSON.stringify(chunkPayload({
       icaiExaminerZeroVisible: true,
       icaiExaminerZeroEvidence: 'Red 0/4 written in the right margin beside Q2(a).',
@@ -58,88 +59,81 @@ async function run() {
     4,
     { materialType: 'PYQ' },
   );
-  assert.equal(checkedZero.marksAwarded, 0);
-  assert.equal(checkedZero.status, 'incorrect');
-  assert.equal(checkedZero.markingComponents[0].marksAwarded, 0);
-  assert.equal(checkedZero.markingComponents[0].marksDeducted, 4);
-  assert.match(checkedZero.reasonForDeduction, /explicitly awarded 0/i);
-  assert.match(checkedZero.markingComponents[0].deductionReason, /right margin beside Q2\(a\)/i);
+  assert.equal(checkedCopyWithZero.marksAwarded, 2);
+  assert.equal(checkedCopyWithZero.status, 'partially_correct');
+  assert.equal(checkedCopyWithZero.markingComponents[0].marksAwarded, 2);
 
-  // The post-evaluation integrity gate must respect the examiner's zero even
-  // when the written answer contains text that would normally trigger partial credit.
-  const zeroGate = evaluateZeroMarkSafetyGate({
+  // New PYQ model output no longer has to inspect or echo examiner-zero metadata.
+  const checkedCopyWithoutExaminerMetadata = parseAndValidateQuestionChunkOutput(
+    JSON.stringify(chunkPayload()),
+    4,
+    { materialType: 'PYQ' },
+  );
+  assert.equal(checkedCopyWithoutExaminerMetadata.marksAwarded, 2);
+
+  // A genuine AI zero is still checked by the normal academic partial-credit safety gate.
+  const creditworthyZeroGate = evaluateZeroMarkSafetyGate({
     questionNumber: '2',
     subQuestion: 'a',
     maxMarks: 4,
     awardedMarks: 0,
     status: 'incorrect',
-    components: checkedZero.markingComponents,
-    studentEvidence: 'The candidate wrote a relevant provision and working.',
-    detailedFeedback: 'A relevant step is visible, but the examiner awarded zero.',
-    technicalEvaluation: 'Correct concept and calculation text appears in the answer.',
-    reasonForDeduction: checkedZero.reasonForDeduction,
+    components: [{
+      ...checkedCopyWithZero.markingComponents[0],
+      marksAwarded: 0,
+      marksDeducted: 4,
+      assessment: 'PARTIALLY_CORRECT',
+    }],
+    studentEvidence: 'The candidate showed a relevant working.',
+    detailedFeedback: 'A partly correct step is visible in the answer.',
+    technicalEvaluation: 'The candidate demonstrated a partially correct calculation method.',
+    reasonForDeduction: 'The first score was zero.',
     isMcq: false,
-    icaiExaminerZeroVisible: true,
   });
-  assert.equal(zeroGate.isZeroAllowed, true);
-  assert.equal(zeroGate.zeroScoreReason, 'ICAI_EXAMINER_ZERO_CONFIRMED');
-  assert.equal(zeroGate.suggestedAwardedMarks, undefined);
+  assert.equal(creditworthyZeroGate.isZeroAllowed, false);
+  assert.equal(creditworthyZeroGate.suggestedAwardedMarks, 2);
 
-  // Presentation-deduction recovery must not restore marks to a locked zero component.
-  const lockedPresentation = {
-    ...checkedZero.markingComponents[0],
+  // Presentation deductions remain governed by the marking rules, not a stale zero lock.
+  const presentationComponent = {
+    ...checkedCopyWithZero.markingComponents[0],
     componentType: 'PRESENTATION',
-    icaiExaminerZeroLock: true,
     marksAwarded: 0,
     marksDeducted: 4,
-    deductionReason: 'Presentation differs from the suggested format.',
+    deductionReason: 'Presentation differs from the required table format.',
   } as any;
-  const filteredLocked = filterAndRejectPresentationDeductions([lockedPresentation], false);
-  assert.equal(filteredLocked.components[0].marksAwarded, 0);
-  assert.equal(filteredLocked.rejectedDeductions.length, 0);
+  const filteredPresentation = filterAndRejectPresentationDeductions([presentationComponent], false);
+  assert.equal(filteredPresentation.components[0].marksAwarded, 4);
+  assert.equal(filteredPresentation.rejectedDeductions.length, 1);
 
-
-  // Moderate/lenient mode must not restore marks through consequential-credit logic.
-  const modeLockedQuestion: any = {
+  // Selected marking mode independently controls the final PYQ score.
+  const modeIndependentQuestion: any = {
     questionNumber: '2',
     subQuestion: 'a',
     canonicalId: 'Q2(a)',
     maximumMarks: 4,
-    marksAwarded: 0,
-    marksLost: 4,
-    status: 'incorrect',
-    detailedFeedback: checkedZero.detailedFeedback,
-    reasonForDeduction: checkedZero.reasonForDeduction,
-    icaiExaminerZeroVisible: true,
-    flags: ['ICAI_EXAMINER_ZERO_CONFIRMED'],
-    consequentialErrorDetected: true,
-    markingComponents: checkedZero.markingComponents,
+    marksAwarded: 2,
+    marksLost: 2,
+    status: 'partially_correct',
+    detailedFeedback: checkedCopyWithZero.detailedFeedback,
+    reasonForDeduction: 'One working step was incomplete.',
+    consequentialErrorDetected: false,
+    markingComponents: checkedCopyWithZero.markingComponents,
   };
-  for (const mode of ['standard', 'strict', 'lenient'] as const) {
-    const modeResult = applyMultiModeMarkingPhilosophy([modeLockedQuestion], mode, 100);
-    assert.equal(modeResult.activeQuestions[0].marksAwarded, 0, `ICAI zero must remain zero in ${mode} mode`);
-    assert.equal(modeResult.activeTotalMarks, 0, `ICAI zero total must remain zero in ${mode} mode`);
-  }
+  const standardResult = applyMultiModeMarkingPhilosophy([modeIndependentQuestion], 'standard', 100);
+  const strictResult = applyMultiModeMarkingPhilosophy([modeIndependentQuestion], 'strict', 100);
+  const moderateResult = applyMultiModeMarkingPhilosophy([modeIndependentQuestion], 'lenient', 100);
+  assert.equal(standardResult.activeQuestions[0].marksAwarded, 2);
+  assert.equal(strictResult.activeQuestions[0].marksAwarded, 1);
+  assert.equal(moderateResult.activeQuestions[0].marksAwarded, 3);
+  assert.equal(standardResult.activeTotalMarks, 2);
+  assert.equal(strictResult.activeTotalMarks, 1);
+  assert.equal(moderateResult.activeTotalMarks, 3);
 
-  const numericalAudit = auditNumericalReasoningIntegrity([modeLockedQuestion]);
-  assert.equal(numericalAudit.auditedQuestions[0].marksAwarded, 0);
-  assert.equal(numericalAudit.auditedQuestions[0].consequentialErrorDetected, false);
-  assert.ok(numericalAudit.auditedQuestions[0].markingComponents?.every((component) => component.marksAwarded === 0));
+  // Consequential-marking audit must not convert a PYQ score to ICAI's annotated zero.
+  const numericalAudit = auditNumericalReasoningIntegrity([modeIndependentQuestion]);
+  assert.equal(numericalAudit.auditedQuestions[0].marksAwarded, 2);
 
-  // A non-zero examiner score remains eligible for normal question-wise evaluation;
-  // the override runs only for explicit, attributable zero marks.
-  const normalPyq = parseAndValidateQuestionChunkOutput(
-    JSON.stringify(chunkPayload({
-      icaiExaminerZeroVisible: false,
-      icaiExaminerZeroEvidence: 'No examiner-awarded numeric zero was visible beside Q2(a).',
-    })),
-    4,
-    { materialType: 'PYQ' },
-  );
-  assert.equal(normalPyq.marksAwarded, 2);
-  assert.equal(normalPyq.markingComponents[0].marksAwarded, 2);
-
-  // MTP must retain its existing response contract and normal step marks.
+  // MTP continues to use the same source-independent component score.
   const unchangedMtp = parseAndValidateQuestionChunkOutput(
     JSON.stringify(chunkPayload()),
     4,
@@ -147,18 +141,6 @@ async function run() {
   );
   assert.equal(unchangedMtp.marksAwarded, 2);
   assert.equal(unchangedMtp.markingComponents[0].marksAwarded, 2);
-
-  assert.throws(
-    () => parseAndValidateQuestionChunkOutput(
-      JSON.stringify(chunkPayload({
-        icaiExaminerZeroVisible: true,
-        icaiExaminerZeroEvidence: '0',
-      })),
-      4,
-      { materialType: 'PYQ' },
-    ),
-    /ICAI_ZERO_EVIDENCE_INVALID/,
-  );
 
   // A page with visible handwriting but no safe first-pass identity gets one
   // targeted re-read. The recovered answer is included instead of being dropped.
