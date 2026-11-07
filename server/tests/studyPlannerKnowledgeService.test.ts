@@ -60,7 +60,57 @@ test('does not answer current or attempt-sensitive statutory questions from gene
   assert.equal(searchStudyKnowledge({ message: 'What is the latest Finance Act amendment?', course: 'CA_INTERMEDIATE', language: 'english' }), null);
 });
 
-test('does not return subject-specific guidance for a different course', () => {
-  const result = searchStudyKnowledge({ message: 'How should I practise costing sums?', course: 'CA_FOUNDATION', language: 'english' });
-  assert.equal(result, null);
+test('enforces explicit subject boundaries between Foundation and Intermediate', () => {
+  const foundationCosting = searchStudyKnowledge({
+    message: 'How should I practise costing sums?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  });
+  assert.equal(foundationCosting, null);
+
+  const intermediateCosting = searchStudyKnowledge({
+    message: 'How should I practise costing sums?',
+    course: 'CA_INTERMEDIATE',
+    language: 'english',
+  });
+  assert.equal(intermediateCosting?.topicId, 'numerical-practice');
+
+  const foundationAdvancedAccounting = searchStudyKnowledge({
+    message: 'How should I practise Advanced Accounting sums?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  });
+  assert.equal(foundationAdvancedAccounting, null);
+
+  const foundationBusinessLaws = searchStudyKnowledge({
+    message: 'How do I write a Business Laws case study answer?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  });
+  assert.equal(foundationBusinessLaws?.topicId, 'law-tax-answer-writing');
+
+  const foundationGst = searchStudyKnowledge({
+    message: 'How do I write a GST answer?',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+  });
+  assert.equal(foundationGst, null);
+
+  const intermediateGst = searchStudyKnowledge({
+    message: 'How do I write a GST answer?',
+    course: 'CA_INTERMEDIATE',
+    language: 'english',
+  });
+  assert.equal(intermediateGst?.topicId, 'law-tax-answer-writing');
+});
+
+test('allows general numerical practice for both supported courses', () => {
+  for (const course of ['CA_FOUNDATION', 'CA_INTERMEDIATE'] as const) {
+    const result = searchStudyKnowledge({
+      message: 'How do I improve my numerical practice?',
+      course,
+      language: 'english',
+    });
+    assert.equal(result?.topicId, 'numerical-practice');
+  }
 });
