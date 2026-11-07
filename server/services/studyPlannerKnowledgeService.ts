@@ -255,6 +255,8 @@ export function searchStudyKnowledge(input: {
     ? { topic: rememberedTopic, score: Math.max(3, scoreTopic(rememberedTopic, queryTerms)) }
     : ranked[0];
   if (!best || best.score < 3) return null;
+  if (best.topic.id === 'numerical-practice' && !/\b(practis|practice|solve|solving|sum|sums|numerical|calculation|calculations)\b/i.test(message)) return null;
+  if (best.topic.id === 'law-tax-answer-writing' && !/\b(answer|write|writing|case study|case-based|presentation)\b/i.test(message)) return null;
 
   const course = input.course;
   const topicAllowed = !best.topic.subjects.length || best.topic.subjects.some((subject) => {
