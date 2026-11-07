@@ -126,9 +126,8 @@ export function assessQuestionReferenceForEvaluation(
 export function parseAndValidateQuestionChunkOutput(
   rawText: string,
   maxMarks: number,
-  options: { materialType?: string } = {}
+  _options: { materialType?: string } = {}
 ): Record<string, any> {
-  const isPyq = String(options.materialType || '').trim().toUpperCase() === 'PYQ';
   let clean = String(rawText || '').trim();
   clean = clean.replace(/^`{3}(?:json)?[ \t\r\n]*/i, '').replace(/[ \t\r\n]*`{3}$/, '');
 
@@ -155,24 +154,7 @@ export function parseAndValidateQuestionChunkOutput(
     throw new Error('QUESTION_CHUNK_INVALID_TOTAL: awarded marks are missing or outside the authoritative range.');
   }
 
-  if (isPyq) {
-    if (typeof raw.icaiExaminerZeroVisible !== 'boolean') {
-      throw new Error('QUESTION_CHUNK_ICAI_ZERO_FLAG_MISSING: PYQ evaluation must explicitly inspect for an ICAI examiner-awarded numeric zero.');
-    }
-    if (typeof raw.icaiExaminerZeroEvidence !== 'string' || !raw.icaiExaminerZeroEvidence.trim()) {
-      throw new Error('QUESTION_CHUNK_ICAI_ZERO_EVIDENCE_MISSING: PYQ evaluation must state where an examiner zero was or was not observed.');
-    }
-    if (raw.icaiExaminerZeroVisible === true) {
-      const evidence = raw.icaiExaminerZeroEvidence.trim();
-      const hasLiteralZero = /(?:^|\D)0(?:\.0+)?(?:\s*\/\s*\d+(?:\.\d+)?)?(?:\D|$)/.test(evidence);
-      const hasAttribution = /(margin|beside|next to|adjacent|above|below|right|left|red|ink|examiner|marked|written|score)/i.test(evidence);
-      if (!hasLiteralZero || !hasAttribution) {
-        throw new Error('QUESTION_CHUNK_ICAI_ZERO_EVIDENCE_INVALID: a confirmed zero must include the literal numeric zero and its examiner-mark location.');
-      }
-    }
-  }
-
-  const components = raw.markingComponents;
+    const components = raw.markingComponents;
   if (!Array.isArray(components) || components.length === 0) {
     throw new Error('QUESTION_CHUNK_COMPONENTS_MISSING: a question-level score without step evidence is not accepted.');
   }
@@ -227,28 +209,7 @@ export function parseAndValidateQuestionChunkOutput(
   if (Math.abs(availableTotal - maxMarks) > 0.05) {
     throw new Error(`QUESTION_CHUNK_ALLOCATION_MISMATCH: component allocations total ${availableTotal}, but the authoritative maximum is ${maxMarks}.`);
   }
-  if (isPyq && raw.icaiExaminerZeroVisible === true) {
-    const evidence = raw.icaiExaminerZeroEvidence.trim();
-    // An explicit ICAI examiner-awarded numeric zero is authoritative on a checked
-    // PYQ copy. Do not let the generic partial-credit safety gate add marks back.
-    for (const component of components) {
-      component.marksAwarded = 0;
-      component.marksDeducted = component.marksAvailable;
-      component.assessment = component.assessment === 'OMITTED' ? 'OMITTED' : 'INCORRECT';
-      component.deductionReason = `ICAI examiner explicitly awarded zero for this question. Evidence: ${evidence}`;
-      component.annotationInstructions = 'ICAI examiner-awarded 0 retained; do not add partial marks.';
-      component.icaiExaminerZeroLock = true;
-    }
-    awardedTotal = 0;
-    raw.marksAwarded = 0;
-    raw.status = 'incorrect';
-    raw.reasonForDeduction = `ICAI examiner explicitly awarded 0 marks. Evidence: ${evidence}`;
-    raw.detailedFeedback = [String(raw.detailedFeedback || '').trim(), raw.reasonForDeduction]
-      .filter(Boolean)
-      .join('\n\n');
-  }
-
-  if (Math.abs(awardedTotal - raw.marksAwarded) > 0.26) {
+    if (Math.abs(awardedTotal - raw.marksAwarded) > 0.26) {
     throw new Error(`QUESTION_CHUNK_SCORE_MISMATCH: component awards total ${awardedTotal}, but the model reported ${raw.marksAwarded}.`);
   }
 
@@ -407,13 +368,12 @@ export async function evaluateQuestionChunk(
   const isPyqCheckedCopyFlow = String(ctx.referenceMetadata?.materialType || snippets.referenceTrace.materialType || '').trim().toUpperCase() === 'PYQ';
   const pyqCheckedCopyInstruction = isPyqCheckedCopyFlow ? `
 
-PYQ ICAI-CHECKED-COPY EXAMINER-MARK OVERRIDE (PYQ ONLY):
-- The uploaded PYQ answer PDF may already be checked by ICAI. Inspect the visible page image and margins for examiner-added numerical marks, often in red ink.
-- For this exact question ${fullCode}, distinguish examiner marks from the student's handwriting, printed maximum marks, calculations, question labels, page numbers, ticks and crosses.
-- Set icaiExaminerZeroVisible = true ONLY when an examiner-written numeric 0 (including 0/4, 0.0, etc.) is clearly attributable to this exact question/sub-question. Do not infer zero from a cross, blank, tick, comment or strike-through.
-- When a clear examiner-awarded numeric zero is visible, set icaiExaminerZeroVisible = true, quote its literal value and location in icaiExaminerZeroEvidence, set marksAwarded = 0, and set every component's marksAwarded = 0. The examiner's 0 overrides the general partial-credit / zero-mark safety gate. Do NOT award step marks, even if the student's workings contain creditworthy steps.
-- If no clear examiner-awarded numeric zero is visible for this exact question, set icaiExaminerZeroVisible = false and explain that no attributable numeric zero was observed in icaiExaminerZeroEvidence. In that case, apply the normal ICAI step-marking rules.
-- Do not borrow a zero written beside a neighbouring question. If attribution is ambiguous, set the flag false and state the ambiguity.
+PYQ CHECKED-COPY SCORE INDEPENDENCE (PYQ ONLY):
+- The uploaded PYQ answer sheet may contain ICAI examiner ticks, comments, red-ink annotations, per-question marks or a total score.
+- Treat every examiner-awarded score, including a written 0, as a non-binding annotation. Never copy it, use it as the AI score, or lock any question/component to zero because of it.
+- Independently assess only the student's answer content against the selected Question Paper, Suggested Answer and Marking Scheme.
+- Award independently creditworthy steps according to the selected checking mode. Standard, Strict and Moderate modes may legitimately produce different marks from the original examiner.
+- A zero may be awarded only under the normal academic zero-mark safety rules (or the applicable objective MCQ rule), never merely because the original examiner wrote zero.
 ` : '';
 
   const prompt = `
@@ -546,7 +506,6 @@ CRITICAL ICAI EVALUATION RULES:
 9. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
 10. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
 
-${pyqCheckedCopyInstruction}
 Return strictly valid JSON with this schema:
 {
   "marksAwarded": number,
@@ -556,9 +515,7 @@ Return strictly valid JSON with this schema:
   "confidence": number,
   "technicalEvaluation": string,
   "finalConclusionAssessment": string,
-  ${isPyqCheckedCopyFlow ? `"icaiExaminerZeroVisible": boolean,
-  "icaiExaminerZeroEvidence": string,` : ''}
-  "markingComponents": [
+  "markingComponents": [  "markingComponents": [
     {
       "componentId": string,
       "componentType": "PROVISION" | "PRINCIPLE" | "CONDITION" | "APPLICATION" | "CALCULATION" | "WORKING" | "TREATMENT" | "REASONING" | "CONCLUSION" | "PRESENTATION",
@@ -604,16 +561,13 @@ Return strictly valid JSON with this schema:
     // already been validated against the authoritative maximum and component arithmetic.
     const calculatedAwarded = components.reduce((sum, component) => sum + component.marksAwarded, 0);
     const finalAwarded = Math.min(maxMarks, Math.round(calculatedAwarded * 4) / 4);
-    const effectiveStatus = referenceDisposition.requiresHumanReview && raw.icaiExaminerZeroVisible !== true ? 'unclear' : raw.status;
+    const effectiveStatus = referenceDisposition.requiresHumanReview ? 'unclear' : raw.status;
     const marksLost = effectiveStatus === 'unclear' ? 0 : Math.max(0, maxMarks - finalAwarded);
     const modelConfidence = typeof raw.confidence === 'number' && Number.isFinite(raw.confidence)
       ? Math.max(0, Math.min(100, raw.confidence))
       : 0;
 
     const questionFlags: string[] = [];
-    if (raw.icaiExaminerZeroVisible === true) {
-      questionFlags.push('ICAI_EXAMINER_ZERO_CONFIRMED');
-    }
     if (referenceDisposition.requiresHumanReview) {
       questionFlags.push('QUESTION_REFERENCE_REVIEW_REQUIRED');
       questionFlags.push('REVIEW_REQUIRED');
@@ -639,11 +593,7 @@ Return strictly valid JSON with this schema:
       marksLost,
       status: effectiveStatus,
       reasonForDeduction: raw.reasonForDeduction || (marksLost > 0 ? `${marksLost} mark(s) deducted based on step-marking rubric.` : 'Full marks awarded.'),
-      ...(isPyqCheckedCopyFlow ? {
-        icaiExaminerZeroVisible: raw.icaiExaminerZeroVisible === true,
-        icaiExaminerZeroEvidence: raw.icaiExaminerZeroVisible === true ? raw.icaiExaminerZeroEvidence : undefined,
-      } : {}),
-      detailedFeedback: [
+      detailedFeedback: [      detailedFeedback: [
         raw.detailedFeedback || `Evaluated candidate solution for ${fullCode} across pages ${mapping.pages.join(', ')}.`,
         referenceDisposition.reason,
       ].filter(Boolean).join('\n\n'),
