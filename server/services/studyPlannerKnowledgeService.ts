@@ -181,6 +181,102 @@ const TOPICS: KnowledgeTopic[] = [
       hindi: 'जाँचें: क्या आप chapter की headings, तीन महत्वपूर्ण concepts और एक standard question बिना notes के कर सकते हैं?',
     },
   },
+  {
+    id: 'foundation-qa-strategy', title: 'Foundation Quantitative Aptitude study strategy', subjects: ['Quantitative Aptitude'],
+    keywords: ['quantitative aptitude','business mathematics','logical reasoning','statistics','probability','correlation','regression','equations','ratio and proportion','permutations','number series','seating arrangements'],
+    answers: {
+      english: 'For Quantitative Aptitude, separate your work into Business Mathematics, Logical Reasoning and Statistics. Learn the idea behind a method, solve a few untimed questions with full workings, then practise a short timed set. Keep an error log for concept selection, setup, calculation and interpretation mistakes.',
+      hinglish: 'Quantitative Aptitude ko 3 parts mein divide kar: Business Mathematics, Logical Reasoning aur Statistics. Pehle method ka concept samajh, kuch questions untimed full workings ke saath solve kar, phir short timed set laga. Error log mein concept, setup, calculation aur interpretation wali mistakes note kar.',
+      hindi: 'Quantitative Aptitude को Business Mathematics, Logical Reasoning और Statistics में बाँटें। पहले method का concept समझें, कुछ questions बिना समय-दबाव के पूरी workings के साथ हल करें, फिर छोटा timed set लगाएँ। Concept, setup, calculation और interpretation की गलतियों का error log रखें।',
+    },
+    example: {
+      english: 'Example: for a Statistics topic, write the formula and when it is appropriate, solve two questions step by step, then attempt three mixed questions without looking at the formula sheet.',
+      hinglish: 'Example: Statistics ke topic mein formula aur uska use kab hota hai likh, 2 questions step-by-step solve kar, phir formula sheet dekhe bina 3 mixed questions kar.',
+      hindi: 'उदाहरण: Statistics के किसी topic में formula और उसका उपयोग कब होता है, यह लिखें। दो questions step-by-step हल करें, फिर formula sheet देखे बिना तीन mixed questions करें।',
+    },
+    simpler: {
+      english: 'Do not only memorise formulas. Understand what each formula is used for, practise the steps, and review why an answer went wrong.',
+      hinglish: 'Sirf formulas ratna kaafi nahi. Samajh ki formula kab use hota hai, steps practice kar aur galat answer ka reason check kar.',
+      hindi: 'केवल formulas याद करना पर्याप्त नहीं है। समझें कि formula कब उपयोग होता है, steps का अभ्यास करें और गलत answer का कारण जाँचें।',
+    },
+    quiz: {
+      english: 'Quick self-test: choose one question each from Mathematics, Logical Reasoning and Statistics. Can you identify the method before solving? Note the part that slows you down.',
+      hinglish: 'Quick self-test: Mathematics, Logical Reasoning aur Statistics se ek-ek question choose kar. Solve karne se pehle method identify kar pa raha hai? Jo step slow karta hai use note kar.',
+      hindi: 'छोटा self-test: Mathematics, Logical Reasoning और Statistics से एक-एक question चुनें। हल करने से पहले क्या आप सही method पहचान पाते हैं? जो step धीमा करता है, उसे note करें।',
+    },
+  },
+  {
+    id: 'foundation-economics-strategy', title: 'Foundation Business Economics study strategy', subjects: ['Business Economics'],
+    keywords: ['business economics','demand and supply','demand supply','production and cost','market structures','business cycles','national income','public finance','money market','international trade','economics'],
+    answers: {
+      english: 'For Business Economics, build each topic around four things: the core concept, its assumptions, the relationship or diagram, and a real-world illustration. Practise explaining why a curve or outcome changes, then solve MCQs and review why the other options are incorrect.',
+      hinglish: 'Business Economics ke har topic ko 4 cheezon se samajh: core concept, assumptions, relationship/diagram aur real-life example. Ye explain karne ki practice kar ki curve ya outcome kyun change hota hai. Phir MCQs solve kar aur wrong options bhi review kar.',
+      hindi: 'Business Economics के हर topic को चार हिस्सों में समझें: मुख्य concept, assumptions, relationship या diagram और वास्तविक उदाहरण। यह समझाने का अभ्यास करें कि curve या outcome क्यों बदलता है। फिर MCQs हल करें और गलत options का कारण भी देखें।',
+    },
+    example: {
+      english: 'Example: while revising demand and supply, write the factors that can change demand or supply, draw the relevant diagram from memory, and explain the effect in one or two sentences.',
+      hinglish: 'Example: demand and supply revise karte waqt demand/supply ko change karne wale factors likh, diagram memory se bana aur effect ko 1–2 lines mein explain kar.',
+      hindi: 'उदाहरण: Demand and Supply revise करते समय demand या supply बदलने वाले factors लिखें, diagram याद से बनाएँ और effect को एक-दो वाक्यों में समझाएँ।',
+    },
+    simpler: {
+      english: 'Learn the reason behind an economic result, not just the definition. Use a small diagram or example to check whether you really understand it.',
+      hinglish: 'Sirf definition yaad mat kar. Economic result kyun aata hai ye samajh, aur chhote diagram ya example se khud ko check kar.',
+      hindi: 'केवल definition याद न करें। Economic result क्यों आता है, यह समझें और छोटे diagram या example से अपनी समझ जाँचें।',
+    },
+    quiz: {
+      english: 'Quick self-test: pick one concept and explain its meaning, one key assumption and what changes when one factor changes. Then attempt five related MCQs.',
+      hinglish: 'Quick self-test: ek concept choose kar, uska meaning, ek key assumption aur kisi factor ke change hone par kya badalta hai explain kar. Phir 5 related MCQs laga.',
+      hindi: 'छोटा self-test: एक concept चुनें और उसका meaning, एक मुख्य assumption तथा किसी factor के बदलने पर होने वाला effect समझाएँ। फिर पाँच related MCQs हल करें।',
+    },
+  },
+  {
+    id: 'intermediate-audit-strategy', title: 'Intermediate Auditing and Ethics study strategy', subjects: ['Auditing and Ethics'],
+    keywords: ['auditing and ethics','audit evidence','audit documentation','risk assessment','internal control','audit sampling','audit report','standards on auditing','audit procedures','ethics','auditing'],
+    answers: {
+      english: 'For Auditing and Ethics, avoid learning every paragraph as an isolated block. For each topic, make a short map of its objective, relevant risk or situation, auditor response or evidence, and documentation/reporting point. Practise applying the keywords to case facts, and verify exact Standards on Auditing wording in the material applicable to your attempt.',
+      hinglish: 'Auditing and Ethics mein har paragraph alag-alag ratne ke bajay topic ka short map bana: objective, relevant risk/situation, auditor ka response ya evidence, aur documentation/reporting point. Case facts par keywords apply karne ki practice kar. Exact SA wording apne attempt ke applicable material se verify kar.',
+      hindi: 'Auditing and Ethics में हर paragraph अलग-अलग रटने के बजाय topic का छोटा map बनाएँ: objective, संबंधित risk या situation, auditor का response या evidence और documentation/reporting point। Case facts पर keywords लागू करने का अभ्यास करें और exact SA wording अपने attempt के applicable material से जाँचें।',
+    },
+    example: {
+      english: 'Example: for an audit evidence question, identify what assertion or risk the question points to, what evidence would address it, and how the work should be documented. Use the applicable module for the exact technical requirement.',
+      hinglish: 'Example: audit evidence ke question mein pehle identify kar ki kaunsa assertion ya risk diya hai, usko address karne ke liye kya evidence chahiye aur work document kaise hoga. Exact technical requirement module se verify kar.',
+      hindi: 'उदाहरण: Audit Evidence के question में पहचानें कि कौन-सा assertion या risk दिया है, उसे address करने के लिए कौन-सा evidence चाहिए और work document कैसे होगा। Exact technical requirement module से जाँचें।',
+    },
+    simpler: {
+      english: 'For every audit topic, ask: what is the auditor trying to achieve, what could go wrong, what evidence or action is needed, and what must be recorded?',
+      hinglish: 'Har audit topic par 4 sawal pooch: auditor kya achieve karna chahta hai, kya galat ho sakta hai, kaunsa evidence/action chahiye aur kya record karna hai?',
+      hindi: 'हर audit topic पर चार सवाल पूछें: auditor क्या achieve करना चाहता है, क्या गलत हो सकता है, कौन-सा evidence या action चाहिए और क्या record करना है?',
+    },
+    quiz: {
+      english: 'Quick self-test: take one audit case and write its risk, the evidence or procedure that responds to it, and the documentation you would expect. Check the exact standard in your current material.',
+      hinglish: 'Quick self-test: ek audit case le aur uska risk, response dene wala evidence/procedure aur expected documentation likh. Exact standard current material mein check kar.',
+      hindi: 'छोटा self-test: एक audit case लें और उसका risk, जवाब देने वाला evidence/procedure तथा expected documentation लिखें। Exact standard current material में जाँचें।',
+    },
+  },
+  {
+    id: 'intermediate-fm-sm-strategy', title: 'Intermediate FM and SM study strategy', subjects: ['Financial Management and Strategic Management'],
+    keywords: ['financial management and strategic management','financial management','strategic management','cost of capital','capital structure','working capital','investment decisions','dividend decisions','strategic intent','strategy implementation','business strategy','fm','sm','fm-sm'],
+    answers: {
+      english: 'Treat FM and SM as two different study modes. In FM, maintain a formula sheet with meaning, assumptions and the type of question where each formula applies; practise full workings and check units. In SM, learn the framework in your own words and practise connecting each point to the facts of a case instead of reproducing generic notes.',
+      hinglish: 'FM aur SM ko 2 alag study modes ki tarah kar. FM mein formula sheet bana jisme meaning, assumptions aur formula kab use hota hai likh; full workings practice kar aur units check kar. SM mein framework apne words mein samajh aur case ke facts se points connect kar—generic notes copy mat kar.',
+      hindi: 'FM और SM को दो अलग study modes की तरह पढ़ें। FM में formula sheet बनाएँ जिसमें meaning, assumptions और formula कब लागू होता है, यह लिखें; पूरी workings का अभ्यास करें और units जाँचें। SM में framework अपने शब्दों में समझें और हर point को case के facts से जोड़ें।',
+    },
+    example: {
+      english: 'Example: for an FM problem, list the given data, identify the required output, select the relevant formula and show each working. For an SM case, identify the issue, choose the relevant framework and link each point to a fact in the case.',
+      hinglish: 'Example: FM sum mein given data likh, required output identify kar, relevant formula choose kar aur workings dikha. SM case mein issue identify kar, relevant framework choose kar aur har point ko case ke fact se link kar.',
+      hindi: 'उदाहरण: FM problem में given data लिखें, required output पहचानें, सही formula चुनें और workings दिखाएँ। SM case में issue पहचानें, relevant framework चुनें और हर point को case के fact से जोड़ें।',
+    },
+    simpler: {
+      english: 'FM is mainly about choosing and applying the right financial method with clear calculations. SM is about understanding a business situation and applying a suitable framework to it.',
+      hinglish: 'FM mein sahi financial method choose karke calculation clearly karni hoti hai. SM mein business situation samajhkar suitable framework apply karna hota hai.',
+      hindi: 'FM में सही financial method चुनकर calculation स्पष्ट करनी होती है। SM में business situation समझकर उस पर उपयुक्त framework लागू करना होता है।',
+    },
+    quiz: {
+      english: 'Quick self-test: choose one FM question and one SM case. For FM, identify the formula and show the first working. For SM, state the issue and connect two framework points to the case facts.',
+      hinglish: 'Quick self-test: ek FM question aur ek SM case choose kar. FM mein formula aur first working bata; SM mein issue likh aur framework ke 2 points ko case facts se connect kar.',
+      hindi: 'छोटा self-test: एक FM question और एक SM case चुनें। FM में formula और पहली working बताएँ; SM में issue लिखें और framework के दो points को case facts से जोड़ें।',
+    },
+  },
 ];
 
 const STOP_WORDS = new Set(['the','a','an','is','are','am','do','does','did','how','what','why','when','where','can','could','should','would','i','me','my','you','your','we','our','to','of','for','in','on','at','and','or','but','with','about','please','tell','explain','bhai','mujhe','kaise','kya','hai','hain','karu','karo','batao','btao','samjhao','mera','meri','mere','ko','ke','ka','ki','se','mein','main','nahi','nahin','hai','tha','thi','ho','raha','rahi','rhe','ek','aur','ye','yeh','woh','vo']);
