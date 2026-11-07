@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
 import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
+import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import {
   buildAnswerSheetCoverageMap,
   clearCoverageMapCache,
@@ -60,7 +61,29 @@ async function run() {
   assert.equal(checkedZero.markingComponents[0].marksAwarded, 0);
   assert.equal(checkedZero.markingComponents[0].marksDeducted, 4);
   assert.match(checkedZero.reasonForDeduction, /explicitly awarded 0/i);
-  assert.match(checkedZero.markingComponents[0].deductionReason, /right margin beside Q2\(a\)/i);
+  assert.match(checkedZero.markingComponents[0].deductionReason, /right margin beside Q2\\(a\\)/i);
+
+  // Moderate/lenient mode must not restore marks through consequential-credit logic.
+  const modeLockedQuestion: any = {
+    questionNumber: '2',
+    subQuestion: 'a',
+    canonicalId: 'Q2(a)',
+    maximumMarks: 4,
+    marksAwarded: 0,
+    marksLost: 4,
+    status: 'incorrect',
+    detailedFeedback: checkedZero.detailedFeedback,
+    reasonForDeduction: checkedZero.reasonForDeduction,
+    icaiExaminerZeroVisible: true,
+    flags: ['ICAI_EXAMINER_ZERO_CONFIRMED'],
+    consequentialErrorDetected: true,
+    markingComponents: checkedZero.markingComponents,
+  };
+  for (const mode of ['standard', 'strict', 'lenient'] as const) {
+    const modeResult = applyMultiModeMarkingPhilosophy([modeLockedQuestion], mode, 100);
+    assert.equal(modeResult.activeQuestions[0].marksAwarded, 0, `ICAI zero must remain zero in ${mode} mode`);
+    assert.equal(modeResult.activeTotalMarks, 0, `ICAI zero total must remain zero in ${mode} mode`);
+  }
 
   // A non-zero examiner score remains eligible for normal question-wise evaluation;
   // the override runs only for explicit, attributable zero marks.
