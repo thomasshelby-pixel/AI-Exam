@@ -259,20 +259,38 @@ export function searchStudyKnowledge(input: {
   if (best.topic.id === 'law-tax-answer-writing' && !/\b(answer|write|writing|case study|case-based|presentation)\b/i.test(message)) return null;
 
   const course = input.course;
-  const courseSubjectAliases: Record<string, string[]> = {
-    CA_FOUNDATION: [
-      'business laws', 'business law', 'quantitative aptitude', 'business economics',
-      'accounting', 'accounts', 'maths', 'mathematics', 'economics',
-    ],
-    CA_INTERMEDIATE: [
-      'financial management and strategic management', 'corporate and other laws',
-      'cost and management accounting', 'advanced accounting', 'auditing and ethics',
-      'taxation', 'tax', 'income tax', 'direct tax', 'indirect tax', 'gst',
-      'costing', 'cost accounting', 'management accounting', 'corporate law',
-      'company law', 'auditing', 'audit', 'financial management',
-      'strategic management', 'accounting', 'accounts', 'fm-sm',
-    ],
-  };
+  const courseSubjectAliases: Array<{ alias: string; courses: string[] }> = [
+    { alias: 'business laws', courses: ['CA_FOUNDATION'] },
+    { alias: 'business law', courses: ['CA_FOUNDATION'] },
+    { alias: 'quantitative aptitude', courses: ['CA_FOUNDATION'] },
+    { alias: 'business economics', courses: ['CA_FOUNDATION'] },
+    { alias: 'mathematics', courses: ['CA_FOUNDATION'] },
+    { alias: 'maths', courses: ['CA_FOUNDATION'] },
+    { alias: 'economics', courses: ['CA_FOUNDATION'] },
+    { alias: 'advanced accounting', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'corporate and other laws', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'cost and management accounting', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'financial management and strategic management', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'auditing and ethics', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'income tax', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'direct tax', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'indirect tax', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'taxation', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'tax', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'gst', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'costing', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'cost accounting', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'management accounting', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'corporate law', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'company law', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'auditing', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'audit', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'financial management', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'strategic management', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'fm-sm', courses: ['CA_INTERMEDIATE'] },
+    { alias: 'accounting', courses: ['CA_FOUNDATION', 'CA_INTERMEDIATE'] },
+    { alias: 'accounts', courses: ['CA_FOUNDATION', 'CA_INTERMEDIATE'] },
+  ];
   const courseSubjectNames: Record<string, string[]> = {
     CA_FOUNDATION: ['Accounting', 'Business Laws', 'Quantitative Aptitude', 'Business Economics'],
     CA_INTERMEDIATE: [
@@ -282,11 +300,9 @@ export function searchStudyKnowledge(input: {
     ],
   };
   const normalizedMessage = normalize(message);
-  const matchedAliases = Object.entries(courseSubjectAliases).flatMap(([matchedCourse, aliases]) =>
-    aliases
-      .filter((alias) => normalizedMessage.includes(normalize(alias)))
-      .map((alias) => ({ course: matchedCourse, alias: normalize(alias) })),
-  );
+  const matchedAliases = courseSubjectAliases
+    .filter((item) => normalizedMessage.includes(normalize(item.alias)))
+    .map((item) => ({ ...item, alias: normalize(item.alias) }));
   // Prefer a full subject name over a shorter alias contained inside it:
   // "Advanced Accounting" must not also be treated as Foundation "Accounting".
   const explicitSubjectMatches = matchedAliases.filter((match) =>
@@ -294,14 +310,14 @@ export function searchStudyKnowledge(input: {
       other.alias.length > match.alias.length && other.alias.includes(match.alias),
     ),
   );
-  const hasWrongCourseSubject = explicitSubjectMatches.some((match) => match.course !== course);
+  const hasWrongCourseSubject = explicitSubjectMatches.some((match) => !match.courses.includes(course));
   const topicSupportsCourse = (courseSubjectNames[course] || []).some((subject) =>
     best.topic.subjects.includes(subject),
   );
   const topicAllowed = !best.topic.subjects.length
     || (!hasWrongCourseSubject && (
       explicitSubjectMatches.length > 0
-        ? explicitSubjectMatches.some((match) => match.course === course)
+        ? explicitSubjectMatches.some((match) => match.courses.includes(course))
         : topicSupportsCourse
     ));
   if (!topicAllowed) return null;
