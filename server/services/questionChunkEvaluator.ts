@@ -24,6 +24,14 @@ export interface ChunkEvaluationContext {
   supervisorCorrectionAttempt?: number;
 }
 
+export function resolveQuestionChunkMaterialType(
+  referenceMetadata?: Pick<QuestionReferenceLockMetadata, 'materialType'>,
+  referenceTrace?: Pick<LockedQuestionReference['referenceTrace'], 'materialType'>
+): string | undefined {
+  const materialType = referenceMetadata?.materialType || referenceTrace?.materialType;
+  return typeof materialType === 'string' && materialType.trim() ? materialType.trim() : undefined;
+}
+
 export interface ExtractedReferenceSnippets {
   qpSnippet: string;
   saSnippet: string;
@@ -404,7 +412,8 @@ export async function evaluateQuestionChunk(
     ? `\nSUPERVISOR CORRECTION REQUEST (attempt ${ctx.supervisorCorrectionAttempt || 1}):\nThe previous evaluation was flagged for the following specific reason(s):\n${ctx.supervisorIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\nRe-open and independently reassess the original student answer on the supplied page(s) against the locked Question Paper, Suggested Answer, and Marking Scheme. Correct only issues supported by the actual answer and authoritative references. Do not blindly comply with a flag if the evidence does not support it; explain the conflict and return status \"unclear\" when the evidence or mapping is insufficient. Keep the authoritative question identity and maximum marks unchanged. Re-evaluate component marks and reasons, not merely the total.\n`
     : '';
 
-  const isPyqCheckedCopyFlow = String(ctx.referenceMetadata?.materialType || snippets.referenceTrace.materialType || '').trim().toUpperCase() === 'PYQ';
+  const evaluationMaterialType = resolveQuestionChunkMaterialType(ctx.referenceMetadata, snippets.referenceTrace);
+  const isPyqCheckedCopyFlow = String(evaluationMaterialType || '').trim().toUpperCase() === 'PYQ';
   const pyqCheckedCopyInstruction = isPyqCheckedCopyFlow ? `
 
 PYQ ICAI-CHECKED-COPY EXAMINER-MARK OVERRIDE (PYQ ONLY):
@@ -586,7 +595,7 @@ Return strictly valid JSON with this schema:
       responseMimeType: 'application/json',
       thinkingLevel: checkingMode === 'strict' ? 'HIGH' : 'MEDIUM',
       validateOutput: (rawText) => {
-        parseAndValidateQuestionChunkOutput(rawText, maxMarks, { materialType: ctx.referenceMetadata?.materialType });
+        parseAndValidateQuestionChunkOutput(rawText, maxMarks, { materialType: evaluationMaterialType });
       },
       context: {
         level,
@@ -597,7 +606,7 @@ Return strictly valid JSON with this schema:
     });
     console.info(`[QuestionChunkEvaluator] ${fullCode} evaluated with ${res.modelUsed} (${res.provider}); fallback=${res.fallbackOccurred}.`);
 
-    const raw = parseAndValidateQuestionChunkOutput(res.rawText, maxMarks, { materialType: ctx.referenceMetadata?.materialType });
+    const raw = parseAndValidateQuestionChunkOutput(res.rawText, maxMarks, { materialType: evaluationMaterialType });
     const components: MarkingComponent[] = raw.markingComponents as MarkingComponent[];
 
     // Do not invent or proportionally rescale step allocations. The model output has
