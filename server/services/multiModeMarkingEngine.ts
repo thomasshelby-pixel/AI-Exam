@@ -225,10 +225,6 @@ export function applyMultiModeMarkingPhilosophy(
 
     const qMax = Number(sq.maximumMarks) || 0;
 
-    if (sq.icaiExaminerZeroVisible === true || sq.flags?.includes('ICAI_EXAMINER_ZERO_CONFIRMED')) {
-      return { ...sq, marksAwarded: 0, marksLost: qMax, status: 'incorrect' as const };
-    }
-
     // Do not manufacture benefit-of-doubt marks for an unresolved question.
     if (sq.status === 'unclear') {
       return {
