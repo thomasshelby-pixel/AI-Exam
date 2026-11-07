@@ -685,6 +685,14 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       filename,
     } = req.body;
 
+    if (materialType === 'MODEL_TEST_PAPER') {
+      return res.status(503).json({
+        success: false,
+        code: 'MODEL_TEST_EVALUATION_UNAVAILABLE',
+        error: 'Model Test Paper evaluation is currently unavailable. We may introduce this service in a future update. No evaluation credits will be used.',
+      });
+    }
+
     if (!level || !subjectKey) {
       return res.status(400).json({
         success: false,
@@ -1036,6 +1044,15 @@ const inFlightStudentEvaluations = new Set<string>();
 
 // 2. Upload and Evaluate Answer Sheet
 router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluation'), evaluationSubmissionRateLimiter, requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
+  // Reject Model Test submissions before creating an evaluation or consuming credits / institute quota.
+  if (req.body?.materialType === 'MODEL_TEST_PAPER') {
+    return res.status(503).json({
+      success: false,
+      code: 'MODEL_TEST_EVALUATION_UNAVAILABLE',
+      error: 'Model Test Paper evaluation is currently unavailable. We may introduce this service in a future update. No evaluation credits or institute quota will be used.',
+    });
+  }
+
   const studentId = req.user!.id;
 
   // Prevent double deduction or concurrent submissions if user double-clicks Evaluate
