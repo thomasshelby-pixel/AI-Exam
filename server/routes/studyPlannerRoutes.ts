@@ -14,7 +14,7 @@ import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRo
 import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
-import { buildKnowledgeChatReply, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -685,7 +685,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const guidanceQuestion = isGeneralStudyQuestion(message) && !isExplicitStudyPlanRequest(message)
+    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history)) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
       const parsed = parsedProbe;
