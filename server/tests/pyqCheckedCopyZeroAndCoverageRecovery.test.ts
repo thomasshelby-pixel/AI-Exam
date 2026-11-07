@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
-import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
+import { parseAndValidateQuestionChunkOutput, resolveQuestionChunkMaterialType } from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateZeroMarkSafetyGate, filterAndRejectPresentationDeductions } from '../services/evaluationIntegrityEngine.js';
 import { auditNumericalReasoningIntegrity } from '../services/sourceGroundedTransformationService.js';
@@ -49,6 +49,13 @@ async function createPdf(pageCount: number): Promise<Buffer> {
 }
 
 async function run() {
+  // Older/alternate callers can supply the material type only via the locked reference trace.
+  const fallbackMaterialType = resolveQuestionChunkMaterialType(undefined, { materialType: 'PYQ' });
+  assert.equal(fallbackMaterialType, 'PYQ');
+  assert.throws(
+    () => parseAndValidateQuestionChunkOutput(JSON.stringify(chunkPayload()), 4, { materialType: fallbackMaterialType }),
+    /QUESTION_CHUNK_ICAI_ZERO_FLAG_MISSING/,
+  );
   // A clearly attributable ICAI examiner zero must override generic partial-credit rules.
   const checkedZero = parseAndValidateQuestionChunkOutput(
     JSON.stringify(chunkPayload({
