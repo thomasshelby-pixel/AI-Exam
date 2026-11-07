@@ -40,6 +40,14 @@ test('subject-specific shorthand can use the configured study duration without a
 });
 
 
+test('recognises natural study doubts and confusion as chat questions', () => {
+  assert.equal(isGeneralStudyQuestion("I don't understand marginal costing"), true);
+  assert.equal(isGeneralStudyQuestion('I am confused about audit evidence'), true);
+  assert.equal(isGeneralStudyQuestion('I have a doubt in GST input tax credit'), true);
+  assert.equal(isGeneralStudyQuestion('Bhai mujhe samajh nahi aa raha costing kaise karu'), true);
+  assert.equal(isGeneralStudyQuestion('मुझे यह concept समझ नहीं आ रहा है'), true);
+});
+
 test('recognises ordinary study concept questions without requiring timetable details', () => {
   assert.equal(isGeneralStudyQuestion('Explain GST input tax credit'), true);
   assert.equal(isGeneralStudyQuestion('What are the provisions for salary income?'), true);
