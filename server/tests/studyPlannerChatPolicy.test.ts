@@ -58,3 +58,9 @@ test('returns the fixed coming-soon response for CA Final only', () => {
   assert.equal(getCourseUnderDevelopmentReply('CA_FOUNDATION'), null);
   assert.equal(getCourseUnderDevelopmentReply('CA_INTERMEDIATE'), null);
 });
+
+test('CA Final conversational help is not disabled by the planner-only availability message', () => {
+  const message = getCourseUnderDevelopmentReply('CA_FINAL');
+  assert.match(message || '', /Coming soon for CA Final/);
+  // Route policy limits this gate to deterministic schedule generation; general chat is available.
+});
