@@ -119,6 +119,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const { user, profile, refreshUser } = useAuth();
   const currentStudentIdRef = useRef(user?.id || '');
   currentStudentIdRef.current = user?.id || '';
+  const materialCheckSequenceRef = useRef(0);
   // Keep in-flight evaluation recovery scoped to the signed-in student account.
   const activeEvaluationStorageKey = user?.id ? `ca_active_eval_id_${user.id}` : null;
   const activeEvaluationStartStorageKey = user?.id ? `ca_active_eval_start_${user.id}` : null;
@@ -491,6 +492,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Selected subject object
   const currentSubject = CA_SUBJECTS.find((s) => s.id === selectedSubjectKey) || filteredSubjects[0];
+  const isModelTestEvaluationUnavailable = evaluationSource === 'PUBLIC' && materialType === 'MODEL_TEST_PAPER';
 
   // Auto update selected subject when level/group changes
   useEffect(() => {
@@ -500,6 +502,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   }, [level, selectedGroup, filteredSubjects, selectedSubjectKey, evaluationSource]);
 
   // Focus and highlight attempt selector
+  const handleFocusPaperTypeSelect = () => {
+    const el = document.getElementById('evaluation-paper-type-select');
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-blue-500');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-blue-500'), 1500);
+    }
+  };
+
   const handleFocusAttemptSelect = () => {
     const el = document.getElementById('evaluation-target-attempt-select');
     if (el) {
@@ -512,6 +524,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Check material availability from server authoritatively
   const checkMaterial = useCallback(async () => {
+    const requestId = ++materialCheckSequenceRef.current;
     if (evaluationSource === 'INSTITUTE') {
       if (selectedInstituteMaterialId) {
         const sel = instituteMaterials.find((m: any) => m.id === selectedInstituteMaterialId);
@@ -537,6 +550,16 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       return;
     }
 
+    if (evaluationSource === 'PUBLIC' && materialType === 'MODEL_TEST_PAPER') {
+      setCheckingMaterial(false);
+      setMaterialAvailable(false);
+      setMaterialTitle('');
+      setMaterialCheckStatus('UNAVAILABLE');
+      setMaterialCheckError('');
+      setVerifiedAttemptsForSubject([]);
+      return;
+    }
+
     if (!selectedSubjectKey) return;
     setCheckingMaterial(true);
     setMaterialCheckStatus('CHECKING');
@@ -557,6 +580,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
         )}&materialType=${materialType}${materialType === 'MTP' ? `&mtpSeries=${mtpSeries}` : ''}${materialType === 'MODEL_TEST_PAPER' ? `&modelTestNumber=${modelTestNumber}` : ''}`
       );
 
+      if (requestId !== materialCheckSequenceRef.current) return;
       if (res.available && res.material) {
         setMaterialAvailable(true);
         setMaterialTitle(res.material.question_paper_title || '');
@@ -570,12 +594,13 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       }
       setVerifiedAttemptsForSubject(res.availableAttempts || []);
     } catch (err: any) {
+      if (requestId !== materialCheckSequenceRef.current) return;
       setMaterialAvailable(false);
       setMaterialTitle('');
       setMaterialCheckStatus('ERROR');
       setMaterialCheckError(err?.message || 'Server connection issue during material verification');
     } finally {
-      setCheckingMaterial(false);
+      if (requestId === materialCheckSequenceRef.current) setCheckingMaterial(false);
     }
   }, [
     evaluationSource,
@@ -634,6 +659,12 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Click handler for Check Answer Sheet: Enforce mandatory evaluation disclaimer
   const handleCheckAnswerSheetClick = async () => {
+    if (isModelTestEvaluationUnavailable) {
+      setErrorMessage('Model Test Paper evaluation is currently unavailable. This service may be introduced in a future update.');
+      setRejectionDetails('No evaluation was started, and no personal or institute credits were used.');
+      return;
+    }
+
     const requestedUserId = user?.id || '';
     if (!requestedUserId) {
       setErrorMessage('Your student session is not ready. Please sign in again.');
@@ -695,6 +726,12 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Submit evaluation
   const handleStartEvaluation = async () => {
+    if (isModelTestEvaluationUnavailable) {
+      setErrorMessage('Model Test Paper evaluation is currently unavailable. This service may be introduced in a future update.');
+      setRejectionDetails('No evaluation was started, and no personal or institute credits were used.');
+      return;
+    }
+
     if (!file || !fileBase64) {
       setErrorMessage('Please upload your handwritten CA answer sheet file (PDF or image).');
       return;
@@ -839,7 +876,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
             </span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Upload your mock test, model test, or test series solutions for line-by-line step marking.
+            Upload a supported PYQ, MTP, or institute mock answer sheet for step-by-step evaluation.
           </p>
         </div>
 
@@ -1312,7 +1349,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                     >
                       {ALLOWED_MATERIAL_TYPES.map((t) => (
                         <option key={t.value} value={t.value}>
-                          {t.label}
+                          {t.value === 'MODEL_TEST_PAPER' ? 'Model Test Paper (Currently Unavailable)' : t.label}
                         </option>
                       ))}
                     </select>
@@ -1397,7 +1434,14 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
             {/* Reference Material Status Badge */}
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-              {checkingMaterial ? (
+              {isModelTestEvaluationUnavailable ? (
+                <div className="flex items-center gap-2 text-xs text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2.5 rounded-lg min-w-0">
+                  <Info className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span className="min-w-0 flex-1 break-words">
+                    Model Test evaluation is currently unavailable. We may introduce this service in a future update. No credits will be used.
+                  </span>
+                </div>
+              ) : checkingMaterial ? (
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                   <RefreshCw className="w-3 h-3 animate-spin" />
                   Verifying Reference Material...
@@ -1442,7 +1486,44 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
         {/* Right Column: File Upload Area & Submit or Empty / Error States */}
         <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-8 space-y-5 min-w-0">
-          {checkingMaterial && !materialAvailable ? (
+          {isModelTestEvaluationUnavailable ? (
+            <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 rounded-xl p-6 sm:p-8 space-y-6 shadow-sm">
+              <div className="flex flex-col items-center text-center space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <FileX className="w-7 h-7" />
+                </div>
+                <div className="space-y-1.5 max-w-lg">
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white">Model Test Evaluation Is Not Available Yet</h2>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                    We are not offering Model Test Paper evaluation at the moment. We may introduce this service in a future update. No evaluation will start, and no personal or institute credits will be used.
+                  </p>
+                </div>
+              </div>
+              <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 rounded-xl p-4 sm:p-5">
+                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Selected Target Details</div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs sm:text-sm">
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] uppercase tracking-wider font-medium text-slate-400 dark:text-slate-500 block">Course</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">{level === 'FOUNDATION' ? 'CA Foundation' : level === 'FINAL' ? 'CA Final' : 'CA Intermediate'}</span>
+                  </div>
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] uppercase tracking-wider font-medium text-slate-400 dark:text-slate-500 block">Selected Model</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200 mt-0.5 block">Model {modelTestNumber}</span>
+                  </div>
+                  <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                    <span className="text-[11px] uppercase tracking-wider font-medium text-slate-400 dark:text-slate-500 block">Subject</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200 mt-0.5 block truncate" title={currentSubject?.name}>{currentSubject?.name || 'Selected Paper'}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="pt-2 flex justify-center">
+                <button type="button" onClick={handleFocusPaperTypeSelect} className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition shadow-sm flex items-center justify-center gap-2 cursor-pointer">
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Choose Another Paper Type</span>
+                </button>
+              </div>
+            </div>
+          ) : checkingMaterial && !materialAvailable ? (
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-8 sm:p-12 space-y-4 shadow-sm text-center flex flex-col items-center justify-center min-h-[320px]">
               <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
               <div>
@@ -1681,7 +1762,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 <button
                   id="start-evaluation-btn"
                   onClick={handleCheckAnswerSheetClick}
-                  disabled={evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial || checkingDisclaimer}
+                  disabled={isModelTestEvaluationUnavailable || evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial || checkingDisclaimer}
                   className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                     evaluationSource === 'INSTITUTE'
                       ? 'bg-indigo-600 hover:bg-indigo-700'
