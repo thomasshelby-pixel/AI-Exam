@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { PDFDocument } from 'pdf-lib';
 import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
+import { evaluateZeroMarkSafetyGate, filterAndRejectPresentationDeductions } from '../services/evaluationIntegrityEngine.js';
 import {
   buildAnswerSheetCoverageMap,
   clearCoverageMapCache,
@@ -62,6 +63,39 @@ async function run() {
   assert.equal(checkedZero.markingComponents[0].marksDeducted, 4);
   assert.match(checkedZero.reasonForDeduction, /explicitly awarded 0/i);
   assert.match(checkedZero.markingComponents[0].deductionReason, /right margin beside Q2\(a\)/i);
+
+  // The post-evaluation integrity gate must respect the examiner's zero even
+  // when the written answer contains text that would normally trigger partial credit.
+  const zeroGate = evaluateZeroMarkSafetyGate({
+    questionNumber: '2',
+    subQuestion: 'a',
+    maxMarks: 4,
+    awardedMarks: 0,
+    status: 'incorrect',
+    components: checkedZero.markingComponents,
+    studentEvidence: 'The candidate wrote a relevant provision and working.',
+    detailedFeedback: 'A relevant step is visible, but the examiner awarded zero.',
+    technicalEvaluation: 'Correct concept and calculation text appears in the answer.',
+    reasonForDeduction: checkedZero.reasonForDeduction,
+    isMcq: false,
+    icaiExaminerZeroVisible: true,
+  });
+  assert.equal(zeroGate.isZeroAllowed, true);
+  assert.equal(zeroGate.zeroScoreReason, 'ICAI_EXAMINER_ZERO_CONFIRMED');
+  assert.equal(zeroGate.suggestedAwardedMarks, undefined);
+
+  // Presentation-deduction recovery must not restore marks to a locked zero component.
+  const lockedPresentation = {
+    ...checkedZero.markingComponents[0],
+    componentType: 'PRESENTATION',
+    icaiExaminerZeroLock: true,
+    marksAwarded: 0,
+    marksDeducted: 4,
+    deductionReason: 'Presentation differs from the suggested format.',
+  } as any;
+  const filteredLocked = filterAndRejectPresentationDeductions([lockedPresentation], false);
+  assert.equal(filteredLocked.components[0].marksAwarded, 0);
+  assert.equal(filteredLocked.rejectedDeductions.length, 0);
 
   // Moderate/lenient mode must not restore marks through consequential-credit logic.
   const modeLockedQuestion: any = {
