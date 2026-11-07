@@ -236,7 +236,7 @@ export function searchStudyKnowledge(input: {
   const message = String(input.message || '').trim();
   if (!message) return null;
   // Do not answer attempt-sensitive or current statutory questions from generic study tips.
-  if (/\\b(current|latest|recent|amended|amendment|rate|rates|limit|limits|notification|finance act|assessment year|section\\s+\\d+)\\b/i.test(message)) return null;
+  if (/\b(current|latest|recent|amended|amendment|rate|rates|limit|limits|notification|finance act|assessment year|section\s+\d+)\b/i.test(message)) return null;
 
   const mode = getMode(message);
   const history = Array.isArray(input.history) ? input.history.slice(-6) : [];
