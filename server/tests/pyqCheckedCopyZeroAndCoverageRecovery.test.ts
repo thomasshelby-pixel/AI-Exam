@@ -61,7 +61,7 @@ async function run() {
   assert.equal(checkedZero.markingComponents[0].marksAwarded, 0);
   assert.equal(checkedZero.markingComponents[0].marksDeducted, 4);
   assert.match(checkedZero.reasonForDeduction, /explicitly awarded 0/i);
-  assert.match(checkedZero.markingComponents[0].deductionReason, /right margin beside Q2\\(a\\)/i);
+  assert.match(checkedZero.markingComponents[0].deductionReason, /right margin beside Q2\(a\)/i);
 
   // Moderate/lenient mode must not restore marks through consequential-credit logic.
   const modeLockedQuestion: any = {
