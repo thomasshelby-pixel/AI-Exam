@@ -83,6 +83,14 @@ test('example and quiz follow-ups remain available for gated numerical and Law t
   assert.equal(numericalExample?.topicId, 'numerical-practice');
   assert.equal(numericalExample?.mode, 'example');
 
+  const numericalMore = searchStudyKnowledge({
+    message: 'Tell me more',
+    course: 'CA_INTERMEDIATE',
+    language: 'english',
+    history: numericalHistory,
+  });
+  assert.equal(numericalMore?.topicId, 'numerical-practice');
+
   const lawHistory = [
     'Student: How do I write a Business Laws case study answer?',
     'Planner: **Topic: Law and Tax answer writing**',
