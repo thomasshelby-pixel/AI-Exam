@@ -93,7 +93,10 @@ export interface QuestionReferenceEvaluationDisposition {
  * be locked to that exact canonical question. Such scores remain provisional.
  */
 export function assessQuestionReferenceForEvaluation(
-  reference: Pick<ExtractedReferenceSnippets, 'questionPaperFound' | 'suggestedAnswerFound' | 'referenceNeedsReview'>
+  reference: Pick<ExtractedReferenceSnippets, 'questionPaperFound' | 'suggestedAnswerFound' | 'referenceNeedsReview'> & {
+    materialType?: string;
+    authoritativeQuestionStructureVerified?: boolean;
+  }
 ): QuestionReferenceEvaluationDisposition {
   if (!reference.suggestedAnswerFound || reference.referenceNeedsReview) {
     return {
@@ -103,7 +106,11 @@ export function assessQuestionReferenceForEvaluation(
     };
   }
 
-  if (!reference.questionPaperFound) {
+  const canUsePyqStructureAnchor =
+    String(reference.materialType || '').trim().toUpperCase() === 'PYQ' &&
+    reference.authoritativeQuestionStructureVerified === true;
+
+  if (!reference.questionPaperFound && !canUsePyqStructureAnchor) {
     return {
       canScoreProvisionally: true,
       requiresHumanReview: true,
@@ -338,7 +345,17 @@ export async function evaluateQuestionChunk(
     ctx.referenceMetadata
   );
   const sourceInstructions = buildChunkReferenceSourceInstructions(snippets.referenceTrace);
-  const referenceDisposition = assessQuestionReferenceForEvaluation(snippets);
+  const referenceDisposition = assessQuestionReferenceForEvaluation({
+    ...snippets,
+    materialType: ctx.referenceMetadata?.materialType,
+    // The evaluator receives this exact leaf from the selected Question Paper's
+    // authoritative inventory, including its canonical ID and official maximum.
+    // For PYQs only, that locked structure plus the exact Suggested Answer lock
+    // is sufficient when the free-text QP slice matcher misses a formatting variant.
+    authoritativeQuestionStructureVerified:
+      Boolean(ctx.subQuestion.fullQuestionCode?.trim()) &&
+      Number(ctx.subQuestion.maximumMarks) > 0,
+  });
   if (!referenceDisposition.canScoreProvisionally) {
     throw new Error(`QUESTION_REFERENCE_NOT_LOCKED: ${referenceDisposition.reason || 'authoritative Suggested Answer reference could not be locked'} Question: ${fullCode}; human review required.`);
   }
