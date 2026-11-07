@@ -461,7 +461,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                   Your academic score of {activeMarks} / {officialMax} marks is recorded. Automated integrity checks are finalizing certified copy generation.
                 </p>
                 <p className="text-[11px] text-amber-700 dark:text-amber-300/90 leading-relaxed">
-                  You can refresh or check the official certification status below.
+                  {(evaluationResult as any).reviewReason || 'You can refresh or check the official certification status below.'}
                 </p>
               </div>
             </div>

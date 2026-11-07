@@ -50,6 +50,7 @@ import {
 } from '../services/facultyMockEntitlementService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
+import { getStudentFacingReviewReason } from '../services/studentFacingReviewReason.js';
 import { getSelfDeleteVerificationOptions, initiateSelfDeleteEmailOtp, verifySelfDeleteEmailOtp, selfDeleteStudentAccount } from '../services/studentDeleteService.js';
 import { syncNotificationReadStateToFirestore } from '../services/notificationService.js';
 import { otpResendRateLimiter, promoRedeemRateLimiter, evaluationSubmissionRateLimiter } from '../utils/rateLimiter.js';
@@ -1988,6 +1989,7 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
       SELECT e.id, e.display_id, e.evaluation_sequence, e.level, e.material_type, e.mtp_series, e.subject_key, e.subject_name, e.attempt, e.checking_mode,
              e.total_marks, e.maximum_marks, e.percentage, e.grade, e.confidence_score,
              ${visibleStatusSql} AS status,
+             e.error_message AS review_error_details,
              CASE
                WHEN ${finalizationReviewSql} THEN NULL
                WHEN UPPER(COALESCE(e.status, '')) = 'REJECTED'
@@ -2036,6 +2038,13 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     query += ' ORDER BY e.created_at DESC';
 
     const records = db.prepare(query).all(...params) as any[];
+    for (const record of records) {
+      if (String(record.status || '').toUpperCase() === 'NEEDS_REVIEW') {
+        record.review_reason = getStudentFacingReviewReason(record.review_error_details);
+      }
+      // Never send internal validator text to the student-facing history response.
+      delete record.review_error_details;
+    }
     // Student history is polled while an evaluation is processing. Use that
     // normal read to wake a durable queued/stale job after an App Hosting
     // instance restart; the Firestore lease still prevents duplicate workers.
@@ -2284,12 +2293,26 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
       }
     }
 
+    const responseStatus = normalizedRecord.status || record.status;
+    const reviewReason = String(responseStatus || '').toUpperCase() === 'NEEDS_REVIEW'
+      ? getStudentFacingReviewReason([
+          normalizedRecord.error_message,
+          record.error_message,
+          resultJson?.validationErrors,
+          resultJson?.unresolvedQuestions,
+        ])
+      : null;
+    if (resultJson && reviewReason) {
+      resultJson.reviewReason = reviewReason;
+    }
+
     return res.json({
       evaluationId,
-      status: normalizedRecord.status || record.status,
+      status: responseStatus,
       progressStage: normalizedRecord.progress_stage || record.progress_stage || record.status,
       progressPercentage: normalizedRecord.progress_percentage ?? record.progress_percentage ?? (record.status === 'COMPLETED' ? 100 : 25),
-      progressMessage: normalizedRecord.progress_message || record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
+      progressMessage: reviewReason || normalizedRecord.progress_message || record.progress_message || (record.status === 'COMPLETED' ? 'Evaluation complete and verified' : 'Evaluating answer sheet...'),
+      reviewReason,
       reportReady,
       checkedCopyReady,
       createdAt: record.created_at,
