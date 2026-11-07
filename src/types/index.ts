@@ -177,6 +177,8 @@ export interface MarkingComponent {
   pageNumber?: number;
   boundingBox?: BoundingBox;
   annotationInstructions?: string;
+  /** Locks a component to zero when an ICAI checked PYQ copy explicitly awards zero. */
+  icaiExaminerZeroLock?: boolean;
   modeDifferenceCategory?: string;
   modeDifferenceJustification?: string;
 }
