@@ -302,9 +302,15 @@ function isTopicHistoryEntry(entry: string): boolean {
     || /^(?:planner|assistant):.*\btopic:/i.test(entry.trim());
 }
 
+function isFollowUpMessage(message: string): boolean {
+  return getMode(message) !== 'answer'
+    || /^(and|also|then|more|continue|next|aur|phir|example|samjha|samajh nahi aaya|short mein|again)\b/i.test(normalize(message));
+}
+
 export function isStudyKnowledgeFollowUp(message: string, history: string[] = []): boolean {
-  if (getMode(message) === 'answer') return false;
-  return Array.isArray(history) && history.slice(-6).some(isTopicHistoryEntry);
+  return isFollowUpMessage(message)
+    && Array.isArray(history)
+    && history.slice(-6).some(isTopicHistoryEntry);
 }
 
 function scoreTopic(topic: KnowledgeTopic, queryTerms: string[]): number {
@@ -346,7 +352,7 @@ export function searchStudyKnowledge(input: {
 
   const mode = getMode(message);
   const history = Array.isArray(input.history) ? input.history.slice(-6) : [];
-  const isFollowUp = mode !== 'answer' || /^(and|also|then|more|continue|next|aur|phir|example|samjha|samajh nahi aaya|short mein|again)\b/i.test(normalize(message));
+  const isFollowUp = isFollowUpMessage(message);
   const searchText = isFollowUp ? [message, ...history].join(' ') : message;
   const queryTerms = terms(searchText);
   const ranked = TOPICS.map((topic) => ({ topic, score: scoreTopic(topic, queryTerms) }))
