@@ -624,7 +624,9 @@ export async function buildAnswerSheetCoverageMap(
     })),
   });
   const structureHash = crypto.createHash('sha256').update(structureSignature).digest('hex');
-  const cacheKey = `${pdfHash}:${structureHash}`;
+  const enableTargetedRecovery = options.enableTargetedRecovery === true;
+  // Keep normal and PYQ-recovery coverage maps isolated for the same PDF/paper.
+  const cacheKey = `${pdfHash}:${structureHash}:pyqRecovery=${enableTargetedRecovery ? '1' : '0'}`;
   if (coverageMapCache.has(cacheKey)) {
     return coverageMapCache.get(cacheKey)!;
   }
@@ -638,7 +640,7 @@ export async function buildAnswerSheetCoverageMap(
   const priorQuestionContextMap = new Map<string, PriorQuestionContext>();
   let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
   const analyzePage = options.analyzePage || analyzeSinglePageCoverage;
-  const enableTargetedRecovery = options.enableTargetedRecovery === true;
+
 
   // For each page, analyze with AI to detect question numbers, continuations, and content.
   // Once the full provider fallback chain fails for one page, do not repeat that
