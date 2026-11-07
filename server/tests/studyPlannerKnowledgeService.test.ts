@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildKnowledgeChatReply, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 
 test('retrieves relevant study guidance without exact wording', () => {
   const result = searchStudyKnowledge({
@@ -29,6 +29,24 @@ test('supports follow-up requests for examples, simpler explanations and quizzes
   assert.equal(simpler?.mode, 'simpler');
   const quiz = searchStudyKnowledge({ message: 'Quiz me', course: 'CA_INTERMEDIATE', language: 'english', history });
   assert.equal(quiz?.mode, 'quiz');
+});
+
+test('detects short knowledge follow-ups from prefixed or raw assistant topic history', () => {
+  assert.equal(isStudyKnowledgeFollowUp('Give me an example', ['Planner: **Topic: Active recall**']), true);
+  assert.equal(isStudyKnowledgeFollowUp('Explain simpler', ['**Topic: Active recall**']), true);
+  assert.equal(isStudyKnowledgeFollowUp('Quiz me', ['Assistant: **Topic: Active recall**']), true);
+  assert.equal(isStudyKnowledgeFollowUp('Give me an example', []), false);
+  assert.equal(isStudyKnowledgeFollowUp('How do I study accounting?', ['Planner: **Topic: Active recall**']), false);
+
+  const rawHistory = ['**Topic: Active recall**'];
+  const result = searchStudyKnowledge({
+    message: 'Give me an example',
+    course: 'CA_FOUNDATION',
+    language: 'english',
+    history: rawHistory,
+  });
+  assert.equal(result?.topicId, 'active-recall');
+  assert.equal(result?.mode, 'example');
 });
 
 test('recognises topic-specific study techniques', () => {
