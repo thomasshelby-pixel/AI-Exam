@@ -1170,8 +1170,10 @@ export function processEvaluationIntegrity(
       marksAwarded: verifiedAwarded,
       marksLost: verifiedLost,
       status,
-      icaiExaminerZeroVisible: rawQ.icaiExaminerZeroVisible === true,
-      icaiExaminerZeroEvidence: rawQ.icaiExaminerZeroVisible === true ? rawQ.icaiExaminerZeroEvidence : undefined,
+      ...(typeof rawQ.icaiExaminerZeroVisible === 'boolean' ? {
+        icaiExaminerZeroVisible: rawQ.icaiExaminerZeroVisible,
+        icaiExaminerZeroEvidence: rawQ.icaiExaminerZeroVisible === true ? rawQ.icaiExaminerZeroEvidence : undefined,
+      } : {}),
       reasonForDeduction:
         rawQ.reasonForDeduction ||
         (needsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on component evaluation.` : 'Full marks awarded.'),
