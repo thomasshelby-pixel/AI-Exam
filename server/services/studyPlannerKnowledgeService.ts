@@ -304,7 +304,7 @@ function isTopicHistoryEntry(entry: string): boolean {
 
 function isFollowUpMessage(message: string): boolean {
   return getMode(message) !== 'answer'
-    || /^(and|also|then|more|continue|next|aur|phir|example|samjha|samajh nahi aaya|short mein|again)\b/i.test(normalize(message));
+    || /^(and|also|then|more|continue|next|aur|phir|example|samjha|samajh nahi aaya|short mein|again|tell me more|explain more|more details)\b/i.test(normalize(message));
 }
 
 export function isStudyKnowledgeFollowUp(message: string, history: string[] = []): boolean {
