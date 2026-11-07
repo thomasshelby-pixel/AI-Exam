@@ -129,6 +129,7 @@ async function run() {
 
   const recoveryCalls: string[] = [];
   const coverage = await buildAnswerSheetCoverageMap(pdf, paperStructure, {
+    enableTargetedRecovery: true,
     analyzePage: async (
       _pageBase64,
       pageNumber,
