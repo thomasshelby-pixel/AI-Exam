@@ -3,6 +3,7 @@ import { PDFDocument } from 'pdf-lib';
 import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
 import { applyMultiModeMarkingPhilosophy } from '../services/multiModeMarkingEngine.js';
 import { evaluateZeroMarkSafetyGate, filterAndRejectPresentationDeductions } from '../services/evaluationIntegrityEngine.js';
+import { auditNumericalReasoningIntegrity } from '../services/sourceGroundedTransformationService.js';
 import {
   buildAnswerSheetCoverageMap,
   clearCoverageMapCache,
@@ -96,6 +97,11 @@ async function run() {
   const filteredLocked = filterAndRejectPresentationDeductions([lockedPresentation], false);
   assert.equal(filteredLocked.components[0].marksAwarded, 0);
   assert.equal(filteredLocked.rejectedDeductions.length, 0);
+
+  const numericalAudit = auditNumericalReasoningIntegrity([modeLockedQuestion]);
+  assert.equal(numericalAudit.auditedQuestions[0].marksAwarded, 0);
+  assert.equal(numericalAudit.auditedQuestions[0].consequentialErrorDetected, false);
+  assert.ok(numericalAudit.auditedQuestions[0].markingComponents?.every((component) => component.marksAwarded === 0));
 
   // Moderate/lenient mode must not restore marks through consequential-credit logic.
   const modeLockedQuestion: any = {
