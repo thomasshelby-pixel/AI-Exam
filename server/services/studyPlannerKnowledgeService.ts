@@ -327,6 +327,11 @@ function scoreTopic(topic: KnowledgeTopic, queryTerms: string[]): number {
     else if ([...haystack].some((candidate) => candidate.startsWith(term) || term.startsWith(candidate))) score += 1;
   }
   const normalizedQuery = normalize(queryTerms.join(' '));
+  // A phrase match helps a subject-specific topic outrank broad revision advice.
+  for (const keyword of topic.keywords) {
+    const phrase = normalize(keyword);
+    if (phrase.length > 3 && normalizedQuery.includes(phrase)) score += 4;
+  }
   if (normalize(topic.title) === normalizedQuery) score += 8;
   return score;
 }
