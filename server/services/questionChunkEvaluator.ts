@@ -546,6 +546,7 @@ CRITICAL ICAI EVALUATION RULES:
 9. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
 10. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
 
+${pyqCheckedCopyInstruction}
 Return strictly valid JSON with this schema:
 {
   "marksAwarded": number,
