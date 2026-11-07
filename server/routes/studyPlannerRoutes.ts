@@ -1092,7 +1092,16 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
           ? parsed.subjects.join(' और ') + ' का ' + (parsed.duration_minutes || 0) + ' मिनट का revision draft तैयार है। यह अभी account/calendar में save नहीं हुआ है।'
           : 'Your study-plan draft is ready. It has not been saved to your account or calendar.';
     } else if (parsed.intent === 'general_guidance') {
-      responseMessage = buildGeneralStudyAnswer(message, parsed).answer;
+      try {
+        const guidance = await generateStudyPlannerChatReply({ course, language: replyLanguage, message, history });
+        responseMessage = guidance.text;
+        status = 'general_guidance_answered';
+        return res.json({ success: true, status, message: responseMessage, parsed, plan: null, metadata: { version: 'study-chat-conversation-v3', modelUsed: true, model: guidance.modelUsed, persistentStorage: false } });
+      } catch (error) {
+        console.warn('[StudyPlanner] Conversational fallback:', error instanceof Error ? error.message : error);
+        responseMessage = buildGeneralStudyAnswer(message, parsed).answer;
+        status = 'general_guidance_fallback';
+      }
     } else if (parsed.intent === 'prioritize_chapters') {
       responseMessage = replyLanguage === 'hinglish'
         ? 'Bhai, pehle weak chapters ko priority de. Har chapter ke liye mock score, confidence aur pending questions compare kar; phir weak chapters par concept revision + timed practice kar. Main abhi sirf is chat se ranking calculate/save nahi kar raha—chapter ratings ya mock marks add karoge toh planner unhe use kar sakta hai.'
