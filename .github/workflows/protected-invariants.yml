@@ -30,7 +30,7 @@ jobs:
       - name: Order-independent answer-sheet question mapping regression
         run: node_modules/.bin/tsx server/tests/answerSheetCoverageCircuitBreaker.test.ts
 
-      - name: PYQ checked-copy zero and missed-question recovery regression
+      - name: PYQ mode-independent marking and missed-question recovery regression
         run: node_modules/.bin/tsx server/tests/pyqCheckedCopyZeroAndCoverageRecovery.test.ts
 
       - name: Evaluation supervisor training-pipeline regression
