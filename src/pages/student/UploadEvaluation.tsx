@@ -1487,6 +1487,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
         {/* Right Column: File Upload Area & Submit or Empty / Error States */}
         <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-8 space-y-5 min-w-0">
+          {materialType === 'PYQ' && (
+            <div
+              role="note"
+              className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 p-4 text-amber-950 dark:text-amber-200"
+            >
+              <div className="flex items-start gap-2.5">
+                <Info className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div className="space-y-1.5">
+                  <p className="text-xs font-bold">Important: ICAI-certified PYQ copies and MCQs</p>
+                  <p className="text-xs leading-relaxed">
+                    If your uploaded answer sheet is an ICAI-certified copy and it contains pages from the separate MCQ/objective answer booklet, remove those MCQ pages and upload only the descriptive answer-sheet pages. MCQs are handled separately.
+                  </p>
+                  <p className="text-xs leading-relaxed">
+                    If your answer sheet is not an ICAI-certified copy, you can continue with your upload normally.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
           {isModelTestEvaluationUnavailable ? (
             <div className="bg-white dark:bg-slate-900 border border-amber-200 dark:border-amber-800 rounded-xl p-6 sm:p-8 space-y-6 shadow-sm">
               <div className="flex flex-col items-center text-center space-y-3">
