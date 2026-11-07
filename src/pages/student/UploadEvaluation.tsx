@@ -526,6 +526,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const checkMaterial = useCallback(async () => {
     const requestId = ++materialCheckSequenceRef.current;
     if (evaluationSource === 'INSTITUTE') {
+      setCheckingMaterial(false);
       if (selectedInstituteMaterialId) {
         const sel = instituteMaterials.find((m: any) => m.id === selectedInstituteMaterialId);
         if (sel) {
