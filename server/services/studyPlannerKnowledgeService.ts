@@ -15,7 +15,7 @@ type KnowledgeTopic = {
 const TOPICS: KnowledgeTopic[] = [
   {
     id: 'active-recall', title: 'Active recall', subjects: [],
-    keywords: ['active recall','remember','memorize','memory','retention','forget','yaad','bhool','recall','without notes'],
+    keywords: ['active recall','remember','memorize','memory','retention','forget','yaad','bhool','recall','without notes','याद','याददाश्त','रटना'],
     answers: {
       english: 'Active recall means retrieving information from memory without looking at your notes. Read a small section, close the book, write or speak the key points, then check what you missed. Repeat only the weak parts.',
       hinglish: 'Active recall ka matlab hai notes dekhe bina information yaad se nikalna. Chhota section padh, book band kar, main points likh ya bol, phir notes se check kar ki kya miss hua. Sirf weak points dobara revise kar.',
@@ -245,7 +245,15 @@ export function searchStudyKnowledge(input: {
   const queryTerms = terms(searchText);
   const ranked = TOPICS.map((topic) => ({ topic, score: scoreTopic(topic, queryTerms) }))
     .sort((a, b) => b.score - a.score);
-  const best = ranked[0];
+  const lastAssistantTopic = isFollowUp
+    ? [...history].reverse().find((entry) => /^Planner:.*\\bTopic:/i.test(entry))
+    : undefined;
+  const rememberedTopic = lastAssistantTopic
+    ? TOPICS.find((topic) => normalize(lastAssistantTopic).includes(normalize(topic.title)))
+    : undefined;
+  const best = rememberedTopic
+    ? { topic: rememberedTopic, score: Math.max(3, scoreTopic(rememberedTopic, queryTerms)) }
+    : ranked[0];
   if (!best || best.score < 3) return null;
 
   const course = input.course;
