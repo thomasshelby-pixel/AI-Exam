@@ -45,6 +45,11 @@ test('does not invent a verified answer for unsupported syllabus-specific questi
   assert.equal(result, null);
 });
 
+test('does not answer current or attempt-sensitive statutory questions from generic knowledge', () => {
+  assert.equal(searchStudyKnowledge({ message: 'What is the current GST rate for this supply?', course: 'CA_INTERMEDIATE', language: 'english' }), null);
+  assert.equal(searchStudyKnowledge({ message: 'What is the latest Finance Act amendment?', course: 'CA_INTERMEDIATE', language: 'english' }), null);
+});
+
 test('does not return subject-specific guidance for a different course', () => {
   const result = searchStudyKnowledge({ message: 'How should I practise costing sums?', course: 'CA_FOUNDATION', language: 'english' });
   assert.equal(result, null);
