@@ -602,7 +602,7 @@ export interface AnswerCoverageMap {
 export async function buildAnswerSheetCoverageMap(
   pdfBuffer: Buffer,
   paperStructure: AuthoritativePaperStructure,
-  options: { analyzePage?: PageCoverageAnalyzer } = {}
+  options: { analyzePage?: PageCoverageAnalyzer; enableTargetedRecovery?: boolean } = {}
 ): Promise<AnswerCoverageMap> {
   const pdfHash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
   const structureSignature = JSON.stringify({
@@ -638,6 +638,7 @@ export async function buildAnswerSheetCoverageMap(
   const priorQuestionContextMap = new Map<string, PriorQuestionContext>();
   let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
   const analyzePage = options.analyzePage || analyzeSinglePageCoverage;
+  const enableTargetedRecovery = options.enableTargetedRecovery === true;
 
   // For each page, analyze with AI to detect question numbers, continuations, and content.
   // Once the full provider fallback chain fails for one page, do not repeat that
@@ -689,6 +690,7 @@ export async function buildAnswerSheetCoverageMap(
     // pages once with an explicit recovery instruction; do not retry provider
     // failures (which would multiply cost) and never guess an unresolved identity.
     const needsTargetedRecovery =
+      enableTargetedRecovery &&
       !analysis.analysisFailure &&
       analysis.hasHandwriting &&
       analysis.status !== 'CLEARLY_UNATTEMPTED' &&
