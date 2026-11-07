@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { generateStudyPlannerChatReply } from '../gemini.js';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
@@ -619,10 +620,9 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    // CA Final chat is intentionally unavailable for now: answer consistently before
-    // subject parsing or clarification, so it never asks Final students for missing details.
+    // Keep deterministic CA Final planner generation gated; conversational guidance is available for all CA levels.
     const courseUnderDevelopmentReply = getCourseUnderDevelopmentReply(course);
-    if (courseUnderDevelopmentReply) {
+    if (courseUnderDevelopmentReply && (body.plan_scope || body.chapter_assessment_subject || /\b(?:make|create|build|generate|prepare|timetable|schedule|study plan|revision plan)\b/i.test(message))) {
       return res.json({
         success: true,
         status: 'course_under_development',
@@ -694,11 +694,23 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
-      const guidance = buildGeneralStudyAnswer(message, parsed);
-      return res.json({
-        success: true, status: 'general_guidance_answered', message: guidance.answer, parsed, plan: null,
-        metadata: { version: 'study-chat-guidance-v2', modelUsed: false, persistentStorage: false },
-      });
+      try {
+        const guidance = await generateStudyPlannerChatReply({
+          course, language: replyLanguage, message, history,
+          studentContext: typeof body.student_context === 'string' ? body.student_context.slice(0, 1200) : '',
+        });
+        return res.json({
+          success: true, status: 'general_guidance_answered', message: guidance.text, parsed, plan: null,
+          metadata: { version: 'study-chat-conversation-v3', modelUsed: true, model: guidance.modelUsed, persistentStorage: false },
+        });
+      } catch (error) {
+        console.warn('[StudyPlanner] Conversational model unavailable; using safe fallback:', error instanceof Error ? error.message : error);
+        const guidance = buildGeneralStudyAnswer(message, parsed);
+        return res.json({
+          success: true, status: 'general_guidance_fallback', message: guidance.answer, parsed, plan: null,
+          metadata: { version: 'study-chat-conversation-v3', modelUsed: false, persistentStorage: false, fallback: true },
+        });
+      }
     }
 
     const explicitPlan = isExplicitStudyPlanRequest(message)
@@ -1023,6 +1035,14 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       parsed.intent = 'general_guidance';
       parsed.missing_info = [];
       parsed.should_call_planner = false;
+      try {
+        const guidance = await generateStudyPlannerChatReply({ course, language: replyLanguage, message, history });
+        return res.json({ success: true, status: 'general_guidance_answered', message: guidance.text, parsed, plan: null, metadata: { version: 'study-chat-conversation-v3', modelUsed: true, model: guidance.modelUsed, persistentStorage: false } });
+      } catch (error) {
+        console.warn('[StudyPlanner] Conversational fallback:', error instanceof Error ? error.message : error);
+        const guidance = buildGeneralStudyAnswer(message, parsed);
+        return res.json({ success: true, status: 'general_guidance_fallback', message: guidance.answer, parsed, plan: null, metadata: { version: 'study-chat-conversation-v3', modelUsed: false, persistentStorage: false, fallback: true } });
+      }
     }
     const usedDefaultDuration = applyDefaultStudyDuration(parsed, body.default_duration_minutes ?? 240);
     const plan = createStudyPlanDraft(parsed);
