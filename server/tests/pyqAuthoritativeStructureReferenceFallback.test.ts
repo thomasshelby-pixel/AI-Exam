@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import { assessQuestionReferenceForEvaluation } from '../services/questionChunkEvaluator.js';
+import {
+  buildCanonicalEvaluationLedger,
+  buildCanonicalQuestionInventory,
+  detectIndependentAttempts,
+} from '../services/canonicalQuestionInventoryService.js';
 
 const baseReference = {
   questionPaperFound: false,
@@ -43,5 +48,75 @@ const exactQuestionPaperSlice = assessQuestionReferenceForEvaluation({
   questionPaperFound: true,
 });
 assert.equal(exactQuestionPaperSlice.requiresHumanReview, false);
+
+// A separate MCQ booklet may exist in the authoritative paper, but a PYQ
+// descriptive answer-sheet upload with no MCQ responses must not be held for
+// review merely because those objective questions were not attempted/uploaded.
+const descriptiveOnlyPaper: any = {
+  paperTitle: 'PYQ descriptive section',
+  totalPaperMaxMarks: 100,
+  questions: [],
+  mcqs: [
+    {
+      fullQuestionCode: 'MCQ1',
+      questionNumber: '1',
+      maximumMarks: 2,
+      isMcq: true,
+      compulsory: true,
+      section: 'A',
+    },
+  ],
+  subQuestions: [
+    {
+      fullQuestionCode: 'Q1(a)',
+      questionNumber: '1',
+      subQuestionNumber: 'a',
+      maximumMarks: 5,
+      isMcq: false,
+      compulsory: true,
+      questionText: 'Explain the required descriptive treatment.',
+      section: 'B',
+    },
+  ],
+};
+const descriptiveInventory = buildCanonicalQuestionInventory({
+  paperStructure: descriptiveOnlyPaper,
+});
+const descriptiveAttempts = detectIndependentAttempts({
+  inventory: descriptiveInventory,
+  rawPageOccurrences: [
+    {
+      questionCode: 'Q1(a)',
+      pageNumber: 1,
+      evidenceText: 'A relevant descriptive answer with explanation.',
+      studentSnippet: 'A relevant descriptive answer with explanation.',
+    },
+  ],
+});
+const descriptiveLedger = buildCanonicalEvaluationLedger({
+  runId: 'pyq-descriptive-only-no-mcq-attempt',
+  inventory: descriptiveInventory,
+  attemptedMap: descriptiveAttempts,
+  evaluatedQuestions: [
+    {
+      canonicalId: 'Q1(a)',
+      questionNumber: '1',
+      subQuestion: 'a',
+      maximumMarks: 5,
+      marksAwarded: 3,
+      status: 'partially_correct',
+    } as any,
+  ],
+});
+assert.equal(descriptiveLedger.isReconciled, true);
+assert.deepEqual(descriptiveLedger.reconciliationErrors, []);
+assert.equal(
+  descriptiveLedger.records.find((record) => record.questionId === 'MCQ1')?.evaluationStatus,
+  'UNATTEMPTED',
+);
+assert.equal(
+  descriptiveLedger.records.find((record) => record.questionId === 'MCQ1')?.counted,
+  false,
+);
 
 console.log('✅ PYQ authoritative Question Paper structure fallback regression passed.');
