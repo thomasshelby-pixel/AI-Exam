@@ -40,8 +40,18 @@ test('recognises topic-specific study techniques', () => {
   assert.equal(revision?.topicId, 'revision-cycle');
 });
 
-test('does not invent a verified answer for unsupported syllabus-specific questions', () => {
-  const result = searchStudyKnowledge({ message: 'What is the current GST rate for this supply?', course: 'CA_INTERMEDIATE', language: 'english' });
+test('follow-up resolves to the most recently discussed topic', () => {
+  const history = [
+    'Planner: **Topic: Active recall**',
+    'Student: How should I analyse a mock test?',
+    'Planner: **Topic: Mock test analysis**',
+  ];
+  const result = searchStudyKnowledge({ message: 'Give me an example', course: 'CA_INTERMEDIATE', language: 'english', history });
+  assert.equal(result?.topicId, 'mock-analysis');
+});
+
+test('does not confuse a costing concept question with a request for numerical practice', () => {
+  const result = searchStudyKnowledge({ message: 'What is marginal costing?', course: 'CA_INTERMEDIATE', language: 'english' });
   assert.equal(result, null);
 });
 
