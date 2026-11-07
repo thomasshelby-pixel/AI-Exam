@@ -14,6 +14,7 @@ import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRo
 import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
+import { generateStudyPlannerLocalReply } from '../services/studyPlannerLocalModelService.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -580,7 +581,7 @@ router.get('/course', authenticateToken, (req: AuthRequest, res: Response) => {
   return res.json({ success: true, course, label: labels[course], supportsChapterPlanner: isSupportedPlannerCourse(course) });
 });
 
-router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
       return res.status(403).json({
@@ -695,9 +696,19 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         parsed.subjects = ['GST'];
       }
       const guidance = buildGeneralStudyAnswer(message, parsed);
+      const localModelReply = await generateStudyPlannerLocalReply({
+        course: course as 'CA_FOUNDATION' | 'CA_INTERMEDIATE',
+        message,
+        conversationHistory: history,
+        replyLanguage,
+      });
       return res.json({
-        success: true, status: 'general_guidance_answered', message: guidance.answer, parsed, plan: null,
-        metadata: { version: 'study-chat-guidance-v2', modelUsed: false, persistentStorage: false },
+        success: true, status: 'general_guidance_answered', message: localModelReply || guidance.answer, parsed, plan: null,
+        metadata: {
+          version: localModelReply ? 'study-chat-local-model-v1' : 'study-chat-guidance-v2',
+          modelUsed: Boolean(localModelReply),
+          persistentStorage: false,
+        },
       });
     }
 
