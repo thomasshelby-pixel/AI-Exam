@@ -1028,10 +1028,9 @@ export function processEvaluationIntegrity(
     let components: MarkingComponent[] = Array.isArray(rawQ.markingComponents) ? rawQ.markingComponents : [];
 
     // Step B: Reject unjustified presentation deductions (Rule 1 & Rule 10)
-    const { components: filteredComps, rejectedDeductions } = filterAndRejectPresentationDeductions(
-      components,
-      presentationAllowed
-    );
+    const { components: filteredComps, rejectedDeductions } = rawQ.icaiExaminerZeroVisible === true
+      ? { components, rejectedDeductions: [] as Array<{ componentId: string; reason: string; marksRestored: number }> }
+      : filterAndRejectPresentationDeductions(components, presentationAllowed);
     components = filteredComps;
     rejectedPresentationDeductionsCount += rejectedDeductions.length;
 
