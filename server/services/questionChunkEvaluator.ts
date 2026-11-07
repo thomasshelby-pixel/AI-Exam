@@ -555,7 +555,7 @@ Return strictly valid JSON with this schema:
   "technicalEvaluation": string,
   "finalConclusionAssessment": string,
   ${isPyqCheckedCopyFlow ? `"icaiExaminerZeroVisible": boolean,
-  "icaiExaminerZeroEvidence": string,` : \"\"}
+  "icaiExaminerZeroEvidence": string,` : ''}
   "markingComponents": [
     {
       "componentId": string,
