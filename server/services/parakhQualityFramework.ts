@@ -188,9 +188,21 @@ export function resolveParakhSubjectDomain(
 
   const supplied = subjects.join(' ');
   const text = question + ' ' + supplied;
+
+  // Use the authoritative paper registry to recognise course-specific titles,
+  // including CA Final and SPOM topics that are not in the planner's legacy aliases.
+  for (const paper of getParakhCurriculumPapers()) {
+    const paperMatched = containsAlias(question, paper.title)
+      || containsAlias(supplied, paper.title)
+      || paper.sections.some((section) => containsAlias(question, section) || containsAlias(supplied, section));
+    if (!paperMatched) continue;
+    const mappedDomain = paper.domainKeys.find((key) => key !== 'general_ca');
+    if (mappedDomain) return mappedDomain as ParakhSubjectDomain;
+  }
+
   for (const domain of SUBJECT_DOMAINS) {
     if (domain.key === 'general_ca') continue;
-    if (domain.aliases.some((alias) => containsAlias(question, alias) || containsAlias(supplied, alias))) return domain.key;
+    if (domain.aliases.some((alias) => containsAlias(text, alias))) return domain.key;
   }
   return 'general_ca';
 }
