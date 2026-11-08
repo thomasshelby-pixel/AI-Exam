@@ -2,7 +2,7 @@ import type { ParsedStudyPlannerRequest } from './studyPlannerEngine.js';
 
 export type StudyReplyLanguage = 'english' | 'hinglish' | 'hindi';
 
-const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krna|karna|kr|krne|hai|hain|hoon|hu|ho|mujhe|mujhko|mujhse|mera|meri|mere|mein|kya|kyu|kyun|samjhao|samjha|samajh|padhai|padhu|padna|nahi|nahin|nhi|aata|ata|wala|wali|wale|accha|acha|bta|kri|kriya|kro|skte|sakte|sakta|sakti|chahiye|kitna|kitne|ghante|laane|lana|yaad|bhool|banao|bana|karunga|karungi|raha|rahi|rhe|pehle|liye)\b/i;
+const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krna|karna|kr|krne|hai|hain|hoon|hu|ho|mujhe|mujhko|mujhse|mera|meri|mere|mein|kya|kyu|kyun|samjhao|samjha|samajh|padhai|padhu|padna|nahi|nahin|nhi|aata|ata|wala|wali|wale|accha|acha|bta|kri|kriya|kro|skte|sakte|sakta|sakti|chahiye|kitna|kitne|ghante|laane|lana|yaad|bhool|banao|bana|karunga|karungi|raha|rahi|rhe|pehle|liye|namaste|namaskar|shukriya|dhanyawad|gaya|gayi|thak)\b/i;
 
 export function detectStudyReplyLanguage(text: string, history: string[] = []): StudyReplyLanguage {
   const value = String(text || '').trim();
