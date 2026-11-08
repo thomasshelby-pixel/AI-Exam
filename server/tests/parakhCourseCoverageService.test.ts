@@ -24,8 +24,8 @@ test('maps every ICAI New Scheme course track and all 32 paper/module entries', 
 test('keeps original FM chapter drafts distinct from mapped-only subjects and unreviewed benchmarks', () => {
   const inventory = getParakhCourseCoverageInventory();
   const intermediate = inventory.courses.find((course) => course.course === 'CA_INTERMEDIATE')!;
-  assert.equal(intermediate.authoredChapterCount, 55);
-  assert.equal(intermediate.benchmarkPromptCount, 275);
+  assert.equal(intermediate.authoredChapterCount, 94);
+  assert.equal(intermediate.benchmarkPromptCount, 470);
   const advancedAccounting = intermediate.papers.find((paper) => paper.code === 'INT-G1-P1')!;
   assert.equal(advancedAccounting.mappingStatus, 'OFFICIAL_CHAPTER_CATALOGUE_LINKED');
   assert.equal(advancedAccounting.indexEntries.length, 15);
@@ -54,12 +54,27 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   assert.equal(foundationEconomics.indexEntries.length, 10);
   assert.equal(foundationEconomics.authoredChapterCount, 10);
   assert.equal(foundationEconomics.benchmarkPromptCount, 50);
+  const corporateLaw = intermediate.papers.find((paper) => paper.code === 'INT-G1-P2')!;
+  assert.equal(corporateLaw.mappingStatus, 'OFFICIAL_CHAPTER_CATALOGUE_LINKED');
+  assert.equal(corporateLaw.indexEntries.length, 15);
+  assert.equal(corporateLaw.authoredChapterCount, 15);
+  assert.equal(corporateLaw.benchmarkPromptCount, 75);
+  assert.ok(corporateLaw.indexEntries.some((entry) => entry.title === 'The Foreign Exchange Management Act, 1999'));
+  const taxation = intermediate.papers.find((paper) => paper.code === 'INT-G1-P3')!;
+  assert.equal(taxation.mappingStatus, 'OFFICIAL_CHAPTER_CATALOGUE_LINKED');
+  assert.equal(taxation.indexEntries.length, 24);
+  assert.equal(taxation.authoredChapterCount, 24);
+  assert.equal(taxation.benchmarkPromptCount, 120);
+  assert.equal(taxation.indexEntries.filter((entry) => entry.section === 'Section A: Income-tax Law').length, 9);
+  assert.equal(taxation.indexEntries.filter((entry) => entry.section === 'Section B: Goods and Services Tax').length, 15);
+  assert.ok(taxation.indexEntries.every((entry) => entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED'));
+  assert.ok(taxation.indexEntries.every((entry) => entry.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED'));
   const final = inventory.courses.find((course) => course.course === 'CA_FINAL')!;
   const spom = inventory.courses.find((course) => course.course === 'SPOM')!;
 
-  assert.equal(inventory.authoredChapterCount, 101);
+  assert.equal(inventory.authoredChapterCount, 140);
   assert.equal(inventory.humanReviewedChapterCount, 0);
-  assert.equal(inventory.benchmarkPromptCount, 505);
+  assert.equal(inventory.benchmarkPromptCount, 700);
   assert.equal(foundation.authoredChapterCount, 46);
   assert.equal(foundation.benchmarkPromptCount, 230);
   assert.equal(inventory.humanReviewedBenchmarkCount, 0);
@@ -157,6 +172,33 @@ test('resolves a paper using the authenticated course context, without cross-cou
     course: 'CA_INTERMEDIATE',
     message: 'Explain GST input tax credit',
   })?.paperCode, 'INT-G1-P3');
+  const corporateLawContext = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain incorporation of company',
+  });
+  assert.equal(corporateLawContext?.paperCode, 'INT-G1-P2');
+  assert.equal(corporateLawContext?.matchedIndexEntry, 'Incorporation of Company and Matters Incidental Thereto');
+  assert.equal(corporateLawContext?.authoredChapterCount, 15);
+  assert.equal(corporateLawContext?.benchmarkPromptCount, 75);
+  assert.equal(corporateLawContext?.sourceUrl, 'https://www.icai.org/post/24331');
+  const incomeTaxContext = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain residential status and scope of total income',
+  });
+  assert.equal(incomeTaxContext?.paperCode, 'INT-G1-P3');
+  assert.equal(incomeTaxContext?.matchedIndexEntry, 'Residential Status and Scope of Total Income');
+  assert.equal(incomeTaxContext?.section, 'Section A: Income-tax Law');
+  assert.equal(incomeTaxContext?.sourceUrl, 'https://www.icai.org/post/24313');
+  assert.equal(incomeTaxContext?.benchmarkPromptCount, 45);
+  const gstContext = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain input tax credit',
+  });
+  assert.equal(gstContext?.paperCode, 'INT-G1-P3');
+  assert.equal(gstContext?.matchedIndexEntry, 'Input Tax Credit');
+  assert.equal(gstContext?.section, 'Section B: Goods and Services Tax');
+  assert.equal(gstContext?.sourceUrl, 'https://www.icai.org/post/24360');
+  assert.equal(gstContext?.benchmarkPromptCount, 75);
   assert.equal(resolveParakhCoursePaperContext({
     course: 'CA_INTERMEDIATE',
     message: 'Explain cost sheet and material cost',
