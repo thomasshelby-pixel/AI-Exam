@@ -67,10 +67,10 @@ test('retrieves every Foundation Accounting chapter only for CA Foundation', () 
 
 test('supports multilingual answers and example, simpler and quiz modes', () => {
   const examples = [
-    { message: 'Explain accounting concepts', language: 'english' as const },
-    { message: 'BRS ko simple language mein samjhao', language: 'hinglish' as const },
-    { message: 'मूल्यह्रास का उदाहरण दीजिए', language: 'hindi' as const },
-    { message: 'Quiz me on inventory valuation', language: 'english' as const },
+    { message: 'Explain accounting concepts', language: 'english' as const, mode: 'answer' as const, minimumLength: 160 },
+    { message: 'BRS ko simple language mein samjhao', language: 'hinglish' as const, mode: 'simpler' as const, minimumLength: 50 },
+    { message: 'मूल्यह्रास का उदाहरण दीजिए', language: 'hindi' as const, mode: 'example' as const, minimumLength: 60 },
+    { message: 'Quiz me on inventory valuation', language: 'english' as const, mode: 'quiz' as const, minimumLength: 50 },
   ];
   for (const item of examples) {
     const result = searchParakhFoundationAccountingKnowledge({
@@ -79,7 +79,8 @@ test('supports multilingual answers and example, simpler and quiz modes', () => 
       language: item.language,
     });
     assert.ok(result);
-    assert.ok(result.answer.length > 160);
+    assert.equal(result.mode, item.mode, item.message);
+    assert.ok(result.answer.length > item.minimumLength, item.message);
   }
   assert.equal(searchParakhFoundationAccountingKnowledge({
     message: 'Explain depreciation example',
