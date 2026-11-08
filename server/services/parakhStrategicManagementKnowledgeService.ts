@@ -124,7 +124,7 @@ const PACKS: SmPack[] = [
     title: 'Strategic Analysis: Internal Environment',
     keywords: [
       'strategic analysis internal environment', 'internal environment analysis', 'resources capabilities',
-      'core competency', 'core competencies', 'value chain analysis', 'swot analysis',
+      'core competency', 'core competencies', 'value chain analysis', 'swot', 'swot analysis',
       'vrio framework', 'strength weakness', 'capabilities based strategy', 'benchmarking',
       'आंतरिक वातावरण', 'संसाधन और क्षमताएँ', 'मूल दक्षता',
     ],
