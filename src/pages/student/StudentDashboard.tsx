@@ -545,7 +545,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div>
               <h2 className="font-bold text-sm text-amber-950 dark:text-amber-100">Complete Your Profile</h2>
               <p className="text-xs text-amber-900/80 dark:text-amber-200/80 mt-0.5">
-                Add your ICAI registration number to activate student features. Phone number is optional.
+                Add a valid, unused ICAI registration number to unlock your 2 free full-paper evaluations. Phone number is optional.
               </p>
             </div>
           </div>
@@ -659,7 +659,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </button>
           ) : null}
 
-          {!user?.hasPermanentFreeAccess && !metrics.instituteSponsored && (
+          {!user?.hasPermanentFreeAccess && !metrics.instituteSponsored && !needsSocialProfileCompletion && (
             <button
               onClick={onOpenCreditsModal}
               className="px-3.5 py-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs sm:text-sm transition border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 cursor-pointer"
@@ -780,6 +780,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span className="text-blue-600 dark:text-blue-400">Active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Sponsored</span>
+            ) : needsSocialProfileCompletion ? (
+              <span className="text-amber-600 dark:text-amber-400">2 locked</span>
             ) : (
               <span>
                 {metrics.freeEvaluationsRemaining}/2 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">remaining</span>
@@ -800,6 +802,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span className="text-blue-600 dark:text-blue-400">Full evaluation access active</span>
             ) : metrics.instituteSponsored ? (
               <span className="text-blue-600 dark:text-blue-400">Via {metrics.instituteName || 'Institute'}</span>
+            ) : needsSocialProfileCompletion ? (
+              <div className="space-y-0.5">
+                <div className="text-amber-700 dark:text-amber-300 font-semibold">
+                  Complete profile to unlock 2 free evaluations
+                </div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                  Add a valid, unused ICAI registration number. Phone is optional.
+                </div>
+                <div className="text-slate-600 dark:text-slate-300">
+                  Paid Credits: <strong className="text-blue-600 dark:text-blue-400">{metrics.purchasedCredits}</strong>
+                </div>
+              </div>
             ) : (
               <div className="space-y-0.5">
                 <div className="text-slate-600 dark:text-slate-300">
@@ -939,10 +953,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="mt-3 flex items-end justify-between gap-3">
               <div>
                 <p className="text-xl font-extrabold text-white">
-                  {user?.hasPermanentFreeAccess ? 'Unlimited' : metrics.instituteSponsored ? 'Institute' : metrics.freeEvaluationsRemaining}
+                  {user?.hasPermanentFreeAccess ? 'Unlimited' : metrics.instituteSponsored ? 'Institute' : needsSocialProfileCompletion ? '2 locked' : metrics.freeEvaluationsRemaining}
                 </p>
                 <p className="mt-1 text-[11px] text-blue-100/60">
-                  {user?.hasPermanentFreeAccess ? 'Permanent access enabled' : metrics.instituteSponsored ? (metrics.instituteName || 'Institute-sponsored access') : 'Free evaluations remaining'}
+                  {user?.hasPermanentFreeAccess ? 'Permanent access enabled' : metrics.instituteSponsored ? (metrics.instituteName || 'Institute-sponsored access') : needsSocialProfileCompletion ? 'Complete your profile to unlock free evaluations' : 'Free evaluations remaining'}
                 </p>
               </div>
               <button type="button" onClick={onOpenCreditsModal} className="rounded-lg border border-blue-200/20 bg-white/[0.05] px-3 py-2 text-[11px] font-semibold text-blue-100 hover:bg-white/[0.1]">
