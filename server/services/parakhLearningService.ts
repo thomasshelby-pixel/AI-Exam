@@ -98,6 +98,51 @@ function getLocalRecord(evaluationId: string): Record<string, any> | undefined {
   ).get(evaluationId) as Record<string, any> | undefined;
 }
 
+/** Recover an opt-in pointer when upload and evaluation workers use different instances. */
+async function hydrateParakhRecordFromFirestore(evaluationId: string): Promise<Record<string, any> | undefined> {
+  const local = getLocalRecord(evaluationId);
+  if (local) return local;
+
+  try {
+    const cloudRecord = await getFirestoreDoc<Record<string, any>>(PARAKH_COLLECTION, evaluationId);
+    if (!cloudRecord?.student_id || !cloudRecord?.consent_version) return undefined;
+
+    db.prepare(`
+      INSERT OR IGNORE INTO parakh_learning_records (
+        evaluation_id, student_id, consent_version, consented_at,
+        level, subject_key, subject_name, material_type, paper, attempt,
+        checking_mode, status, reviewer_id, review_action,
+        reviewed_total_marks, reviewed_maximum_marks, reviewed_at,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      evaluationId,
+      cloudRecord.student_id,
+      cloudRecord.consent_version,
+      cloudRecord.consented_at || new Date().toISOString(),
+      cloudRecord.level || 'UNKNOWN',
+      cloudRecord.subject_key || 'unknown',
+      cloudRecord.subject_name || 'Unknown subject',
+      cloudRecord.material_type || null,
+      cloudRecord.paper || null,
+      cloudRecord.attempt || null,
+      cloudRecord.checking_mode || 'standard',
+      cloudRecord.status || 'PROCESSING',
+      cloudRecord.reviewer_id || null,
+      cloudRecord.review_action || null,
+      cloudRecord.reviewed_total_marks ?? null,
+      cloudRecord.reviewed_maximum_marks ?? null,
+      cloudRecord.reviewed_at || null,
+      cloudRecord.created_at || new Date().toISOString(),
+      cloudRecord.updated_at || new Date().toISOString(),
+    );
+    return getLocalRecord(evaluationId);
+  } catch (error) {
+    console.warn('[PARAKH] Could not hydrate consented record from Firestore:', error);
+    return undefined;
+  }
+}
+
 /**
  * Stores a consented pointer to the existing protected evaluation. It does not
  * duplicate student files or create a training dataset.
@@ -116,7 +161,16 @@ export async function recordParakhLearningOptIn(
   const evaluation = db.prepare(
     'SELECT status FROM evaluations WHERE id = ?'
   ).get(input.evaluationId) as { status?: string } | undefined;
-  const evaluationStatus = String(evaluation?.status || '').toUpperCase();
+  let evaluationStatus = String(evaluation?.status || '').toUpperCase();
+  if (!['COMPLETED', 'NEEDS_REVIEW', 'FAILED', 'REJECTED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(evaluationStatus)) {
+    try {
+      const sharedEvaluation = await getFirestoreDoc<{ status?: string }>('evaluations', input.evaluationId);
+      const sharedStatus = String(sharedEvaluation?.status || '').toUpperCase();
+      if (sharedStatus) evaluationStatus = sharedStatus;
+    } catch (error) {
+      console.warn('[PARAKH] Could not read shared evaluation status:', error);
+    }
+  }
 
   const initialStatus: ParakhRecordStatus =
     evaluationStatus === 'COMPLETED'
@@ -167,6 +221,7 @@ export async function markParakhEvaluationCompleted(
   ensureParakhLearningSchema();
   const nextStatus: ParakhRecordStatus =
     input.evaluationStatus === 'NEEDS_REVIEW' ? 'SELECTED_FOR_REVIEW' : 'COLLECTED_UNVERIFIED';
+  await hydrateParakhRecordFromFirestore(input.evaluationId);
   const now = new Date().toISOString();
 
   const result = db.prepare(`
@@ -184,6 +239,7 @@ export async function markParakhEvaluationCompleted(
 /** Failed/rejected submissions are not counted as completed learning observations. */
 export async function markParakhEvaluationFailed(evaluationId: string): Promise<boolean> {
   ensureParakhLearningSchema();
+  await hydrateParakhRecordFromFirestore(evaluationId);
   const now = new Date().toISOString();
   const result = db.prepare(`
     UPDATE parakh_learning_records
@@ -206,43 +262,19 @@ export async function markParakhEvaluationAdminReviewed(
 
   // Finalization may run on another application instance; recover the consent
   // pointer from shared Firestore before applying the reviewer label.
-  let existing = getLocalRecord(input.evaluationId);
-  if (!existing) {
-    try {
-      const cloudRecord = await getFirestoreDoc<Record<string, any>>(PARAKH_COLLECTION, input.evaluationId);
-      if (cloudRecord?.student_id && cloudRecord?.consent_version) {
-        db.prepare(`
-          INSERT OR IGNORE INTO parakh_learning_records (
-            evaluation_id, student_id, consent_version, consented_at,
-            level, subject_key, subject_name, material_type, paper, attempt,
-            checking_mode, status, reviewer_id, review_action,
-            reviewed_total_marks, reviewed_maximum_marks, reviewed_at,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          input.evaluationId,
-          cloudRecord.student_id,
-          cloudRecord.consent_version,
-          cloudRecord.consented_at || reviewedAt,
-          cloudRecord.level || 'UNKNOWN',
-          cloudRecord.subject_key || 'unknown',
-          cloudRecord.subject_name || 'Unknown subject',
-          cloudRecord.material_type || null,
-          cloudRecord.paper || null,
-          cloudRecord.attempt || null,
-          cloudRecord.checking_mode || 'standard',
-          cloudRecord.status || 'COLLECTED_UNVERIFIED',
-          cloudRecord.reviewer_id || null,
-          cloudRecord.review_action || null,
-          cloudRecord.reviewed_total_marks ?? null,
-          cloudRecord.reviewed_maximum_marks ?? null,
-          cloudRecord.reviewed_at || null,
-          cloudRecord.created_at || reviewedAt,
-          cloudRecord.updated_at || reviewedAt,
-        );
-      }
-    } catch (error) {
-      console.warn('[PARAKH] Could not hydrate consent record from Firestore:', error);
+  let existing = await hydrateParakhRecordFromFirestore(input.evaluationId);
+  if (existing && String(existing.status || '').toUpperCase() === 'PROCESSING') {
+    const evaluation = db.prepare('SELECT status FROM evaluations WHERE id = ?').get(input.evaluationId) as { status?: string } | undefined;
+    const status = String(evaluation?.status || '').toUpperCase();
+    const promoted = status === 'NEEDS_REVIEW' ? 'SELECTED_FOR_REVIEW'
+      : status === 'COMPLETED' ? 'COLLECTED_UNVERIFIED' : null;
+    if (promoted) {
+      const now = new Date().toISOString();
+      db.prepare(`
+        UPDATE parakh_learning_records SET status = ?, updated_at = ?
+        WHERE evaluation_id = ? AND status = 'PROCESSING'
+      `).run(promoted, now, input.evaluationId);
+      existing = getLocalRecord(input.evaluationId);
     }
   }
 
