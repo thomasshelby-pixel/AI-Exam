@@ -282,7 +282,7 @@ const TOPICS: KnowledgeTopic[] = [
 const STOP_WORDS = new Set(['the','a','an','is','are','am','do','does','did','how','what','why','when','where','can','could','should','would','i','me','my','you','your','we','our','to','of','for','in','on','at','and','or','but','with','about','please','tell','explain','bhai','mujhe','kaise','kya','hai','hain','karu','karo','batao','btao','samjhao','mera','meri','mere','ko','ke','ka','ki','se','mein','main','nahi','nahin','hai','tha','thi','ho','raha','rahi','rhe','ek','aur','ye','yeh','woh','vo']);
 
 function normalize(value: string): string {
-  return value.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim();
+  return value.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function terms(value: string): string[] {
