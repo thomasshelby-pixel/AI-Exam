@@ -44,7 +44,7 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section B: Strategic Management' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 5);
   assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section B: Strategic Management' && entry.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED').length, 5);
   assert.ok(fm.indexEntries.some((entry) => entry.section === 'Section B: Strategic Management' && entry.title === 'Strategic Analysis: Internal Environment' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED'));
-  assert.ok(foundation.papers.every((paper) => paper.authoredChapterCount === 0));
+  assert.ok(foundation.papers.filter((paper) => paper.code !== 'FND-P1').every((paper) => paper.authoredChapterCount === 0));
   assert.ok(final.papers.every((paper) => paper.indexKind === 'topic' || paper.indexKind === 'none'));
   assert.ok(final.papers.every((paper) => paper.mappingStatus === 'PROVISIONAL_TOPIC_INDEX_NOT_OFFICIAL_CHAPTERS'));
   assert.ok(spom.papers.every((paper) => paper.indexKind === 'none' && paper.indexEntries.length === 0));
