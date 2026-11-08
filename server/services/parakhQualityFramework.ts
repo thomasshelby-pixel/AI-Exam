@@ -1,6 +1,6 @@
 import { getParakhCurriculumPapers } from './parakhCurriculumRegistry.js';
 
-export type ParakhCourseLevel = 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL';
+export type ParakhCourseLevel = 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL' | 'SPOM';
 
 export type ParakhSubjectDomain =
   | 'accounting'
@@ -413,8 +413,9 @@ export function buildParakhSubjectCoverageReport(
   subjectDomains: ParakhSubjectCoverageRow[];
 } {
   const normalizedSubjects = knowledgeSubjects.map(normalizeText);
+  const curriculumPapers = getParakhCurriculumPapers();
   const finalPaperDomains = new Set(
-    getParakhCurriculumPapers('CA_FINAL').flatMap((paper) => paper.domainKeys),
+    curriculumPapers.filter((paper) => paper.course === 'CA_FINAL').flatMap((paper) => paper.domainKeys),
   );
   const subjectDomains = SUBJECT_DOMAINS
     .filter((domain) => domain.key !== 'general_ca')
@@ -433,7 +434,9 @@ export function buildParakhSubjectCoverageReport(
         completeVerifiedCoverage: false,
         mappedCourses: Array.from(new Set([
           ...domain.mappedCourses,
-          ...(finalPaperDomains.has(domain.key) ? ['CA_FINAL' as ParakhCourseLevel] : []),
+          ...curriculumPapers
+            .filter((paper) => paper.domainKeys.includes(domain.key))
+            .map((paper) => paper.course),
         ])),
         caFinalCurriculumMapping: finalPaperDomains.has(domain.key)
           ? 'MAPPED_NOT_BENCHMARKED'
