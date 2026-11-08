@@ -8,7 +8,7 @@ PARAKH is the working name for CA Exam Checker's evaluation-learning data pipeli
 - A missing or unchecked consent value means **no PARAKH learning record is created**.
 - Every explicitly opted-in, successfully completed evaluation becomes a `COLLECTED_UNVERIFIED` observation. Ordinary completed evaluations do not wait for an administrator.
 - The record is a metadata-only pointer to the existing protected evaluation; source answer sheets, checked copies, and reports are not duplicated into a training dataset.
-- System-flagged `NEEDS_REVIEW` evaluations become `SELECTED_FOR_REVIEW`; additional quality-control samples can be selected separately. This is a sample-based quality process, not mandatory review of every submission.
+- System-flagged `NEEDS_REVIEW` evaluations become `SELECTED_FOR_REVIEW`. Routine random/stratified QA sampling rules have not yet been implemented; they can be added without sending every submission to an administrator. This is not mandatory review of every submission.
 - Only a selected sample finalized through the existing admin review workflow becomes a `VERIFIED_SAMPLE`.
 - Failed/rejected submissions are excluded from the completed observation count. A student can withdraw all earlier PARAKH opt-ins; this does not alter evaluation history, marks, reports, or credits.
 - V1 AI output and admin-finalized V2 results remain distinct in the existing evaluation-version system. Unreviewed AI output is never treated as ground truth.
@@ -26,7 +26,7 @@ The consent ledger stores the evaluation ID, student ID for consent/audit linkag
 ## Dashboard measures
 
 - Total completed observations collected from consented submissions.
-- Unreviewed observations available for analysis and quality sampling.
+- Unreviewed observations held for later analysis and optional quality sampling.
 - Selected-for-review cases (including system-flagged integrity cases).
 - Human-verified samples finalized by an administrator.
 - Processing, failed, and withdrawn records.
