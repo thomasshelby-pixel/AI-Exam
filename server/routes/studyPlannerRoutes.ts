@@ -17,6 +17,7 @@ import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, reso
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
+import { assessParakhResponseQuality } from '../services/parakhQualityFramework.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -710,6 +711,13 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       ? buildCreditPolicyAnalysisReply(message, replyLanguage, studentHistory)
       : null;
     if (creditPolicyReply) {
+      const qualityGate = assessParakhResponseQuality({
+        question: message,
+        answer: creditPolicyReply,
+        course,
+        subjects: ['Financial Management and Strategic Management'],
+        knowledgeMatched: true,
+      });
       const parsed = parsedProbe;
       parsed.intent = 'general_guidance';
       parsed.subjects = ['Financial Management and Strategic Management'];
@@ -728,6 +736,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
           knowledgeMatched: true,
           webResearchRequested: false,
           webResearchAvailable: false,
+          qualityGate,
           persistentStorage: false,
         },
       });
@@ -761,6 +770,14 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
 
       const guidance = buildGeneralStudyAnswer(message, parsed);
       const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer) + currentInfoUnavailableNote;
+      const qualityGate = assessParakhResponseQuality({
+        question: message,
+        answer,
+        course,
+        subjects: parsed.subjects,
+        sources: webSources,
+        knowledgeMatched: Boolean(knowledge),
+      });
       return res.json({
         success: true,
         status: webSources.length ? 'web_research_answered' : knowledge ? 'knowledge_answered' : 'general_guidance_answered',
@@ -775,6 +792,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
           webResearchRequested: requestsWebResearch,
           webResearchAvailable: Boolean(webSources.length),
           searchProvider: webResearch?.provider || null,
+          qualityGate,
           persistentStorage: false,
         },
       });
