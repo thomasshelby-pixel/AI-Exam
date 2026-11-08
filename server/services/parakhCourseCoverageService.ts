@@ -5,6 +5,7 @@ import { getParakhChapterKnowledgeInventory } from './parakhChapterKnowledgeServ
 import { getParakhStrategicManagementInventory } from './parakhStrategicManagementKnowledgeService.js';
 import { getParakhCostAccountingInventory } from './parakhCostAccountingKnowledgeService.js';
 import { getParakhAuditingInventory } from './parakhAuditingKnowledgeService.js';
+import { getParakhFoundationAccountingInventory } from './parakhFoundationAccountingKnowledgeService.js';
 
 export type ParakhCoverageLanguage = 'english' | 'hindi' | 'hinglish';
 
@@ -111,6 +112,22 @@ function getPaperIndex(paper: ReturnType<typeof getParakhCurriculumPapers>[numbe
   entries: Array<{ number: number; title: string; section: string | null; authored: boolean; benchmarked: boolean }>;
   note: string;
 } {
+  if (paper.course === 'CA_FOUNDATION' && paper.code === 'FND-P1') {
+    const accounting = getParakhFoundationAccountingInventory();
+    return {
+      indexKind: 'chapter',
+      mappingStatus: 'OFFICIAL_CHAPTER_CATALOGUE_LINKED',
+      entries: accounting.chapters.map((chapter) => ({
+        number: chapter.chapterNumber,
+        title: chapter.title,
+        section: chapter.module,
+        authored: chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+        benchmarked: chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED',
+      })),
+      note: 'The 11 chapters are linked to the official ICAI Foundation Paper 1 page marked Relevant for May 2027 and Onwards Examination. Original English/Hindi/Hinglish drafts and benchmark prompts exist for all 11, but none has human-reviewed content or answer keys. Confirm exact attempt edition and corrigendum.',
+    };
+  }
+
   if (paper.course === 'CA_FOUNDATION' || paper.course === 'CA_INTERMEDIATE') {
     const plannerIndex = foundationOrIntermediateIndex(paper.course, Number(paper.code.match(/P(\d+)$/)?.[1] || 0));
     if (paper.course === 'CA_INTERMEDIATE' && paper.code === 'INT-G2-P5') {
@@ -374,6 +391,7 @@ export function resolveParakhCoursePaperContext(input: {
   const paper6SectionA = winner.paper.code === 'INT-G2-P6' && resolvedSection === 'Section A: Financial Management';
   const intermediateCostPaper = winner.paper.code === 'INT-G2-P4';
   const intermediateAuditPaper = winner.paper.code === 'INT-G2-P5';
+  const foundationAccountingPaper = winner.paper.code === 'FND-P1';
   return {
     course: winner.paper.course,
     paperCode: winner.paper.code,
@@ -383,16 +401,18 @@ export function resolveParakhCoursePaperContext(input: {
     matchedIndexEntry: winner.matchedIndexEntry,
     mappingStatus: index.mappingStatus,
     indexKind: index.indexKind,
-    sourceUrl: intermediateAuditPaper ? getParakhAuditingInventory().sourceUrl
-      : intermediateCostPaper ? getParakhCostAccountingInventory().sourceUrl
+    sourceUrl: foundationAccountingPaper ? getParakhFoundationAccountingInventory().sourceUrl
+      : intermediateAuditPaper ? getParakhAuditingInventory().sourceUrl
+        : intermediateCostPaper ? getParakhCostAccountingInventory().sourceUrl
         : paper6SectionB ? getParakhStrategicManagementInventory().sourceUrl
         : paper6SectionA ? getParakhChapterKnowledgeInventory().sourceUrl : winner.paper.sourceUrl,
     authoredChapterCount: index.entries.filter((entry) => entry.authored).length,
     humanReviewedChapterCount: 0,
-    benchmarkPromptCount: winner.paper.code === 'INT-G2-P6'
-      ? getParakhChapterKnowledgeInventory().benchmarkCaseCount + getParakhStrategicManagementInventory().benchmarkCaseCount
-      : winner.paper.code === 'INT-G2-P4' ? getParakhCostAccountingInventory().benchmarkCaseCount
-        : winner.paper.code === 'INT-G2-P5' ? getParakhAuditingInventory().benchmarkCaseCount : 0,
+    benchmarkPromptCount: winner.paper.code === 'FND-P1' ? getParakhFoundationAccountingInventory().benchmarkCaseCount
+      : winner.paper.code === 'INT-G2-P6'
+        ? getParakhChapterKnowledgeInventory().benchmarkCaseCount + getParakhStrategicManagementInventory().benchmarkCaseCount
+        : winner.paper.code === 'INT-G2-P4' ? getParakhCostAccountingInventory().benchmarkCaseCount
+          : winner.paper.code === 'INT-G2-P5' ? getParakhAuditingInventory().benchmarkCaseCount : 0,
     humanReviewedBenchmarkCount: 0,
   };
 }
