@@ -274,3 +274,312 @@ textarea {
   }
 }
 
+
+/* ==========================================================================
+   CA Exam Checker — Premium Academic Design System
+   Editorial navy / warm ivory / restrained coral palette.
+   Applied to the existing authenticated student workspace without changing
+   evaluation, credit, payment, auth or role behaviour.
+   ========================================================================== */
+:root {
+  --app-bg: #f8f7f3;
+  --app-card-bg: #ffffff;
+  --app-card-border: #e8e7e2;
+  --app-text-primary: #101729;
+  --app-text-secondary: #3f4858;
+  --app-text-muted: #788296;
+  --app-accent: #f05b78;
+  --app-accent-hover: #d94767;
+}
+
+body {
+  background: #f8f7f3;
+  color: #101729;
+  font-family: Inter, "Plus Jakarta Sans", Arial, sans-serif;
+}
+
+/* Student application shell */
+.student-premium-workspace,
+.student-premium-workspace.student-glass-workspace {
+  isolation: isolate;
+  color-scheme: light;
+  background: #f8f7f3 !important;
+  color: #101729 !important;
+}
+.student-premium-workspace .student-glass-ambient {
+  display: none !important;
+}
+.student-premium-workspace .student-glass-sidebar {
+  background: #ffffff !important;
+  border-right: 1px solid #e8e7e2 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.student-premium-workspace .student-glass-topbar {
+  background: rgba(255,255,255,.96) !important;
+  border-bottom: 1px solid #e8e7e2 !important;
+  box-shadow: 0 1px 0 rgba(16,23,41,.025);
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+}
+.student-premium-workspace .student-glass-search {
+  background: #f4f4f0 !important;
+  border-color: #e8e7e2 !important;
+  box-shadow: none !important;
+  color: #101729 !important;
+}
+.student-premium-workspace .student-glass-search::placeholder {
+  color: #788296 !important;
+}
+.student-premium-workspace .student-glass-page {
+  background: transparent !important;
+}
+
+/* Sidebar navigation */
+.student-premium-workspace .student-glass-sidebar .text-white,
+.student-premium-workspace .student-glass-sidebar .text-slate-100,
+.student-premium-workspace .student-glass-sidebar .text-slate-200,
+.student-premium-workspace .student-glass-sidebar .text-slate-300,
+.student-premium-workspace .student-glass-sidebar .text-blue-100,
+.student-premium-workspace .student-glass-sidebar .text-blue-200 {
+  color: #354052 !important;
+}
+.student-premium-workspace .student-glass-sidebar .text-slate-400,
+.student-premium-workspace .student-glass-sidebar .text-slate-500,
+.student-premium-workspace .student-glass-sidebar .text-blue-200\/70,
+.student-premium-workspace .student-glass-sidebar .text-blue-200\/75 {
+  color: #788296 !important;
+}
+.student-premium-workspace .student-glass-sidebar [class*="border-white"],
+.student-premium-workspace .student-glass-sidebar [class*="border-blue-"] {
+  border-color: #e8e7e2 !important;
+}
+.student-premium-workspace .student-glass-sidebar button {
+  color: #354052 !important;
+  background: transparent;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+.student-premium-workspace .student-glass-sidebar button:hover {
+  background: #f4f4f0 !important;
+  color: #101729 !important;
+  border-color: #e8e7e2 !important;
+}
+.student-premium-workspace .student-glass-sidebar button[class*="from-blue-600"] {
+  background: #101729 !important;
+  color: #ffffff !important;
+  border-color: #101729 !important;
+  box-shadow: 0 4px 12px rgba(16,23,41,.12) !important;
+}
+.student-premium-workspace .student-glass-sidebar button[class*="from-blue-600"] svg {
+  color: #ffffff !important;
+}
+.student-premium-workspace .student-glass-sidebar button[class*="from-blue-600"] span {
+  color: #ffffff !important;
+}
+.student-premium-workspace .student-glass-sidebar button[aria-label="Log out"] {
+  color: #a63e54 !important;
+  background: #fff7f8 !important;
+  border-color: #f4d9df !important;
+}
+.student-premium-workspace .student-glass-sidebar button[aria-label="Log out"]:hover {
+  background: #fdecef !important;
+}
+.student-premium-workspace .student-glass-sidebar .bg-gradient-to-br {
+  background: #f7f5f0 !important;
+  border-color: #e8e7e2 !important;
+  box-shadow: none !important;
+}
+.student-premium-workspace .student-glass-sidebar .bg-gradient-to-br .text-white,
+.student-premium-workspace .student-glass-sidebar .bg-gradient-to-br .text-blue-100,
+.student-premium-workspace .student-glass-sidebar .bg-gradient-to-br .text-blue-200 {
+  color: #354052 !important;
+}
+.student-premium-workspace .student-glass-sidebar .bg-gradient-to-r {
+  background: #101729 !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+/* Header, content text and neutral surfaces */
+.student-premium-workspace .student-glass-topbar .text-white,
+.student-premium-workspace .student-glass-topbar .text-slate-100,
+.student-premium-workspace .student-glass-topbar .text-slate-200,
+.student-premium-workspace .student-glass-topbar .text-blue-100 {
+  color: #101729 !important;
+}
+.student-premium-workspace .student-glass-topbar .text-slate-300,
+.student-premium-workspace .student-glass-topbar .text-slate-400,
+.student-premium-workspace .student-glass-topbar .text-blue-200 {
+  color: #687386 !important;
+}
+.student-premium-workspace .student-glass-topbar [class*="border-white"] {
+  border-color: #e8e7e2 !important;
+}
+.student-premium-workspace .student-glass-topbar [class*="bg-white/"] {
+  background: #f4f4f0 !important;
+}
+.student-premium-workspace .student-glass-page h1,
+.student-premium-workspace .student-glass-page h2,
+.student-premium-workspace .student-glass-page h3,
+.student-premium-workspace .student-glass-page h4 {
+  color: #101729;
+  font-family: "Source Serif 4", Georgia, serif;
+  letter-spacing: -.015em;
+}
+.student-premium-workspace .student-glass-page p,
+.student-premium-workspace .student-glass-page label,
+.student-premium-workspace .student-glass-page span {
+  --tw-text-opacity: 1;
+}
+.student-premium-workspace .student-glass-page .text-white,
+.student-premium-workspace .student-glass-page .text-slate-100,
+.student-premium-workspace .student-glass-page .text-slate-200 {
+  color: #101729 !important;
+}
+.student-premium-workspace .student-glass-page .text-slate-300,
+.student-premium-workspace .student-glass-page .text-slate-400,
+.student-premium-workspace .student-glass-page .text-slate-500 {
+  color: #687386 !important;
+}
+.student-premium-workspace .student-glass-page [class*="border-white"],
+.student-premium-workspace .student-glass-page [class*="border-blue-"],
+.student-premium-workspace .student-glass-page [class*="border-slate-"] {
+  border-color: #e8e7e2 !important;
+}
+.student-premium-workspace .student-glass-page [class*="bg-white/"],
+.student-premium-workspace .student-glass-page [class*="bg-slate-900"],
+.student-premium-workspace .student-glass-page [class*="bg-slate-950"] {
+  background: #ffffff !important;
+}
+.student-premium-workspace .student-glass-page [class*="bg-slate-50"],
+.student-premium-workspace .student-glass-page [class*="bg-slate-100"] {
+  background: #f4f4f0 !important;
+}
+
+/* Panels and metrics: restrained surfaces, no glass or neon */
+.student-premium-workspace .student-glass-panel {
+  background: #ffffff !important;
+  border: 1px solid #e8e7e2 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 1px 2px rgba(16,23,41,.035) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.student-premium-workspace .student-glass-kpi,
+.student-premium-workspace .student-glass-kpi:nth-child(2),
+.student-premium-workspace .student-glass-kpi:nth-child(3),
+.student-premium-workspace .student-glass-kpi:nth-child(4) {
+  background: #ffffff !important;
+  border: 1px solid #e8e7e2 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 1px 2px rgba(16,23,41,.035) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.student-premium-workspace .student-glass-subject-card {
+  background: #ffffff !important;
+  border: 1px solid #e8e7e2 !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+.student-premium-workspace .student-glass-hero {
+  background: #101729 !important;
+  color: #ffffff !important;
+  border: 1px solid #101729 !important;
+  border-radius: 16px !important;
+  box-shadow: 0 12px 30px rgba(16,23,41,.10) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.student-premium-workspace .student-glass-hero h1,
+.student-premium-workspace .student-glass-hero h2,
+.student-premium-workspace .student-glass-hero h3,
+.student-premium-workspace .student-glass-hero p,
+.student-premium-workspace .student-glass-hero span {
+  color: #ffffff !important;
+}
+.student-premium-workspace .student-glass-hero [class*="bg-gradient"] {
+  background: #f05b78 !important;
+}
+.student-premium-workspace .student-glass-kpi:hover,
+.student-premium-workspace .student-glass-subject-card:hover {
+  transform: translateY(-1px);
+  border-color: #d7d5ce !important;
+  box-shadow: 0 6px 18px rgba(16,23,41,.06) !important;
+}
+.student-premium-workspace .student-glass-page button[class*="bg-blue-"],
+.student-premium-workspace .student-glass-page button[class*="bg-indigo-"],
+.student-premium-workspace .student-glass-page a[class*="bg-blue-"] {
+  background: #101729 !important;
+  color: #ffffff !important;
+  border-color: #101729 !important;
+}
+.student-premium-workspace .student-glass-page button[class*="bg-blue-"]:hover,
+.student-premium-workspace .student-glass-page button[class*="bg-indigo-"]:hover,
+.student-premium-workspace .student-glass-page a[class*="bg-blue-"]:hover {
+  background: #29344b !important;
+}
+.student-premium-workspace .student-glass-page button[class*="bg-fuchsia-"],
+.student-premium-workspace .student-glass-page button[class*="bg-pink-"] {
+  background: #f05b78 !important;
+  color: #ffffff !important;
+}
+.student-premium-workspace .student-glass-page input,
+.student-premium-workspace .student-glass-page select,
+.student-premium-workspace .student-glass-page textarea {
+  color-scheme: light;
+  background: #ffffff !important;
+  color: #101729 !important;
+  border-color: #deddd7 !important;
+}
+.student-premium-workspace .student-glass-page input::placeholder,
+.student-premium-workspace .student-glass-page textarea::placeholder {
+  color: #8992a2 !important;
+}
+.student-premium-workspace .student-glass-page table thead {
+  background: #f4f4f0 !important;
+}
+.student-premium-workspace .student-glass-page table tbody tr:hover {
+  background: #faf9f6 !important;
+}
+.student-premium-workspace .student-glass-page .text-blue-500,
+.student-premium-workspace .student-glass-page .text-blue-600,
+.student-premium-workspace .student-glass-page .text-blue-700,
+.student-premium-workspace .student-glass-page .text-indigo-500,
+.student-premium-workspace .student-glass-page .text-indigo-600 {
+  color: #34445f !important;
+}
+.student-premium-workspace .student-glass-page .text-rose-500,
+.student-premium-workspace .student-glass-page .text-rose-600,
+.student-premium-workspace .student-glass-page .text-pink-500 {
+  color: #c24c66 !important;
+}
+.student-premium-workspace .student-glass-page .bg-blue-50,
+.student-premium-workspace .student-glass-page .bg-indigo-50 {
+  background: #f2f4f8 !important;
+}
+.student-premium-workspace .student-glass-page .bg-rose-50,
+.student-premium-workspace .student-glass-page .bg-pink-50 {
+  background: #fff3f5 !important;
+}
+.student-premium-workspace .student-glass-page .rounded-2xl {
+  border-radius: 14px !important;
+}
+.student-premium-workspace .student-glass-page .shadow-xl,
+.student-premium-workspace .student-glass-page .shadow-2xl {
+  box-shadow: 0 12px 30px rgba(16,23,41,.08) !important;
+}
+@media (max-width: 640px) {
+  .student-premium-workspace .student-glass-sidebar {
+    border-right: 0 !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .student-premium-workspace * {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
