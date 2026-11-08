@@ -3358,10 +3358,12 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
     }
 
     const profile = db.prepare(`
-      SELECT p.*, i.name as institute_name, i.code as institute_code, b.name as batch_name
+      SELECT p.*, i.name as institute_name, i.code as institute_code, b.name as batch_name,
+             ea.display_name as exam_attempt_label
       FROM student_profiles p
       LEFT JOIN institutes i ON i.id = p.institute_id
       LEFT JOIN batches b ON b.id = p.batch_id
+      LEFT JOIN exam_attempts ea ON ea.id = p.exam_attempt_id
       WHERE p.user_id = ?
     `).get(studentId) as any;
 
@@ -3429,6 +3431,8 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
         studentCode: profile?.student_code || getOrAssignStudentCode(studentId),
         student_code: profile?.student_code || getOrAssignStudentCode(studentId),
         caLevel: profile?.ca_level || 'INTERMEDIATE',
+        examAttemptId: profile?.exam_attempt_id || '',
+        examAttempt: profile?.exam_attempt_label || '',
         icaiRegistrationNumber: profile?.icai_registration_number || '',
         city: profile?.city || '',
         preferredSubjects: preferredSubjectsList,
@@ -3487,6 +3491,13 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
     }
 
     const { fullName, phone, city, caLevel, preferredSubjects, avatarUrl, icaiRegistrationNumber } = req.body;
+    const hasExamAttemptField = Object.prototype.hasOwnProperty.call(req.body || {}, 'examAttemptId') ||
+      Object.prototype.hasOwnProperty.call(req.body || {}, 'exam_attempt_id');
+    const rawExamAttemptId = req.body?.examAttemptId ?? req.body?.exam_attempt_id;
+    if (hasExamAttemptField && rawExamAttemptId !== undefined && rawExamAttemptId !== null &&
+        typeof rawExamAttemptId !== 'string') {
+      return res.status(400).json({ error: 'Invalid exam attempt selection.' });
+    }
 
     // Field-level validation
     if (fullName !== undefined) {
@@ -3579,6 +3590,36 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ error: 'Invalid CA Level. Must be FOUNDATION, INTERMEDIATE, or FINAL.' });
     }
 
+    const existingProfileForAttempt = db.prepare(
+      'SELECT ca_level, exam_attempt_id FROM student_profiles WHERE user_id = ?'
+    ).get(studentId) as { ca_level?: string; exam_attempt_id?: string | null } | undefined;
+    const targetCaLevel = String(caLevel || existingProfileForAttempt?.ca_level || 'INTERMEDIATE').toUpperCase();
+    const requestedAttemptId = typeof rawExamAttemptId === 'string' ? rawExamAttemptId.trim() : '';
+    const isAttemptValidForCourse = (attemptId: string, course: string) => Boolean(db.prepare(`
+      SELECT id FROM exam_attempts
+      WHERE id = ? AND is_active = 1 AND UPPER(course) = ?
+      LIMIT 1
+    `).get(attemptId, course));
+
+    let examAttemptIdToPersist: string | null | undefined;
+    if (hasExamAttemptField) {
+      if (!requestedAttemptId) {
+        examAttemptIdToPersist = null;
+      } else if (!isAttemptValidForCourse(requestedAttemptId, targetCaLevel)) {
+        return res.status(400).json({ error: 'Please choose an active exam attempt for the selected CA course.' });
+      } else {
+        examAttemptIdToPersist = requestedAttemptId;
+      }
+    } else if (
+      caLevel !== undefined &&
+      String(existingProfileForAttempt?.ca_level || '').toUpperCase() !== targetCaLevel &&
+      existingProfileForAttempt?.exam_attempt_id &&
+      !isAttemptValidForCourse(existingProfileForAttempt.exam_attempt_id, targetCaLevel)
+    ) {
+      examAttemptIdToPersist = null;
+    }
+    const shouldPersistExamAttempt = examAttemptIdToPersist !== undefined;
+
     const preferredSubjectsJson = preferredSubjects !== undefined
       ? JSON.stringify(Array.isArray(preferredSubjects) ? preferredSubjects : [preferredSubjects])
       : null;
@@ -3611,14 +3652,15 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
         const newStudentCode = getOrAssignStudentCode(studentId);
         db.prepare(`
           INSERT INTO student_profiles (
-            user_id, student_code, icai_registration_number, ca_level, city, preferred_subjects, avatar_url,
+            user_id, student_code, icai_registration_number, ca_level, exam_attempt_id, city, preferred_subjects, avatar_url,
             free_evaluations_used, purchased_credits, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP, ?)
         `).run(
           studentId,
           newStudentCode,
           normalizedSrn || 'REG-PENDING',
-          caLevel || 'INTERMEDIATE',
+          targetCaLevel,
+          shouldPersistExamAttempt ? examAttemptIdToPersist : null,
           city !== undefined ? (city ? city.trim() : '') : '',
           preferredSubjectsJson || '[]',
           avatarUrl !== undefined ? (avatarUrl ? avatarUrl.trim() : '') : '',
@@ -3633,6 +3675,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
           SET icai_registration_number = CASE WHEN ? = 1 THEN ? ELSE icai_registration_number END,
               city = CASE WHEN ? = 1 THEN ? ELSE city END,
               ca_level = COALESCE(?, ca_level),
+              exam_attempt_id = CASE WHEN ? = 1 THEN ? ELSE exam_attempt_id END,
               preferred_subjects = CASE WHEN ? = 1 THEN ? ELSE preferred_subjects END,
               avatar_url = CASE WHEN ? = 1 THEN ? ELSE avatar_url END,
               updated_at = ?
@@ -3643,6 +3686,8 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
           city !== undefined ? 1 : 0,
           city !== undefined ? (city ? city.trim() : '') : '',
           caLevel || null,
+          shouldPersistExamAttempt ? 1 : 0,
+          shouldPersistExamAttempt ? examAttemptIdToPersist : null,
           preferredSubjects !== undefined ? 1 : 0,
           preferredSubjectsJson || '[]',
           avatarUrl !== undefined ? 1 : 0,
@@ -3679,6 +3724,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
         city: updatedProfile.city || '',
         preferred_subjects: updatedProfile.preferred_subjects || '[]',
         avatar_url: updatedProfile.avatar_url || '',
+        exam_attempt_id: updatedProfile.exam_attempt_id ?? null,
         updated_at: updatedProfile.updated_at,
       });
       if (syncResult === 'failed') {
@@ -3692,6 +3738,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
                 city = ?,
                 preferred_subjects = ?,
                 avatar_url = ?,
+                exam_attempt_id = ?,
                 updated_at = ?
             WHERE user_id = ? AND updated_at = ?
           `).run(
@@ -3700,6 +3747,7 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
             previousProfile.city,
             previousProfile.preferred_subjects,
             previousProfile.avatar_url,
+            previousProfile.exam_attempt_id ?? null,
             previousProfile.updated_at,
             studentId,
             profileEditTimestamp
@@ -3777,6 +3825,10 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       }
     }
 
+    const savedExamAttempt = updatedProfile?.exam_attempt_id
+      ? db.prepare('SELECT display_name FROM exam_attempts WHERE id = ?').get(updatedProfile.exam_attempt_id) as { display_name?: string } | undefined
+      : undefined;
+
     return res.json({
       success: true,
       message: 'Profile updated successfully.',
@@ -3789,6 +3841,8 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
       },
       profile: {
         caLevel: updatedProfile?.ca_level || 'INTERMEDIATE',
+        examAttemptId: updatedProfile?.exam_attempt_id || '',
+        examAttempt: savedExamAttempt?.display_name || '',
         city: updatedProfile?.city || '',
         preferredSubjects: parsedSubjects,
         avatarUrl: updatedProfile?.avatar_url || '',

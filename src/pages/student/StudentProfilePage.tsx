@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest } from '../../api/client.js';
+import { fetchExamAttempts, type ExamAttempt } from '../../lib/attempts.js';
 import { OtpVaultAnimation } from '../../components/auth/OtpVaultAnimation.js';
 import { formatDateIST } from '../../utils/timezone.js';
 import { MfaSecuritySettingsCard } from '../../components/auth/MfaSecuritySettingsCard.js';
@@ -64,6 +65,8 @@ interface ProfileApiResponse {
     studentCode?: string;
     student_code?: string;
     caLevel: 'FOUNDATION' | 'INTERMEDIATE' | 'FINAL';
+    examAttemptId?: string;
+    examAttempt?: string;
     icaiRegistrationNumber: string;
     city: string;
     preferredSubjects: string[];
@@ -476,6 +479,10 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
   const [phone, setPhone] = useState<string>('');
   const [city, setCity] = useState<string>('');
   const [caLevel, setCaLevel] = useState<'FOUNDATION' | 'INTERMEDIATE' | 'FINAL'>('INTERMEDIATE');
+  const [examAttemptId, setExamAttemptId] = useState<string>('');
+  const [examAttempts, setExamAttempts] = useState<ExamAttempt[]>([]);
+  const [isLoadingExamAttempts, setIsLoadingExamAttempts] = useState<boolean>(false);
+  const [examAttemptsLoaded, setExamAttemptsLoaded] = useState<boolean>(false);
   const [preferredSubjects, setPreferredSubjects] = useState<string[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string>('');
   const [isPreparingAvatar, setIsPreparingAvatar] = useState<boolean>(false);
@@ -539,6 +546,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       setPhone(profRes.user.phone || '');
       setCity(profRes.profile.city || '');
       setCaLevel(profRes.profile.caLevel || 'INTERMEDIATE');
+      setExamAttemptId(profRes.profile.examAttemptId || '');
       setPreferredSubjects(profRes.profile.preferredSubjects || []);
       setAvatarUrl(profRes.profile.avatarUrl || '');
 
@@ -558,6 +566,38 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       if (fetchVersion === profileFetchVersion.current) setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    let active = true;
+    setIsLoadingExamAttempts(true);
+    setExamAttemptsLoaded(false);
+    fetchExamAttempts(caLevel)
+      .then((attempts) => {
+        if (!active) return;
+        setExamAttempts(attempts.filter((attempt) =>
+          attempt.active && attempt.caLevel === caLevel
+        ));
+      })
+      .catch((error) => {
+        console.warn('[StudentProfile] Could not load exam attempts:', error);
+        if (active) setExamAttempts([]);
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoadingExamAttempts(false);
+          setExamAttemptsLoaded(true);
+        }
+      });
+    return () => { active = false; };
+  }, [caLevel]);
+
+  useEffect(() => {
+    if (!examAttemptsLoaded || !examAttemptId) return;
+    // Do not keep a selection that is no longer active for the saved CA course.
+    if (!examAttempts.some((attempt) => attempt.id === examAttemptId)) {
+      setExamAttemptId('');
+    }
+  }, [examAttemptsLoaded, examAttempts, examAttemptId]);
 
   useEffect(() => {
     fetchProfileAndReferrals();
@@ -627,7 +667,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       const res = await apiRequest<{
         success: boolean;
         message: string;
-        profile: Pick<ProfileApiResponse['profile'], 'caLevel'>;
+        profile: Pick<ProfileApiResponse['profile'], 'caLevel' | 'examAttemptId'>;
       }>('/api/student/profile', {
         method: 'PUT',
         body: JSON.stringify({
@@ -635,18 +675,21 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
           phone: phone.trim(),
           city: city.trim(),
           caLevel,
+          examAttemptId,
           preferredSubjects,
           avatarUrl: avatarUrl.trim(),
         }),
       });
 
-      if (!res.success || res.profile?.caLevel !== caLevel) {
+      if (!res.success || res.profile?.caLevel !== caLevel || (res.profile?.examAttemptId || '') !== examAttemptId) {
         throw new Error('The saved CA course could not be verified. Please retry.');
       }
 
       const refreshedProfile = await fetchProfileAndReferrals();
-      if (!refreshedProfile || refreshedProfile.profile.caLevel !== res.profile.caLevel) {
+      if (!refreshedProfile || refreshedProfile.profile.caLevel !== res.profile.caLevel ||
+          (refreshedProfile.profile.examAttemptId || '') !== (res.profile.examAttemptId || '')) {
         setCaLevel(profileData?.profile.caLevel || 'INTERMEDIATE');
+        setExamAttemptId(profileData?.profile.examAttemptId || '');
         setPreferredSubjects(profileData?.profile.preferredSubjects || []);
         setProfileMessage({
           type: 'error',
@@ -679,6 +722,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
       );    } catch (err: any) {
       console.error('Update profile failed:', err);
       setCaLevel(profileData?.profile.caLevel || caLevel);
+      setExamAttemptId(profileData?.profile.examAttemptId || '');
       setPreferredSubjects(profileData?.profile.preferredSubjects || preferredSubjects);
       setProfileMessage({
         type: 'error',
@@ -1215,6 +1259,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                     type="button"
                     onClick={() => {
                       setCaLevel(level);
+                      setExamAttemptId('');
                       // Clear subjects that don't match new level
                       const levelSubjects = CA_SUBJECTS[level];
                       setPreferredSubjects((prev) => prev.filter((s) => levelSubjects.includes(s)));
@@ -1231,6 +1276,29 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               </div>
               <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
                 This saved course controls which CA level you can evaluate in Check Answer Sheet and which course-specific combo you can purchase. To change it, select your new level and save the profile. Remaining paid evaluation credits stay in your account after the change.
+              </p>
+            </div>
+
+            {/* Exam Attempt Selector */}
+            <div className="space-y-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <label htmlFor="student-exam-attempt" className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                Exam Attempt
+              </label>
+              <select
+                id="student-exam-attempt"
+                value={examAttemptId}
+                onChange={(event) => setExamAttemptId(event.target.value)}
+                disabled={isLoadingExamAttempts || isSavingProfile}
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              >
+                <option value="">Select your exam attempt (optional)</option>
+                {examAttempts.map((attempt) => (
+                  <option key={attempt.id} value={attempt.id}>{attempt.attemptLabel}</option>
+                ))}
+              </select>
+              <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                Choose the attempt you are preparing for. Only active attempts for your selected CA level can be saved.
+                {isLoadingExamAttempts ? ' Loading attempts…' : examAttempts.length === 0 ? ' No active attempts are currently listed for this course.' : ''}
               </p>
             </div>
 

@@ -203,6 +203,7 @@ export function initDatabase() {
       student_code TEXT UNIQUE,
       icai_registration_number TEXT NOT NULL,
       ca_level TEXT NOT NULL DEFAULT 'INTERMEDIATE',
+      exam_attempt_id TEXT,
       free_evaluations_used INTEGER NOT NULL DEFAULT 0,
       monthly_free_evaluations_used INTEGER NOT NULL DEFAULT 0,
       monthly_free_evaluations_limit INTEGER NOT NULL DEFAULT 2,
@@ -1592,6 +1593,7 @@ function runMigrations() {
 
   // Ensure student_profiles columns
   addColumnIfNotExists('student_profiles', 'city', 'TEXT');
+  addColumnIfNotExists('student_profiles', 'exam_attempt_id', 'TEXT');
   addColumnIfNotExists('student_profiles', 'preferred_subjects', 'TEXT');
   addColumnIfNotExists('student_profiles', 'avatar_url', 'TEXT');
 
