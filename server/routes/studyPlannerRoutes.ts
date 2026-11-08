@@ -707,7 +707,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     // Recognise the CA Intermediate FM credit-policy decision as a numerical question.
     // It is deterministic and must never be sent to web search or the generic fallback.
     const creditPolicyReply = course === 'CA_INTERMEDIATE'
-      ? buildCreditPolicyAnalysisReply(message, replyLanguage)
+      ? buildCreditPolicyAnalysisReply(message, replyLanguage, studentHistory)
       : null;
     if (creditPolicyReply) {
       const parsed = parsedProbe;
