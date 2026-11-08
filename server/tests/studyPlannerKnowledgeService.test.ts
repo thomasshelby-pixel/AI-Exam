@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, getStudyKnowledgeSubjectInventory, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { getParakhCurriculumPapers, getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
 import {
   assessParakhResponseQuality,
   buildParakhQualityNotice,
@@ -419,4 +420,33 @@ test('student-facing quality notices disclose primary-source, coverage and incom
   assert.match(buildParakhQualityNotice({ ...base, status: 'NEEDS_HUMAN_REVIEW' }, 'english'), /verified subject-specific reference/i);
   assert.match(buildParakhQualityNotice({ ...base, status: 'INCOMPLETE' }, 'hindi'), /complete worked answer/i);
   assert.equal(buildParakhQualityNotice({ ...base, status: 'STRUCTURE_READY' }, 'english'), '');
+});
+
+
+test('official curriculum registry covers Foundation, Intermediate, Final and SPOM paper lists', () => {
+  const foundation = getParakhCurriculumPapers('CA_FOUNDATION');
+  const intermediate = getParakhCurriculumPapers('CA_INTERMEDIATE');
+  const final = getParakhCurriculumPapers('CA_FINAL');
+  const spom = getParakhCurriculumPapers('SPOM');
+  assert.equal(foundation.length, 4);
+  assert.equal(intermediate.length, 6);
+  assert.equal(final.length, 6);
+  assert.equal(spom.length, 16);
+  assert.ok(intermediate.some((paper) => paper.title === 'Taxation' && paper.sections.includes('Goods and Services Tax')));
+  assert.ok(final.some((paper) => paper.title === 'Integrated Business Solutions'));
+  assert.ok(spom.some((paper) => paper.title === 'Strategic Cost & Performance Management'));
+  const summary = getParakhCurriculumSummary();
+  assert.equal(summary.status, 'OFFICIAL_PAPER_MAPPING_ONLY');
+  assert.equal(summary.knowledgeCoverageVerified, false);
+  assert.equal(summary.courses.length, 4);
+});
+
+test('CA Final subject mapping is visible but does not imply benchmark completion', () => {
+  const report = buildParakhSubjectCoverageReport(getStudyKnowledgeSubjectInventory());
+  const finalMapped = report.subjectDomains.filter((item) => item.caFinalCurriculumMapping === 'MAPPED_NOT_BENCHMARKED');
+  assert.ok(finalMapped.some((item) => item.domain === 'accounting'));
+  assert.ok(finalMapped.some((item) => item.domain === 'financial_management'));
+  assert.ok(finalMapped.some((item) => item.domain === 'auditing'));
+  assert.ok(finalMapped.some((item) => item.domain === 'integrated_business_solutions'));
+  assert.ok(finalMapped.every((item) => item.completeVerifiedCoverage === false));
 });
