@@ -37,8 +37,9 @@ Only Intermediate Paper 6, Section A: Financial Management currently has origina
 
 - Paper 4 Cost and Management Accounting: 15 chapter packs, in English, Hindi and Hinglish, with answer/example/simpler/quiz modes and 75 benchmark prompts.
 - Paper 6 Section A Financial Management: 9 chapter packs and 45 benchmark prompts.
+- Paper 5 Auditing and Ethics: 11 chapter packs and 55 benchmark prompts, linked to the ICAI page headed May 2027 Exam Onwards.
 - Paper 6 Section B Strategic Management: 5 chapter packs and 25 benchmark prompts.
-- Across Paper 4 and Paper 6: 29 original chapter drafts and 145 benchmark prompts.
+- Across Intermediate Papers 4, 5 and 6: 40 original chapter drafts and 200 benchmark prompts.
 - 0 human-reviewed chapter packs and 0 human-reviewed benchmark sets.
 
 The remaining mapped subjects are not silently promoted to authored content. The student response path may identify the matching paper and explain the coverage gap. Current/statutory questions continue to require live primary-source support.
