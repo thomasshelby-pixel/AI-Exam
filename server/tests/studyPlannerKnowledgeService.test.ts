@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, getStudyKnowledgeSubjectInventory, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, getStudyKnowledgeSubjectInventory, getStudyKnowledgeTopicInventory, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { getParakhCurriculumPapers, getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
 import {
   assessParakhResponseQuality,
@@ -386,6 +386,13 @@ test('subject classifier distinguishes Financial Management and Strategic Manage
   assert.equal(classifyParakhQuestion('How should I prepare audit evidence?', ['Auditing and Ethics']).domain, 'auditing');
 });
 
+
+test('authored topic inventory reports the exact current seed count and never claims verification', () => {
+  const topics = getStudyKnowledgeTopicInventory();
+  assert.equal(topics.length, 12);
+  assert.ok(topics.some((topic) => topic.topicId === 'intermediate-fm-ratio-analysis'));
+  assert.ok(topics.every((topic) => Array.isArray(topic.subjects)));
+});
 
 test('authored subject inventory is reported as guidance seed data, not complete syllabus coverage', () => {
   const subjects = getStudyKnowledgeSubjectInventory();
