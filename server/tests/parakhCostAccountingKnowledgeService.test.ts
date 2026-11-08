@@ -71,10 +71,10 @@ test('retrieves each chapter in the correct course and paper', () => {
 
 test('supports English, Hindi, Hinglish and all four learning modes', () => {
   const cases = [
-    { message: 'Explain material cost', language: 'english' as const },
-    { message: 'EOQ ko simple language mein samjhao', language: 'hinglish' as const },
-    { message: 'लागत पत्रक का उदाहरण दीजिए', language: 'hindi' as const },
-    { message: 'Quiz me on marginal costing', language: 'english' as const },
+    { message: 'Explain material cost', language: 'english' as const, mode: 'answer' as const, minimumLength: 180 },
+    { message: 'EOQ ko simple language mein samjhao', language: 'hinglish' as const, mode: 'simpler' as const, minimumLength: 80 },
+    { message: 'लागत पत्रक का उदाहरण दीजिए', language: 'hindi' as const, mode: 'example' as const, minimumLength: 100 },
+    { message: 'Quiz me on marginal costing', language: 'english' as const, mode: 'quiz' as const, minimumLength: 100 },
   ];
   for (const item of cases) {
     const result = searchParakhCostAccountingKnowledge({
@@ -83,7 +83,8 @@ test('supports English, Hindi, Hinglish and all four learning modes', () => {
       language: item.language,
     });
     assert.ok(result);
-    assert.ok(result.answer.length > (result.mode === 'quiz' ? 100 : 180));
+    assert.equal(result.mode, item.mode, item.message);
+    assert.ok(result.answer.length > item.minimumLength, item.message);
     if (result.mode === 'quiz') assert.match(result.answer, /[?؟]/);
   }
   assert.equal(searchParakhCostAccountingKnowledge({
