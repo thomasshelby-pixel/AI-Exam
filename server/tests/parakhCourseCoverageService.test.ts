@@ -29,14 +29,16 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   const final = inventory.courses.find((course) => course.course === 'CA_FINAL')!;
   const spom = inventory.courses.find((course) => course.course === 'SPOM')!;
 
-  assert.equal(inventory.authoredChapterCount, 9);
+  assert.equal(inventory.authoredChapterCount, 14);
   assert.equal(inventory.humanReviewedChapterCount, 0);
-  assert.equal(inventory.benchmarkPromptCount, 45);
+  assert.equal(inventory.benchmarkPromptCount, 70);
   assert.equal(inventory.humanReviewedBenchmarkCount, 0);
   assert.equal(fm.indexKind, 'chapter');
-  assert.equal(fm.indexEntries.filter((entry) => entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 9);
-  assert.equal(fm.indexEntries.filter((entry) => entry.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED').length, 9);
-  assert.ok(fm.indexEntries.some((entry) => entry.section === 'Section B: Strategic Management' && entry.contentStatus === 'MAPPED_ONLY'));
+  assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section A: Financial Management' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 9);
+  assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section A: Financial Management' && entry.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED').length, 9);
+  assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section B: Strategic Management' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 5);
+  assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section B: Strategic Management' && entry.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED').length, 5);
+  assert.ok(fm.indexEntries.some((entry) => entry.section === 'Section B: Strategic Management' && entry.title === 'Strategic Analysis: Internal Environment' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED'));
   assert.ok(foundation.papers.every((paper) => paper.authoredChapterCount === 0));
   assert.ok(final.papers.every((paper) => paper.indexKind === 'topic' || paper.indexKind === 'none'));
   assert.ok(final.papers.every((paper) => paper.mappingStatus === 'PROVISIONAL_TOPIC_INDEX_NOT_OFFICIAL_CHAPTERS'));
@@ -94,8 +96,8 @@ test('resolves FM chapter context and returns section-level status for Strategic
   assert.equal(fm?.paperCode, 'INT-G2-P6');
   assert.equal(fm?.matchedIndexEntry, 'Investment Decisions');
   assert.equal(fm?.section, 'Section A: Financial Management');
-  assert.equal(fm?.authoredChapterCount, 9);
-  assert.equal(fm?.benchmarkPromptCount, 45);
+  assert.equal(fm?.authoredChapterCount, 14);
+  assert.equal(fm?.benchmarkPromptCount, 70);
 
   const sm = resolveParakhCoursePaperContext({
     course: 'CA_INTERMEDIATE',
@@ -104,6 +106,9 @@ test('resolves FM chapter context and returns section-level status for Strategic
   assert.equal(sm?.paperCode, 'INT-G2-P6');
   assert.equal(sm?.section, 'Section B: Strategic Management');
   assert.equal(sm?.humanReviewedChapterCount, 0);
+  assert.equal(sm?.authoredChapterCount, 14);
+  assert.equal(sm?.benchmarkPromptCount, 70);
+  assert.equal(sm?.sourceUrl, 'https://www.icai.org/post/sm-inter-p6b-may2027');
 });
 
 test('creates language-specific and honest coverage notices for mapped-only papers', () => {
