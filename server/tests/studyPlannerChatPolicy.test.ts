@@ -100,3 +100,9 @@ test('an assistant mention of revision cannot trigger a chapter assessment for a
     priorScopeQuestion: false,
   }), false);
 });
+
+
+test('CA Final availability remains a planner-only gate, not a social-chat gate', () => {
+  assert.match(getCourseUnderDevelopmentReply('CA_FINAL') || '', /Coming soon for CA Final/);
+  assert.equal(getCourseUnderDevelopmentReply('CA_INTERMEDIATE'), null);
+});
