@@ -88,6 +88,8 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 ## Current scope and next expansion
 
-This rollout covers only CA Intermediate Paper 6A, Section A. All nine FM chapters have original drafts, but none has human-approved content or human-reviewed benchmark answers. It does not provide complete coverage for the other Intermediate papers, Foundation, Final, SPOM, or Section B: Strategic Management. Those areas remain gaps until separately mapped from current official sources, authored, benchmarked and reviewed.
+The paper-level catalogue now covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
 
-The next content sequence is to map and build Section B: Strategic Management, then expand to the other Intermediate paper/section pairs and later Foundation, Final and SPOM. Tax and law content requires separate attempt-aware statutory source controls and must not be promoted from evergreen explanations.
+This broader map does not change the authored-content boundary: only CA Intermediate Paper 6, Section A (Financial Management) has nine original chapter drafts and 45 benchmark prompts. None has human-approved content or human-reviewed benchmark answers. Foundation and Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are explicitly provisional topic pointers rather than official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper has a dedicated authored chapter pack in this release.
+
+Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, then separate benchmark answer keys and qualified review. Tax and law content requires attempt-aware statutory source controls and must not be promoted from evergreen explanations.
