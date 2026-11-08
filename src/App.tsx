@@ -750,7 +750,7 @@ const PublicAndStudentLayout: React.FC<{
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f1f5f9] dark:bg-slate-950 text-[#1e293b] dark:text-slate-100 font-sans selection:bg-blue-600 selection:text-white transition-colors duration-150">
+    <div className="premium-public-shell min-h-screen flex flex-col bg-[#f8f7f3] text-[#101729] font-sans selection:bg-[#f05b78] selection:text-white transition-colors duration-150">
       <Navbar
         currentView={currentView}
         onNavigate={handleNavigate}
