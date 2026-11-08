@@ -44,7 +44,7 @@ const rows = db.prepare(`
 
 assert.equal(rows.length, 2);
 assert.deepEqual(new Set(rows.map((row) => row.doc_type)), new Set(['TERMS', 'PRIVACY']));
-assert.ok(rows.every((row) => row.acknowledged_at && row.version === CURRENT_TERMS_VERSION));
+assert.ok(rows.every((row) => row.acknowledged_at && row.version === (row.doc_type === 'TERMS' ? CURRENT_TERMS_VERSION : CURRENT_PRIVACY_VERSION)));
 assert.ok(rows.every((row) => row.ip_address === '127.0.0.1' && row.user_agent === 'legal-consent-test'));
 
 console.log('✅ Versioned legal consent, explicit dual-checkbox requirement, and audit storage passed.');
