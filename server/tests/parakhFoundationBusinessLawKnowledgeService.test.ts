@@ -112,7 +112,7 @@ test('links the official May 2027 Paper 2 source and discloses conceptual draft 
     course: 'CA_FOUNDATION',
     language: 'hinglish',
   })!;
-  assert.equal(result.source.url, 'https://www.icai.org/post/sm-foundation-p2-may2027');
+  assert.equal(result.source.url, 'https://www.icai.org/post/24381');
   assert.match(result.syllabusApplicability, /Relevant for May 2027 and Onwards/);
   const reply = buildParakhFoundationBusinessLawReply(result, 'hinglish');
   assert.match(reply, /conceptual author draft/i);
