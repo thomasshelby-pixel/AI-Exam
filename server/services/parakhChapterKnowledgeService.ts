@@ -540,9 +540,9 @@ function normalize(value: string): string {
 }
 
 function getReplyMode(message: string): ParakhChapterReplyMode {
-  if (/\b(example|illustrate|numerical example|worked example)\b/i.test(message)) return 'example';
-  if (/\b(simpler|simple words|easy language|easier|aasaan|आसान)\b/i.test(message)) return 'simpler';
-  if (/\b(quiz|test me|self test|practice question|ask me a question|question for me)\b/i.test(message)) return 'quiz';
+  if (/\b(example|illustrate|numerical example|worked example|udaharan|misal)\b/i.test(message) || /उदाहरण|मिसाल/.test(message)) return 'example';
+  if (/\b(simpler|simple words|easy language|easier|aasaan)\b/i.test(message) || /आसान|सरल भाषा|सरल शब्दों/.test(message)) return 'simpler';
+  if (/\b(quiz|test me|self test|practice question|ask me a question|question for me)\b/i.test(message) || /प्रश्नोत्तरी|मेरा टेस्ट लो|मुझसे सवाल पूछो|प्रश्न पूछो/.test(message)) return 'quiz';
   return 'answer';
 }
 
