@@ -8,6 +8,7 @@ import {
   DEFAULT_LEGAL_SETTINGS,
   LEGAL_TERMS_ADDENDUM,
   LEGAL_PRIVACY_ADDENDUM,
+  LEGAL_PRIVACY_MODEL_IMPROVEMENT_ADDENDUM,
 } from '../services/legalConstants.js';
 import {
   CURRENT_TERMS_VERSION,
@@ -49,15 +50,20 @@ function ensureCurrentPublishedLegalDocument(
   const marker = terms
     ? '16. FAIR USE, ANTI-ABUSE AND REVIEW BEFORE FINAL TERMINATION'
     : '16. SECURITY, ABUSE PREVENTION AND ACCOUNT REVIEW';
+  const modelImprovementMarker = '17. AI EVALUATION QUALITY, RESEARCH AND SYSTEM IMPROVEMENT';
   const currentNumericVersion = Number.parseFloat(currentVersion);
   const documentNumericVersion = Number.parseFloat(String(document.version || '0'));
   const versionIsOlder = !Number.isFinite(documentNumericVersion) || documentNumericVersion < currentNumericVersion;
   const amendmentMissing = !String(document.content || '').includes(marker);
+  const modelImprovementMissing = docType === 'PRIVACY' && !String(document.content || '').includes(modelImprovementMarker);
 
-  if (!versionIsOlder && !amendmentMissing) return document;
+  if (!versionIsOlder && !amendmentMissing && !modelImprovementMissing) return document;
 
-  const content = amendmentMissing
-    ? `${String(document.content || '').trim()}\n\n${amendment}\n`
+  const additions: string[] = [];
+  if (amendmentMissing) additions.push(amendment);
+  if (modelImprovementMissing) additions.push(LEGAL_PRIVACY_MODEL_IMPROVEMENT_ADDENDUM);
+  const content = additions.length
+    ? `${String(document.content || '').trim()}\n\n${additions.join('\n\n')}\n`
     : String(document.content || '');
   const targetVersion = Number.isFinite(documentNumericVersion) && documentNumericVersion > currentNumericVersion
     ? document.version
