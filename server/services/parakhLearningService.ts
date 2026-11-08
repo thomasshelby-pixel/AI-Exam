@@ -330,61 +330,61 @@ export async function excludeParakhLearningForStudent(studentId: string): Promis
 
   const now = new Date().toISOString();
   const exclusionRecord = { student_id: normalizedStudentId, excluded_at: now };
+
+  // Persist the local stop immediately so this instance cannot collect more records.
   db.prepare('INSERT OR IGNORE INTO parakh_learning_exclusions (student_id, excluded_at) VALUES (?, ?)')
     .run(normalizedStudentId, now);
+
+  // The preference must also be durable in shared storage. A false return is
+  // not success: another application instance would otherwise continue collecting.
+  let exclusionSynced = false;
   try {
-    await setFirestoreDoc('parakh_learning_exclusions', normalizedStudentId, exclusionRecord);
+    exclusionSynced = await setFirestoreDoc('parakh_learning_exclusions', normalizedStudentId, exclusionRecord);
   } catch (error) {
     console.warn('[PARAKH] Could not mirror learning exclusion preference:', error);
   }
+  if (!exclusionSynced) {
+    throw new Error('Your exclusion is active on this server, but we could not verify it across app servers. Please retry so we can confirm the shared preference.');
+  }
+
   const localRecords = db.prepare(
     "SELECT * FROM parakh_learning_records WHERE student_id = ? AND status != 'EXCLUDED'"
   ).all(normalizedStudentId) as Array<Record<string, any>>;
 
-  let cloudRecords: Array<Record<string, any>> = [];
-  let cloudAvailable = false;
+  let cloudRecords: Array<Record<string, any>>;
   try {
     cloudRecords = await getAllFirestoreDocs<Record<string, any>>(PARAKH_COLLECTION, { failOnError: true });
-    cloudAvailable = true;
   } catch (error) {
     console.warn('[PARAKH] Could not load shared learning records during exclusion:', error);
+    throw new Error('Future PARAKH collection is paused, but we could not verify all previous observations. Please retry to finish excluding previous records.');
   }
 
   const candidates = new Map<string, Record<string, any>>();
   for (const record of [...cloudRecords, ...localRecords]) {
     if (String(record.student_id || '') !== normalizedStudentId) continue;
     if (String(record.status || '').toUpperCase() === 'EXCLUDED') continue;
-    candidates.set(String(record.evaluation_id || record.id || ''), record);
+    const id = String(record.evaluation_id || record.id || '');
+    if (id) candidates.set(id, record);
   }
 
   let excludedCount = 0;
   for (const [evaluationId, record] of candidates) {
-    if (!evaluationId) continue;
-    db.prepare(`
-      UPDATE parakh_learning_records
-      SET status = 'EXCLUDED', updated_at = ?
-      WHERE evaluation_id = ? AND student_id = ?
-    `).run(now, evaluationId, normalizedStudentId);
-
     const updatedRecord = {
       ...record,
       evaluation_id: evaluationId,
       status: 'EXCLUDED',
       updated_at: now,
     };
+    const saved = await setFirestoreDoc(PARAKH_COLLECTION, evaluationId, updatedRecord);
+    if (!saved) {
+      throw new Error('Future PARAKH collection is paused, but at least one previous observation could not be updated. Please retry to finish excluding previous records.');
+    }
 
-    let mirrored = false;
-    if (cloudAvailable) {
-      try {
-        mirrored = await setFirestoreDoc(PARAKH_COLLECTION, evaluationId, updatedRecord);
-      } catch (error) {
-        console.warn('[PARAKH] Could not persist learning exclusion to Firestore:', error);
-      }
-    }
-    if (!mirrored) {
-      const localRecord = getLocalRecord(evaluationId);
-      if (localRecord) await mirrorRecord(localRecord);
-    }
+    db.prepare(`
+      UPDATE parakh_learning_records
+      SET status = 'EXCLUDED', updated_at = ?
+      WHERE evaluation_id = ? AND student_id = ?
+    `).run(now, evaluationId, normalizedStudentId);
     excludedCount += 1;
   }
 
