@@ -17,7 +17,7 @@ import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, reso
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
-import { assessParakhResponseQuality } from '../services/parakhQualityFramework.js';
+import { assessParakhResponseQuality, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -743,7 +743,8 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     }
 
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const requestsWebResearch = shouldUseParakhWebResearch(message);
+    const requestClassification = classifyParakhQuestion(message, parsedProbe.subjects);
+    const requestsWebResearch = shouldUseParakhWebResearch(message) || requestClassification.requiresPrimarySource;
     const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history) || requestsWebResearch) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
@@ -778,11 +779,19 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         sources: webSources,
         knowledgeMatched: Boolean(knowledge),
       });
+      const primarySourceWarning = qualityGate.status === 'NEEDS_PRIMARY_SOURCE' && webSources.length > 0
+        ? (replyLanguage === 'hinglish'
+          ? '\n\nBhai, search results mein verified official primary source nahi mila. Isse final legal/tax position mat maan; current ICAI ya relevant government authority ki notification verify kar.'
+          : replyLanguage === 'hindi'
+            ? '\n\nउपलब्ध search results में verified official primary source नहीं मिला। इसे अंतिम legal/tax position न मानें; current ICAI या संबंधित सरकारी authority की notification verify करें।'
+            : '\n\nThe available search results did not include a verified official primary source. Do not treat this as the final legal/tax position; verify the current ICAI or relevant government-authority notification.')
+        : '';
+      const finalAnswer = answer + primarySourceWarning;
       return res.json({
         success: true,
         status: webSources.length ? 'web_research_answered' : knowledge ? 'knowledge_answered' : 'general_guidance_answered',
         sources: webSources,
-        message: answer,
+        message: finalAnswer,
         parsed,
         plan: null,
         metadata: {
