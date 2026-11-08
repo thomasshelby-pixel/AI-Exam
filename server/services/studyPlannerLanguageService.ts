@@ -4,10 +4,20 @@ export type StudyReplyLanguage = 'english' | 'hinglish' | 'hindi';
 
 const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krna|karna|kr|krne|hai|hain|hoon|hu|ho|mujhe|mujhko|mujhse|mera|meri|mere|mein|kya|kyu|kyun|samjhao|samjha|samajh|padhai|padhu|padna|nahi|nahin|nhi|aata|ata|wala|wali|wale|accha|acha|bta|kri|kriya|kro|skte|sakte|sakta|sakti|chahiye|kitna|kitne|ghante|laane|lana|yaad|bhool|banao|bana|karunga|karungi|raha|rahi|rhe|pehle|liye)\b/i;
 
-export function detectStudyReplyLanguage(text: string): StudyReplyLanguage {
-  if (/[\u0900-\u097F]/.test(text)) return 'hindi';
-  if (/^(?:fm|sm|fm[-&/]sm|gst|tax|taxation|law|audit|costing|accounting)\s+me[?.!]*$/i.test(String(text || '').trim())) return 'hinglish';
-  if (HINGLISH_MARKERS.test(text)) return 'hinglish';
+export function detectStudyReplyLanguage(text: string, history: string[] = []): StudyReplyLanguage {
+  const value = String(text || '').trim();
+  if (/[\u0900-\u097F]/.test(value)) return 'hindi';
+  if (/^(?:fm|sm|fm[-&/]sm|gst|tax|taxation|law|audit|costing|accounting)\s+me[?.!]*$/i.test(value)) return 'hinglish';
+  if (HINGLISH_MARKERS.test(value)) return 'hinglish';
+
+  // Generic action chips inherit the student's recent language when their wording is English.
+  const contextualTopicAction = /^(?:explain|teach|show me|walk me through)\s+(?:(?:a|an|the|this|that)\s+)?(?:(?:fm|financial management|sm|strategic management)\s+)?(?:concept|topic|chapter)\b/i.test(value);
+  if (contextualTopicAction) {
+    for (const prior of [...history].slice(-6).reverse()) {
+      if (/[\u0900-\u097F]/.test(prior)) return 'hindi';
+      if (HINGLISH_MARKERS.test(prior)) return 'hinglish';
+    }
+  }
   return 'english';
 }
 
