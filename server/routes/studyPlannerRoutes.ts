@@ -14,7 +14,7 @@ import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRo
 import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildTopicIntentClarification, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
-import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
@@ -701,6 +701,35 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         parsed: parsedProbe,
         plan: null,
         metadata: { version: 'planner-topic-clarification-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
+    // Recognise the CA Intermediate FM credit-policy decision as a numerical question.
+    // It is deterministic and must never be sent to web search or the generic fallback.
+    const creditPolicyReply = course === 'CA_INTERMEDIATE'
+      ? buildCreditPolicyAnalysisReply(message, replyLanguage)
+      : null;
+    if (creditPolicyReply) {
+      const parsed = parsedProbe;
+      parsed.intent = 'general_guidance';
+      parsed.subjects = ['Financial Management and Strategic Management'];
+      parsed.missing_info = [];
+      parsed.should_call_planner = false;
+      return res.json({
+        success: true,
+        status: 'knowledge_answered',
+        sources: [],
+        message: creditPolicyReply,
+        parsed,
+        plan: null,
+        metadata: {
+          version: 'study-chat-credit-policy-numerical-v1',
+          modelUsed: false,
+          knowledgeMatched: true,
+          webResearchRequested: false,
+          webResearchAvailable: false,
+          persistentStorage: false,
+        },
       });
     }
 
