@@ -2,6 +2,7 @@ import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
 import { getParakhCurriculumPapers, type ParakhCurriculumTrack } from './parakhCurriculumRegistry.js';
 import { getPlannerSubjects } from './studyPlannerCurriculum.js';
 import { getParakhChapterKnowledgeInventory } from './parakhChapterKnowledgeService.js';
+import { getParakhStrategicManagementInventory } from './parakhStrategicManagementKnowledgeService.js';
 
 export type ParakhCoverageLanguage = 'english' | 'hindi' | 'hinglish';
 
@@ -112,7 +113,7 @@ function getPaperIndex(paper: ReturnType<typeof getParakhCurriculumPapers>[numbe
     const plannerIndex = foundationOrIntermediateIndex(paper.course, Number(paper.code.match(/P(\d+)$/)?.[1] || 0));
     if (paper.course === 'CA_INTERMEDIATE' && paper.code === 'INT-G2-P6') {
       const fm = getParakhChapterKnowledgeInventory();
-      const smChapters = plannerIndex?.chapters.slice(9) || [];
+      const sm = getParakhStrategicManagementInventory();
       return {
         indexKind: 'chapter',
         mappingStatus: 'OFFICIAL_CHAPTER_CATALOGUE_LINKED',
@@ -124,15 +125,15 @@ function getPaperIndex(paper: ReturnType<typeof getParakhCurriculumPapers>[numbe
             authored: chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
             benchmarked: chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED',
           })),
-          ...smChapters.map((title, index) => ({
-            number: index + 1,
-            title,
+          ...sm.chapters.map((chapter) => ({
+            number: chapter.chapterNumber,
+            title: chapter.title,
             section: 'Section B: Strategic Management',
-            authored: false,
-            benchmarked: false,
+            authored: chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+            benchmarked: chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED',
           })),
         ],
-        note: 'Only Section A (Financial Management) has original draft chapter packs. Section B chapter labels are an application index and still need official-attempt verification, original content and benchmarks.',
+        note: 'Section A (Financial Management) has nine original chapter drafts and 45 benchmark prompts; Section B (Strategic Management) has five original chapter drafts and 25 prompts. Both sets are unreviewed. Paper 6B content is mapped to the ICAI page headed Applicable for May 2027 Exam Onwards; exact attempt applicability must be rechecked.',
       };
     }
     const chapters = plannerIndex?.chapters || [];
@@ -321,10 +322,15 @@ export function resolveParakhCoursePaperContext(input: {
     matchedIndexEntry: winner.matchedIndexEntry,
     mappingStatus: index.mappingStatus,
     indexKind: index.indexKind,
-    sourceUrl: winner.paper.sourceUrl,
+    sourceUrl: winner.matchedIndexEntry && winner.paper.code === 'INT-G2-P6'
+      && index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section === 'Section B: Strategic Management'
+      ? getParakhStrategicManagementInventory().sourceUrl
+      : winner.paper.sourceUrl,
     authoredChapterCount: index.entries.filter((entry) => entry.authored).length,
     humanReviewedChapterCount: 0,
-    benchmarkPromptCount: winner.paper.code === 'INT-G2-P6' ? getParakhChapterKnowledgeInventory().benchmarkCaseCount : 0,
+    benchmarkPromptCount: winner.paper.code === 'INT-G2-P6'
+      ? getParakhChapterKnowledgeInventory().benchmarkCaseCount + getParakhStrategicManagementInventory().benchmarkCaseCount
+      : 0,
     humanReviewedBenchmarkCount: 0,
   };
 }
@@ -336,7 +342,8 @@ export function buildParakhCourseCoverageNotice(
   const subject = context.matchedIndexEntry
     ? '“' + context.matchedIndexEntry + '”'
     : 'this paper';
-  if (context.mappingStatus === 'OFFICIAL_CHAPTER_CATALOGUE_LINKED' && context.section === 'Section A: Financial Management') return '';
+  if (context.mappingStatus === 'OFFICIAL_CHAPTER_CATALOGUE_LINKED'
+      && ['Section A: Financial Management', 'Section B: Strategic Management'].includes(context.section || '')) return '';
   if (language === 'hindi') {
     return '\n\n**पाठ्यक्रम coverage note:** यह प्रश्न ' + context.paperTitle + ' से जुड़ा है' +
       (context.section ? ' (' + context.section + ')' : '') + '। ' +
