@@ -955,6 +955,7 @@ export function getParakhIntermediateLawTaxInventory() {
           chapterNumber: chapter.chapterNumber,
           title: chapter.title,
           section: chapter.section,
+          aliases: [...chapter.aliases],
           contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED' as const,
           benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' as const,
         })),
