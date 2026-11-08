@@ -170,6 +170,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   );
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
   const [parakhLearningConsent, setParakhLearningConsent] = useState<boolean>(false);
+  const [parakhWithdrawalLoading, setParakhWithdrawalLoading] = useState<boolean>(false);
+  const [parakhWithdrawalMessage, setParakhWithdrawalMessage] = useState<string>('');
 
   // File upload states
   const [file, setFile] = useState<File | null>(null);
@@ -725,6 +727,32 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const handleDisclaimerAcknowledged = async () => {
     setShowDisclaimerModal(false);
     await handleStartEvaluation();
+  };
+
+  const handleWithdrawParakhConsent = async () => {
+    const confirmed = window.confirm(
+      'Withdraw all your previous optional PARAKH learning consents? This will not change your evaluation history, marks, or credits.'
+    );
+    if (!confirmed) return;
+
+    try {
+      setParakhWithdrawalLoading(true);
+      setParakhWithdrawalMessage('');
+      const response = await apiRequest<{ success: boolean; withdrawnCount: number; message: string }>(
+        '/api/student/parakh-learning/consent/withdraw',
+        { method: 'POST', body: JSON.stringify({}) },
+      );
+      setParakhLearningConsent(false);
+      setParakhWithdrawalMessage(
+        response.message || `PARAKH consent withdrawn for ${response.withdrawnCount || 0} previous submission(s).`
+      );
+    } catch (withdrawError: unknown) {
+      setParakhWithdrawalMessage(
+        withdrawError instanceof Error ? withdrawError.message : 'Could not withdraw PARAKH consent. Please try again.'
+      );
+    } finally {
+      setParakhWithdrawalLoading(false);
+    }
   };
 
   // Submit evaluation
@@ -1800,6 +1828,21 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 <p className="pl-6 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
                   This is completely optional. Leaving it unchecked will not affect your evaluation, marks, credits, or processing. PARAKH currently records only the consent and evaluation reference; dataset export and model training are not active.
                 </p>
+                <div className="pl-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={handleWithdrawParakhConsent}
+                    disabled={parakhWithdrawalLoading || evalStep !== 'IDLE'}
+                    className="text-left text-[10px] font-bold text-indigo-700 hover:text-indigo-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-indigo-300 dark:hover:text-indigo-200"
+                  >
+                    {parakhWithdrawalLoading ? 'Withdrawing consent…' : 'Withdraw consent for previous uploads'}
+                  </button>
+                  {parakhWithdrawalMessage && (
+                    <span role="status" className="text-[10px] leading-relaxed text-slate-600 dark:text-slate-300">
+                      {parakhWithdrawalMessage}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Action CTA Button */}
