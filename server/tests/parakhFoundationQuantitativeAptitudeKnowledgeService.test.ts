@@ -92,7 +92,7 @@ test('links official ICAI source and discloses draft status',()=>{
   const result=searchParakhFoundationQuantitativeAptitudeKnowledge({
     message:'Explain mathematics of finance',course:'CA_FOUNDATION',language:'hinglish'
   })!;
-  assert.equal(result.source.url,'https://www.icai.org/post/sm-foundation-p3-may2027');
+  assert.equal(result.source.url,'https://www.icai.org/post/24402');
   assert.match(result.syllabusApplicability,/Relevant for May 2027 and Onwards/);
   const reply=buildParakhFoundationQuantitativeAptitudeReply(result,'hinglish');
   assert.match(reply,/original PARAKH draft/i);
