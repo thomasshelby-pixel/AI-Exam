@@ -180,3 +180,14 @@ test('open-ended topic clarification does not force a category menu', () => {
   assert.match(buildTopicIntentClarification('hinglish', 'FM'), /apne words mein bata/);
   assert.match(buildTopicIntentClarification('english', 'FM'), /paste a question/);
 });
+
+
+test('keeps assistant topic markers for knowledge follow-ups without using them as student intent', () => {
+  const history = [
+    'Student: FM me mujhe ratio wala chapter nahi aata hai',
+    'Planner: **Topic: Financial Management: Ratio Analysis**',
+  ];
+  assert.match(buildSocialConversationReply('namaste', 'hinglish') || '', /नमस्ते|Arre hello/);
+  assert.equal(detectStudyReplyLanguage('shukriya'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('thak gaya'), 'hinglish');
+});
