@@ -1466,7 +1466,7 @@ export const AdminPortal: React.FC = () => {
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex">
+    <div className="premium-role-portal min-h-screen bg-[#f8f7f3] text-[#101729] flex">
       {/* Desktop Admin Sidebar (Hidden on mobile/tablet, visible on lg screens with collapse/slide toggle) */}
       <aside
         className={`hidden lg:flex ${
