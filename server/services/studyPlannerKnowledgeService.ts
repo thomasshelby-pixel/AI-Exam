@@ -373,6 +373,15 @@ function scoreTopic(topic: KnowledgeTopic, queryTerms: string[]): number {
   return score;
 }
 
+/** Topic inventory used for readiness reporting; the entries are starter guidance, not verified chapter coverage. */
+export function getStudyKnowledgeTopicInventory(): Array<{ topicId: string; title: string; subjects: string[] }> {
+  return TOPICS.map((topic) => ({
+    topicId: topic.id,
+    title: topic.title,
+    subjects: [...topic.subjects],
+  }));
+}
+
 /** Subject names represented in the authored study-guidance bank. This is not a claim of full syllabus coverage. */
 export function getStudyKnowledgeSubjectInventory(): string[] {
   return Array.from(new Set(TOPICS.flatMap((topic) => topic.subjects))).sort((a, b) => a.localeCompare(b));
