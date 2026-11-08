@@ -58,10 +58,10 @@ test('retrieves each chapter only for CA Foundation Paper 2', () => {
 
 test('supports English, Hindi and Hinglish content with answer, example, simpler and quiz modes', () => {
   const cases = [
-    { message: 'Explain nature of contract', language: 'english' as const },
-    { message: 'Sale of Goods Act ko simple language mein samjhao', language: 'hinglish' as const },
-    { message: 'साझेदारी अधिनियम का उदाहरण दीजिए', language: 'hindi' as const },
-    { message: 'Quiz me on LLP Act', language: 'english' as const },
+    { message: 'Explain nature of contract', language: 'english' as const, mode: 'answer' as const, minimumLength: 180 },
+    { message: 'Sale of Goods Act ko simple language mein samjhao', language: 'hinglish' as const, mode: 'simpler' as const, minimumLength: 50 },
+    { message: 'साझेदारी अधिनियम का उदाहरण दीजिए', language: 'hindi' as const, mode: 'example' as const, minimumLength: 60 },
+    { message: 'Quiz me on LLP Act', language: 'english' as const, mode: 'quiz' as const, minimumLength: 50 },
   ];
   for (const item of cases) {
     const result = searchParakhFoundationBusinessLawKnowledge({
@@ -70,7 +70,8 @@ test('supports English, Hindi and Hinglish content with answer, example, simpler
       language: item.language,
     });
     assert.ok(result);
-    assert.ok(result.answer.length > 180);
+    assert.equal(result.mode, item.mode, item.message);
+    assert.ok(result.answer.length > item.minimumLength, item.message);
   }
   assert.equal(searchParakhFoundationBusinessLawKnowledge({
     message: 'Companies Act ka example',
