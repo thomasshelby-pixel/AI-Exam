@@ -221,7 +221,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   }
 
   return (
-    <div className="premium-auth-screen dark relative isolate min-h-[calc(100vh-5rem)] overflow-hidden bg-[#f8f7f3] px-4 py-8 text-[#101729] sm:px-6 sm:py-10 lg:px-8">
+    <div className="dark relative isolate min-h-[calc(100vh-5rem)] overflow-hidden bg-[#050a16] px-4 py-8 text-white sm:px-6 sm:py-10 lg:px-8">
       <div aria-hidden="true" className="pointer-events-none absolute -left-40 -top-36 h-[28rem] w-[28rem] rounded-full bg-cyan-500/10 blur-3xl" />
       <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 -right-40 h-[30rem] w-[30rem] rounded-full bg-blue-600/10 blur-3xl" />
       <div className="relative mx-auto grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-[30px] border border-white/10 bg-[#0c1526]/95 shadow-[0_32px_100px_rgba(0,0,0,.42)] backdrop-blur-2xl lg:grid-cols-[0.86fr_1.14fr]">

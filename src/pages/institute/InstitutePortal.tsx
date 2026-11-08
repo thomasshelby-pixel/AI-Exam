@@ -899,7 +899,7 @@ export const InstitutePortal: React.FC = () => {
   ];
 
   return (
-    <div className="premium-role-portal min-h-screen bg-[#f8f7f3] text-[#101729] flex">
+    <div className="min-h-screen bg-slate-50 text-slate-800 flex">
       {/* Institute Sidebar */}
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 border-r border-slate-800">
         <div className="p-4 border-b border-slate-800 flex items-center gap-3">

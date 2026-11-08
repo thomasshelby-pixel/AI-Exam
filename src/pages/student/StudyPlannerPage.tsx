@@ -536,8 +536,7 @@ export const StudyPlannerPage: React.FC = () => {
         <div className="flex items-start gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm"><Sparkles className="h-6 w-6" /></span>
           <div>
-            <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.2em] text-indigo-600 dark:text-indigo-300">PARAKH · CA Learning Assistant</p>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">Study Planner</h1>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">AI Planner</h1>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">Choose the chapters you want to revise, rate your confidence, and generate a timetable around your available hours.</p>
           </div>
         </div>
@@ -566,6 +565,158 @@ export const StudyPlannerPage: React.FC = () => {
         </section>
       ) : (
         <>
+          <section aria-label="PARAKH chat assistant" className="mb-5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex flex-col gap-3 bg-gradient-to-r from-slate-950 via-blue-950 to-indigo-900 px-4 py-4 text-white sm:flex-row sm:items-center sm:justify-between sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10">
+                  <Bot className="h-6 w-6" />
+                </span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-lg font-extrabold tracking-tight">PARAKH</h2>
+                    <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-100">CA Learning Assistant</span>
+                  </div>
+                  <p className="mt-0.5 text-xs leading-5 text-blue-100/80">Ask questions, understand CA concepts, or plan your next revision session.</p>
+                </div>
+              </div>
+              <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-100">
+                <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                Study assistant
+              </span>
+            </div>
+
+            <div id="parakh-chat-log" role="log" aria-live="polite" aria-relevant="additions" className="h-[320px] space-y-4 overflow-y-auto bg-slate-50/70 p-4 dark:bg-slate-900/60 sm:h-[380px] sm:p-5">
+              {messages.map((message) => (
+                <div key={message.id} className={"flex items-end gap-2 sm:gap-3 " + (message.role === 'user' ? 'justify-end' : 'justify-start')}>
+                  {message.role === 'assistant' && (
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white">
+                      <Bot className="h-4 w-4" />
+                    </span>
+                  )}
+                  <div className={"min-w-0 max-w-[88%] sm:max-w-[82%] " + (message.role === 'user' ? 'text-right' : 'text-left')}>
+                    <p className={"mb-1 px-1 text-[11px] font-bold " + (message.role === 'user' ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-500 dark:text-slate-400')}>
+                      {message.role === 'user' ? 'You' : 'PARAKH'}
+                    </p>
+                    <div className={"whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-left text-sm leading-6 " + (message.role === 'user'
+                      ? 'rounded-br-md bg-indigo-600 text-white shadow-sm'
+                      : 'rounded-bl-md border border-slate-200 bg-white text-slate-800 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100')}>
+                      {message.text}
+                    </div>
+
+                    {message.result && message.result.plan && (
+                      <div className="mt-2 rounded-xl border border-indigo-200 bg-white p-3 text-left shadow-sm dark:border-indigo-900 dark:bg-slate-950">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-extrabold text-slate-900 dark:text-white">{message.result.plan.title}</p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                              {message.result.plan.total_minutes} minutes · {message.result.plan.subjects.join(', ')}
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-200">Study plan</span>
+                        </div>
+                        <ol className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs dark:border-slate-800">
+                          {message.result.plan.sessions.slice(0, 4).map((session) => (
+                            <li key={session.order + '-' + session.subject} className="flex items-start justify-between gap-3">
+                              <span className="min-w-0 text-slate-700 dark:text-slate-200">
+                                {session.order}. {session.subject}{session.chapter ? ' · ' + session.chapter : ''}
+                              </span>
+                              <span className="shrink-0 font-bold text-indigo-700 dark:text-indigo-300">{session.minutes} min</span>
+                            </li>
+                          ))}
+                        </ol>
+                        {message.result.plan.sessions.length > 4 && (
+                          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                            Plus {message.result.plan.sessions.length - 4} more sessions in the full plan.
+                          </p>
+                        )}
+                        <button type="button" onClick={() => void downloadPlanPdf(message.result!.plan!, message.id)} disabled={pdfBusyId === message.id} className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
+                          <BookmarkCheck className="h-4 w-4" />
+                          {pdfBusyId === message.id ? 'Preparing PDF…' : 'Download plan PDF'}
+                        </button>
+                      </div>
+                    )}
+
+                    {message.result && message.result.follow_up_options && message.result.follow_up_options.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {message.result.follow_up_options.slice(0, 3).map((option) => (
+                          <button key={option} type="button" disabled={loading} onClick={() => void sendRequest(option)} className="rounded-full border border-indigo-200 bg-white px-3 py-1.5 text-left text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:opacity-50 dark:border-indigo-900 dark:bg-slate-950 dark:text-indigo-200 dark:hover:bg-indigo-950">
+                            {option}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {message.role === 'user' && (
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-white">
+                      <UserRound className="h-4 w-4" />
+                    </span>
+                  )}
+                </div>
+              ))}
+
+              {loading && (
+                <div role="status" className="flex items-end gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white">
+                    <Bot className="h-4 w-4" />
+                  </span>
+                  <div className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
+                    <span className="font-semibold">PARAKH is preparing a response</span>
+                    <span className="ml-1 inline-flex gap-1" aria-hidden="true">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500" />
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500 [animation-delay:150ms]" />
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-indigo-500 [animation-delay:300ms]" />
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {messages.length === 1 && (
+                <div className="pl-10">
+                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Try asking PARAKH</p>
+                  <div className="flex flex-wrap gap-2">
+                    {STARTER_PROMPTS.map((prompt) => (
+                      <button key={prompt} type="button" disabled={loading} onClick={() => void sendRequest(prompt)} className="rounded-full border border-indigo-200 bg-white px-3 py-2 text-left text-xs font-semibold text-indigo-700 transition hover:border-indigo-400 hover:bg-indigo-50 disabled:opacity-50 dark:border-indigo-900 dark:bg-slate-950 dark:text-indigo-200 dark:hover:bg-indigo-950">
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
+
+            {error && (
+              <p role="alert" className="border-t border-rose-100 bg-rose-50 px-4 py-2 text-xs font-medium text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+                {error}
+              </p>
+            )}
+            <form onSubmit={(event) => { event.preventDefault(); void sendRequest(); }} className="border-t border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 sm:p-4">
+              <label htmlFor="parakh-message" className="sr-only">Message PARAKH</label>
+              <div className="flex items-end gap-2">
+                <textarea
+                  id="parakh-message"
+                  rows={2}
+                  maxLength={2000}
+                  value={request}
+                  onChange={(event) => setRequest(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault();
+                      void sendRequest();
+                    }
+                  }}
+                  placeholder="Ask PARAKH about a CA topic or your revision plan…"
+                  className="max-h-32 min-h-[52px] min-w-0 flex-1 resize-y rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm leading-5 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:ring-indigo-950"
+                />
+                <button type="submit" disabled={loading || !request.trim()} className="inline-flex min-h-[52px] shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
+                  <Send className="h-4 w-4" />
+                  <span className="hidden sm:inline">Send</span>
+                </button>
+              </div>
+              <p className="mt-2 px-1 text-[10px] text-slate-400">Enter to send · Shift + Enter for a new line</p>
+            </form>
+          </section>
+
           <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950 sm:p-5">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
