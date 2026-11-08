@@ -31,7 +31,7 @@ import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
-import { recordParakhLearningOptIn, withdrawParakhLearningConsent } from '../services/parakhLearningService.js';
+import { recordParakhLearningObservation, excludeParakhLearningForStudent } from '../services/parakhLearningService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
@@ -1867,24 +1867,22 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // and entitlement settlement. The request catch must not refund a running job.
     asyncEvaluationAccepted = true;
 
-    // PARAKH is opt-in only. Its metadata ledger is deliberately non-blocking:
-    // a tracking/storage issue must never fail evaluation or affect entitlements.
-    if (req.body?.parakhLearningConsent === true) {
-      try {
-        await recordParakhLearningOptIn(true, {
-          evaluationId,
-          studentId,
-          level: String(level || ''),
-          subjectKey: String(subjectKey || ''),
-          subjectName: String(subjectName || ''),
-          materialType: String(materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP')),
-          paper: String(referenceMaterial.paper || 'Paper 1'),
-          attempt: String(evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026')),
-          checkingMode: String(checkingMode || 'standard'),
-        });
-      } catch (parakhError) {
-        console.warn('[PARAKH] Consent ledger write failed; evaluation continues without learning eligibility:', parakhError);
-      }
+    // Collect a policy-disclosed, metadata-only learning observation without delaying or
+    // changing the evaluation. A student's exclusion preference is enforced by the service.
+    try {
+      await recordParakhLearningObservation({
+        evaluationId,
+        studentId,
+        level: String(level || ''),
+        subjectKey: String(subjectKey || ''),
+        subjectName: String(subjectName || ''),
+        materialType: String(materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP')),
+        paper: String(referenceMaterial.paper || 'Paper 1'),
+        attempt: String(evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026')),
+        checkingMode: String(checkingMode || 'standard'),
+      });
+    } catch (parakhError) {
+      console.warn('[PARAKH] Observation record failed; evaluation continues without interruption:', parakhError);
     }
 
     return res.json({
@@ -5442,17 +5440,17 @@ router.get(
  * This only withdraws learning eligibility; evaluation history, marks and credits
  * are not modified.
  */
-router.post('/parakh-learning/consent/withdraw', async (req: AuthRequest, res: Response) => {
+router.post('/parakh-learning/exclude-previous', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = String(req.user?.id || '').trim();
     if (!studentId) {
       return res.status(401).json({ error: 'Student authentication is required.' });
     }
 
-    const withdrawnCount = await withdrawParakhLearningConsent(studentId);
+    const excludedCount = await excludeParakhLearningForStudent(studentId);
     return res.json({
       success: true,
-      withdrawnCount,
+      excludedCount,
       message: 'Your previous PARAKH learning consents have been withdrawn. Your evaluations remain unchanged.',
     });
   } catch (error) {
