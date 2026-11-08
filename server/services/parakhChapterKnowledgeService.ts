@@ -10,18 +10,18 @@ type FmChapter = {
   module: 'MODULE 1' | 'MODULE 2';
   units: string[];
   contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED' | 'MAPPED_ONLY';
-  benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' | 'NOT_CREATED';
+  benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' | 'SELF_CHECKED_NOT_HUMAN_VERIFIED' | 'NOT_CREATED';
 };
 
 const FM_CHAPTERS: FmChapter[] = [
-  { chapterNumber: 1, title: 'Scope and Objectives of Financial Management', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 2, title: 'Types of Financing', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 3, title: 'Financial Analysis and Planning – Ratio Analysis', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 4, title: 'Cost of Capital', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 5, title: 'Financing Decisions – Capital Structure', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 6, title: 'Financing Decisions – Leverages', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 7, title: 'Investment Decisions', module: 'MODULE 2', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 8, title: 'Dividend Decision', module: 'MODULE 2', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
+  { chapterNumber: 1, title: 'Scope and Objectives of Financial Management', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
+  { chapterNumber: 2, title: 'Types of Financing', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
+  { chapterNumber: 3, title: 'Financial Analysis and Planning – Ratio Analysis', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
+  { chapterNumber: 4, title: 'Cost of Capital', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
+  { chapterNumber: 5, title: 'Financing Decisions – Capital Structure', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
+  { chapterNumber: 6, title: 'Financing Decisions – Leverages', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
+  { chapterNumber: 7, title: 'Investment Decisions', module: 'MODULE 2', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
+  { chapterNumber: 8, title: 'Dividend Decision', module: 'MODULE 2', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED' },
   {
     chapterNumber: 9,
     title: 'Management of Working Capital',
@@ -35,7 +35,7 @@ const FM_CHAPTERS: FmChapter[] = [
       'Financing of Working Capital',
     ],
     contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
-    benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED',
+    benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED',
   },
 ];
 
@@ -563,7 +563,7 @@ export interface ParakhChapterKnowledgeMatch {
   chapterNumber: number;
   syllabusApplicability: string;
   contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED';
-  benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED';
+  benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED';
   mode: ParakhChapterReplyMode;
   answer: string;
   source: ParakhChapterKnowledgeSource;
@@ -607,7 +607,7 @@ export function searchParakhChapterKnowledge(input: {
       chapterNumber: otherChapter.chapterNumber,
       syllabusApplicability: 'Official ICAI catalogue page headed Applicable for May 2026 Exam; later-attempt applicability must be rechecked',
       contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
-      benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED',
+      benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED',
       mode,
       answer: mode === 'example' ? otherChapter.examples[language]
         : mode === 'simpler' ? otherChapter.simpler[language]
@@ -631,7 +631,7 @@ export function searchParakhChapterKnowledge(input: {
     chapterNumber: 3,
     syllabusApplicability: 'Official ICAI catalogue page headed Applicable for May 2026 Exam; later-attempt applicability must be rechecked',
     contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
-    benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED',
+    benchmarkStatus: 'PROMPTS_DEFINED_NOT_EVALUATED',
     mode,
     answer: mode === 'example' ? RATIO_ANALYSIS.examples[language]
       : mode === 'simpler' ? RATIO_ANALYSIS.simpler[language]
