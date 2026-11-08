@@ -94,7 +94,7 @@ export const AdminParakhLearningSection: React.FC = () => {
     {
       label: 'Unreviewed observations',
       value: metrics?.unreviewedObservations ?? 0,
-      helper: 'Available for analysis and sampling',
+      helper: 'Collected, not yet selected for human QA',
       icon: Activity,
       tone: 'text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40',
     },
@@ -124,9 +124,9 @@ export const AdminParakhLearningSection: React.FC = () => {
     },
     {
       title: 'Sample-based quality review',
-      detail: 'System-flagged or deliberately selected samples are reviewed; ordinary observations never wait for admin review.',
-      status: 'ACTIVE',
-      statusLabel: 'Active',
+      detail: 'Integrity-flagged cases are prioritised; routine random QA sampling rules are a later step.',
+      status: 'PARTIAL',
+      statusLabel: 'Flagged cases only',
       icon: ClipboardCheck,
     },
     {
