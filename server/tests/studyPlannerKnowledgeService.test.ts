@@ -338,6 +338,8 @@ test('current statutory questions require an authoritative primary source, not j
     knowledgeMatched: true,
   });
   assert.equal(withPrimarySource.checks.primarySourcePresent, true);
+  assert.ok(withPrimarySource.limitations.some((item) => /does not verify the document text, effective date/i.test(item)));
+  assert.match(buildParakhQualityNotice(withPrimarySource, 'english'), /does not certify the document text, effective date or applicability/i);
   assert.notEqual(withPrimarySource.status, 'NEEDS_PRIMARY_SOURCE');
 });
 
