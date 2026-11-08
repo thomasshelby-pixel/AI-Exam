@@ -171,17 +171,16 @@ export function resolveParakhSubjectDomain(
   question: string,
   subjects: string[] = [],
 ): ParakhSubjectDomain {
+  const questionFmSignal = /\b(fm|financial management|ratio analysis|working capital|cost of capital|capital structure)\b/i.test(question);
+  const questionSmSignal = /\b(sm|strategic management|swot|porter|pestel|value chain)\b/i.test(question);
+  if (questionFmSignal && !questionSmSignal) return 'financial_management';
+  if (questionSmSignal && !questionFmSignal) return 'strategic_management';
+
   const supplied = subjects.join(' ');
   const text = question + ' ' + supplied;
-  const fmSignal = /\b(fm|financial management|ratio analysis|working capital|cost of capital|capital structure)\b/i.test(text);
-  const smSignal = /\b(sm|strategic management|swot|porter|pestel|value chain)\b/i.test(text);
-
-  if (fmSignal && !smSignal) return 'financial_management';
-  if (smSignal && !fmSignal) return 'strategic_management';
-
   for (const domain of SUBJECT_DOMAINS) {
     if (domain.key === 'general_ca') continue;
-    if (domain.aliases.some((alias) => containsAlias(text, alias))) return domain.key;
+    if (domain.aliases.some((alias) => containsAlias(question, alias) || containsAlias(supplied, alias))) return domain.key;
   }
   return 'general_ca';
 }
@@ -394,3 +393,68 @@ export function buildParakhSubjectCoverageReport(
     subjectDomains,
   };
 }
+
+
+export interface ParakhQualityBenchmarkSpec {
+  id: string;
+  question: string;
+  course: ParakhCourseLevel;
+  expectedQuestionKind: ParakhQuestionKind;
+  requiredPatterns?: string[];
+  forbiddenPatterns?: string[];
+  requiresPrimarySource?: boolean;
+}
+
+export interface ParakhQualityBenchmarkResult {
+  id: string;
+  passed: boolean;
+  assessment: ParakhQualityAssessment;
+  failedRequirements: string[];
+}
+
+/**
+ * A deterministic benchmark harness for repeatable answer-shape and evidence checks.
+ * Subject owners must add verified answer fixtures; passing this harness alone does
+ * not certify that the answer's facts, calculations or ICAI treatment are correct.
+ */
+export function evaluateParakhQualityBenchmark(
+  spec: ParakhQualityBenchmarkSpec,
+  answer: string,
+  sources: ParakhSourceReference[] = [],
+  knowledgeMatched = false,
+): ParakhQualityBenchmarkResult {
+  const assessment = assessParakhResponseQuality({
+    question: spec.question,
+    answer,
+    course: spec.course,
+    sources,
+    knowledgeMatched,
+  });
+  const failedRequirements: string[] = [];
+  if (assessment.questionKind !== spec.expectedQuestionKind) {
+    failedRequirements.push('question_kind');
+  }
+  for (const pattern of spec.requiredPatterns || []) {
+    if (!new RegExp(pattern, 'i').test(answer)) failedRequirements.push('required_pattern:' + pattern);
+  }
+  for (const pattern of spec.forbiddenPatterns || []) {
+    if (new RegExp(pattern, 'i').test(answer)) failedRequirements.push('forbidden_pattern:' + pattern);
+  }
+  if (spec.requiresPrimarySource && !assessment.checks.primarySourcePresent) {
+    failedRequirements.push('primary_source_required');
+  }
+  return {
+    id: spec.id,
+    passed: failedRequirements.length === 0,
+    assessment,
+    failedRequirements,
+  };
+}
+
+export const PARAKH_QUALITY_BENCHMARK_FAMILIES = [
+  'core_concept',
+  'unseen_numerical_or_application',
+  'exam_style_question',
+  'edge_case_and_common_mistake',
+  'source_sensitive_or_amendment_check',
+] as const;
