@@ -5436,8 +5436,8 @@ router.get(
 
 
 /**
- * Withdraw all previous optional PARAKH learning consents for the signed-in student.
- * This only withdraws learning eligibility; evaluation history, marks and credits
+ * Exclude the signed-in student's previous and future PARAKH observations.
+ * This does not alter evaluation history, marks, reports or credits
  * are not modified.
  */
 router.post('/parakh-learning/exclude-previous', async (req: AuthRequest, res: Response) => {
@@ -5451,11 +5451,11 @@ router.post('/parakh-learning/exclude-previous', async (req: AuthRequest, res: R
     return res.json({
       success: true,
       excludedCount,
-      message: 'Your previous PARAKH learning consents have been withdrawn. Your evaluations remain unchanged.',
+      message: 'Your previous observations have been excluded and future PARAKH collection is paused for this account. Your evaluations remain unchanged.',
     });
   } catch (error) {
-    console.error('[PARAKH] Student consent withdrawal failed:', error);
-    return res.status(500).json({ error: 'Could not withdraw PARAKH learning consent. Please try again.' });
+    console.error('[PARAKH] Student learning exclusion request failed:', error);
+    return res.status(500).json({ error: 'Could not save the PARAKH exclusion request. Please try again.' });
   }
 });
 
