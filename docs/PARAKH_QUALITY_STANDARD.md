@@ -70,6 +70,12 @@ For each subject domain:
 5. Review failures, update the knowledge or solver, and rerun the full regression suite.
 6. Release only when critical benchmark failures are resolved and no current/statutory answer is presented as verified without primary-source support.
 
+## Chapter-level rollout
+
+The first source-linked chapter rollout maps CA Intermediate Paper 6A, Section A: Financial Management, against ICAI's official page applicable from the May 2026 examination onwards. The official page lists nine chapters and six units under Working Capital. PARAKH has an original authored draft for Chapter 3 (Ratio Analysis), including English/Hindi/Hinglish explanations, original numerical illustrations and five defined benchmark families. The other eight chapters are mapped only.
+
+The Chapter 3 material is labelled AUTHOR_DRAFT_NOT_HUMAN_VERIFIED. Its automated regression cases are SELF_CHECKED_NOT_HUMAN_VERIFIED; there are zero human-reviewed content packs and zero human-reviewed benchmark sets. Current/attempt-sensitive questions are routed away from the evergreen draft. The official material is linked, not copied or mirrored. See docs/PARAKH_CHAPTER_KNOWLEDGE_WORKFLOW.md for source, copyright, status and release rules.
+
 ## Current limitation
 
-The official paper-level catalogue is mapped for CA Foundation (4 papers), CA Intermediate (6 papers), CA Final (6 papers) and SPOM (16 listed modules/papers), checked against ICAI's New Scheme pages on 8 November 2026. This is a course/paper locator only. Chapter-level mappings, attempt-specific exclusions and amendment applicability, verified subject explanations, unseen worked numericals and held-out human-checked benchmark sets are still incomplete. The readiness matrix deliberately marks every subject as not yet fully verified.
+The official paper-level catalogue is mapped for CA Foundation (4 papers), CA Intermediate (6 papers), CA Final (6 papers) and SPOM (16 listed modules/papers), checked against ICAI's New Scheme pages on 8 November 2026. The initial chapter map covers only CA Intermediate Paper 6A Section A. Only one chapter has original authored draft content; the other eight mapped FM chapters and all other paper/section pairs still need authored content. Attempt-specific exclusions and amendment applicability, qualified human review, unseen worked numericals and held-out human-checked benchmark sets remain incomplete. The readiness matrix deliberately marks every subject as not yet fully verified.
