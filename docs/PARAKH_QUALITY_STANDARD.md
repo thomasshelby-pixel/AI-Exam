@@ -72,4 +72,4 @@ For each subject domain:
 
 ## Current limitation
 
-The present readiness matrix is an initial engineering inventory. It reports partial authored guidance and known syllabus-mapping gaps; it is not a claim that all Foundation, Intermediate and Final subjects have been covered. CA Final course-to-subject mapping still needs to be completed against the authoritative curriculum registry before any complete-coverage claim is made.
+The official paper-level catalogue is mapped for CA Foundation (4 papers), CA Intermediate (6 papers), CA Final (6 papers) and SPOM (16 listed modules/papers), checked against ICAI's New Scheme pages on 8 November 2026. This is a course/paper locator only. Chapter-level mappings, attempt-specific exclusions and amendment applicability, verified subject explanations, unseen worked numericals and held-out human-checked benchmark sets are still incomplete. The readiness matrix deliberately marks every subject as not yet fully verified.
