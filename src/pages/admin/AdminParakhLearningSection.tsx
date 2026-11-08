@@ -79,7 +79,7 @@ export const AdminParakhLearningSection: React.FC = () => {
 
   const stats = [
     {
-      label: 'Opt-in submissions',
+      label: 'Opt-in records (all-time)',
       value: metrics?.totalOptIns ?? 0,
       helper: 'Students who explicitly agreed',
       icon: Database,
