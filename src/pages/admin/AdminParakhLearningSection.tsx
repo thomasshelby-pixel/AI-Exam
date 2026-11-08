@@ -75,6 +75,29 @@ interface ParakhQualityReadiness {
     topics: Array<{ topicId: string; title: string; subjects: string[] }>;
     coverageVerified: false;
   };
+  chapterKnowledge: {
+    course: string;
+    paperCode: string;
+    paperTitle: string;
+    section: string;
+    syllabusApplicability: string;
+    sourceCheckedAt: string;
+    sourceUrl: string;
+    chapterCount: number;
+    authoredContentCount: number;
+    humanReviewedContentCount: number;
+    benchmarkCaseCount: number;
+    humanReviewedBenchmarkCount: number;
+    chapters: Array<{
+      chapterNumber: number;
+      title: string;
+      module: string;
+      units: string[];
+      contentStatus: string;
+      benchmarkStatus: string;
+    }>;
+    limitations: string[];
+  };
 }
 
 interface ParakhMetrics {
@@ -410,6 +433,53 @@ export const AdminParakhLearningSection: React.FC = () => {
                     ))}
                   </ul>
                 </details>
+              </div>
+              <div className="mt-3 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900 dark:text-white">Chapter-level content rollout</h3>
+                    <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-300">
+                      {qualityReadiness.chapterKnowledge.paperTitle} · {qualityReadiness.chapterKnowledge.section}
+                    </p>
+                    <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                      {qualityReadiness.chapterKnowledge.chapterCount} mapped chapters · {qualityReadiness.chapterKnowledge.authoredContentCount} authored content draft · {qualityReadiness.chapterKnowledge.humanReviewedContentCount} human-reviewed
+                    </p>
+                  </div>
+                  <span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    Draft rollout · not verified
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                  <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-900">
+                    <span className="block text-slate-500 dark:text-slate-400">Benchmark cases</span>
+                    <strong className="mt-1 block text-sm text-slate-900 dark:text-white">{qualityReadiness.chapterKnowledge.benchmarkCaseCount}</strong>
+                    <span className="text-slate-400">{qualityReadiness.chapterKnowledge.humanReviewedBenchmarkCount} human-reviewed</span>
+                  </div>
+                  <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-900">
+                    <span className="block text-slate-500 dark:text-slate-400">Applicable material</span>
+                    <strong className="mt-1 block text-xs text-slate-900 dark:text-white">{qualityReadiness.chapterKnowledge.syllabusApplicability}</strong>
+                    <span className="text-slate-400">Source checked {qualityReadiness.chapterKnowledge.sourceCheckedAt}</span>
+                  </div>
+                </div>
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">View chapter map and content status</summary>
+                  <ul className="mt-2 space-y-1">
+                    {qualityReadiness.chapterKnowledge.chapters.map((chapter) => (
+                      <li key={chapter.chapterNumber} className="rounded-md bg-slate-50 px-2 py-1.5 text-[10px] dark:bg-slate-900">
+                        <span className="font-semibold text-slate-800 dark:text-slate-200">Chapter {chapter.chapterNumber}: {chapter.title}</span>
+                        <span className="ml-1 text-slate-400">· {chapter.module}</span>
+                        <span className="mt-0.5 block text-slate-500 dark:text-slate-400">
+                          {chapter.contentStatus.replace(/_/g, ' ')} · {chapter.benchmarkStatus.replace(/_/g, ' ')}
+                        </span>
+                        {chapter.units.length ? <span className="mt-0.5 block text-slate-400">Units: {chapter.units.join(' · ')}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+                <a href={qualityReadiness.chapterKnowledge.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[10px] font-bold text-indigo-600 underline dark:text-indigo-300">Open official ICAI Paper 6A chapter list</a>
+                <p className="mt-2 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
+                  This rollout maps CA Intermediate FM Section A only. Chapter 3 has an original authored draft; the remaining chapters are mapped only. Neither the draft nor its automated checks are marked human-verified.
+                </p>
               </div>
               <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                 {qualityReadiness.curriculum.courses.map((course) => (
