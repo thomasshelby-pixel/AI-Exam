@@ -437,7 +437,7 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
     level: string;
     subjectKey: string;
     subjectName: string;
-    optedIn: number;
+    observations: number;
     collected: number;
     unreviewed: number;
     selectedForReview: number;
@@ -453,13 +453,13 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
       level,
       subjectKey,
       subjectName,
-      optedIn: 0,
+      observations: 0,
       collected: 0,
       unreviewed: 0,
       selectedForReview: 0,
       verified: 0,
     };
-    existing.optedIn += 1;
+    existing.observations += 1;
     const status = String(record.status || '').toUpperCase();
     if (collectedStatuses.includes(status)) existing.collected += 1;
     if (status === 'COLLECTED_UNVERIFIED') existing.unreviewed += 1;
@@ -479,7 +479,7 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
     trainingEnabled: false,
     supervisorEnabled: false,
     productionEvaluationImpact: false,
-    totalOptIns: records.length,
+    totalObservations: records.length,
     totalCollected,
     processing: countStatus('PROCESSING'),
     unreviewedObservations: countStatus('COLLECTED_UNVERIFIED'),
