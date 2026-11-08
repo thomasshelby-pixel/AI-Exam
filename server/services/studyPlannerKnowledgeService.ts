@@ -512,3 +512,115 @@ export function buildKnowledgeChatReply(result: StudyKnowledgeResult, language: 
         ? '\n\nNext step: chahe toh example ya quick self-test maang le.'
         : '\n\nNext step: ask for an example or a quick self-test if useful.');
 }
+
+
+/**
+ * Works through a standard CA Intermediate FM credit-policy decision when the
+ * question supplies the core sales, contribution, bad-debt and tax figures.
+ *
+ * The decision is deliberately left open when discount uptake is not supplied:
+ * 1/15 net 45 and 2/15 net 60 do not, by themselves, determine average collection
+ * periods or cash-discount expense.
+ */
+export function buildCreditPolicyAnalysisReply(
+  message: string,
+  language: StudyReplyLanguage,
+): string | null {
+  const text = String(message || '');
+  if (!/\bcredit\s+polic(?:y|ies)\b/i.test(text)
+    || !/\b(?:should|whether|change|accept|adopt|worthwhile)\b/i.test(text)) return null;
+
+  const salesMatch = text.match(/current\s+credit\s+sales[\s\S]{0,55}?([\d,]+(?:\.\d+)?)/i);
+  const growthMatch = text.match(/increase\s+in\s+(?:the\s+)?sales\s+by\s+(\d+(?:\.\d+)?)\s*%/i);
+  const badDebtMatch = text.match(/bad\s+debts?[\s\S]{0,65}?(?:go\s+up|increase|rise)\s+to\s*(\d+(?:\.\d+)?)\s*%[\s\S]{0,50}?\bfrom\s*(\d+(?:\.\d+)?)\s*%/i);
+  const contributionMatch = text.match(/contribution\s+to\s+sales\s+ratio[\s\S]{0,35}?(\d+(?:\.\d+)?)\s*%/i);
+  const taxMatch = text.match(/tax\s+rate[\s\S]{0,20}?(\d+(?:\.\d+)?)\s*%/i);
+  const returnMatch = text.match(/after[- ]tax\s+return[\s\S]{0,25}?(\d+(?:\.\d+)?)\s*%/i);
+  const terms = [...text.matchAll(/(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/gi)];
+
+  if (!salesMatch || !growthMatch || !badDebtMatch || !contributionMatch || !taxMatch || !returnMatch || terms.length < 2) return null;
+
+  const currentSales = Number(salesMatch[1].replace(/,/g, ''));
+  const growthRate = Number(growthMatch[1]);
+  const newBadDebtRate = Number(badDebtMatch[1]);
+  const oldBadDebtRate = Number(badDebtMatch[2]);
+  const contributionRate = Number(contributionMatch[1]);
+  const taxRate = Number(taxMatch[1]);
+  const afterTaxReturn = Number(returnMatch[1]);
+  const oldDiscountRate = Number(terms[0][1]);
+  const oldDiscountDays = Number(terms[0][2]);
+  const oldNetDays = Number(terms[0][3]);
+  const newDiscountRate = Number(terms[1][1]);
+  const newDiscountDays = Number(terms[1][2]);
+  const newNetDays = Number(terms[1][3]);
+
+  const numericValues = [
+    currentSales, growthRate, newBadDebtRate, oldBadDebtRate,
+    contributionRate, taxRate, afterTaxReturn, oldDiscountRate,
+    oldDiscountDays, oldNetDays, newDiscountRate, newDiscountDays, newNetDays,
+  ];
+  if (numericValues.some((value) => !Number.isFinite(value) || value < 0)
+    || currentSales <= 0 || growthRate > 500 || newBadDebtRate > 100
+    || oldBadDebtRate > 100 || contributionRate > 100 || taxRate >= 100
+    || afterTaxReturn > 100 || oldDiscountDays > oldNetDays
+    || newDiscountDays > newNetDays) return null;
+
+  const proposedSales = currentSales * (1 + growthRate / 100);
+  const incrementalSales = proposedSales - currentSales;
+  const incrementalContribution = incrementalSales * contributionRate / 100;
+  const currentBadDebts = currentSales * oldBadDebtRate / 100;
+  const proposedBadDebts = proposedSales * newBadDebtRate / 100;
+  const incrementalBadDebts = proposedBadDebts - currentBadDebts;
+  const afterTaxSurplusBeforeDiscountAndFinance =
+    (incrementalContribution - incrementalBadDebts) * (1 - taxRate / 100);
+
+  const money = (value: number) => '₹' + Math.round(value).toLocaleString('en-IN');
+  const percent = (value: number) => String(value);
+  const surplus = money(afterTaxSurplusBeforeDiscountAndFinance);
+
+  if (language === 'hindi') {
+    return [
+      '**यह Financial Management का credit-policy numerical है।** पहले दिए गए आँकड़ों से निकलने वाली गणना:',
+      '1. वर्तमान credit sales: ' + money(currentSales) + '।',
+      '2. नई sales (' + percent(growthRate) + '% वृद्धि): ' + money(proposedSales) + '। Incremental sales: ' + money(incrementalSales) + '।',
+      '3. Incremental contribution (' + percent(contributionRate) + '%): ' + money(incrementalContribution) + '।',
+      '4. Bad debts: वर्तमान ' + money(currentBadDebts) + '; नई policy में ' + money(proposedBadDebts) + '। अतिरिक्त bad debts: ' + money(incrementalBadDebts) + '।',
+      '5. Tax के बाद बचा लाभ, cash discount और receivables पर return घटाने से पहले: **' + surplus + '**।',
+      '',
+      '**अभी final yes/no क्यों नहीं दिया जा सकता?** 1/' + oldDiscountDays + ' net ' + oldNetDays + ' और ' + newDiscountRate + '/' + newDiscountDays + ' net ' + newNetDays + ' में कितने customers discount लेकर भुगतान करेंगे, यह नहीं दिया गया। वही cash-discount expense और average collection period तय करेगा।',
+      'मुझे दो आँकड़े बताइए: (1) पुरानी policy में ' + oldDiscountRate + '% discount लेने वाले customers का %, (2) नई policy में ' + newDiscountRate + '% discount लेने वाले customers का %। बाकी customers को net-day पर भुगतान करने वाला मानकर मैं receivables investment पर ' + percent(afterTaxReturn) + '% after-tax return लगाकर final decision निकाल दूँगा।',
+      '',
+      'यहाँ तक net benefit **' + surplus + '** है; इसमें incremental discount cost और receivables investment का financing cost अभी शामिल नहीं है।',
+    ].join('\n');
+  }
+
+  if (language === 'hinglish') {
+    return [
+      '**Bhai, ye Financial Management ka credit-policy numerical hai.** Jo data diya hai usse abhi ye calculation nikalti hai:',
+      '1. Current credit sales: ' + money(currentSales) + '.',
+      '2. Proposed sales (' + percent(growthRate) + '% increase): ' + money(proposedSales) + '. Incremental sales: ' + money(incrementalSales) + '.',
+      '3. Incremental contribution (' + percent(contributionRate) + '%): ' + money(incrementalContribution) + '.',
+      '4. Bad debts: current ' + money(currentBadDebts) + '; new policy mein ' + money(proposedBadDebts) + '. Extra bad-debt cost: ' + money(incrementalBadDebts) + '.',
+      '5. Tax ke baad surplus, cash discount aur receivables-financing cost se pehle: **' + surplus + '**.',
+      '',
+      '**Abhi final yes/no kyun nahi bol sakte?** 1/' + oldDiscountDays + ' net ' + oldNetDays + ' aur ' + newDiscountRate + '/' + newDiscountDays + ' net ' + newNetDays + ' mein kitne customers discount lekar payment karenge, ye missing hai. Isi se cash-discount cost aur average collection period nikalta hai.',
+      'Bas ye do details bhej de: (1) current policy mein ' + oldDiscountRate + '% discount lene wale customers ka %, (2) proposed policy mein ' + newDiscountRate + '% discount lene wale customers ka %. Baaki customers ko net-day par pay karne wala maan kar main receivables investment par ' + percent(afterTaxReturn) + '% after-tax return laga ke final decision nikal dunga.',
+      '',
+      'Abhi tak ka net surplus **' + surplus + '** hai; ismein extra cash-discount cost aur receivables investment ka financing cost abhi minus nahi hua hai.',
+    ].join('\n');
+  }
+
+  return [
+    '**This is a Financial Management credit-policy decision.** The information supplied supports the following calculation:',
+    '1. Current credit sales: ' + money(currentSales) + '.',
+    '2. Proposed sales after a ' + percent(growthRate) + '% increase: ' + money(proposedSales) + '. Incremental sales: ' + money(incrementalSales) + '.',
+    '3. Incremental contribution at ' + percent(contributionRate) + '%: ' + money(incrementalContribution) + '.',
+    '4. Bad debts: current ' + money(currentBadDebts) + '; proposed ' + money(proposedBadDebts) + '. Incremental bad-debt cost: ' + money(incrementalBadDebts) + '.',
+    '5. After-tax surplus before the additional cash-discount cost and receivables-financing cost: **' + surplus + '**.',
+    '',
+    '**A final accept/reject decision needs one missing assumption:** what percentage of customers will take the discount under each policy? Under ' + oldDiscountRate + '/' + oldDiscountDays + ' net ' + oldNetDays + ', discount customers pay on day ' + oldDiscountDays + ' and the rest on day ' + oldNetDays + '. Under ' + newDiscountRate + '/' + newDiscountDays + ' net ' + newNetDays + ', the corresponding days are ' + newDiscountDays + ' and ' + newNetDays + '. Those percentages determine both discount expense and average collection periods.',
+    'Please provide: (1) the percentage taking the ' + oldDiscountRate + '% discount under the current policy, and (2) the percentage expected to take the ' + newDiscountRate + '% discount under the proposed policy. I can then calculate the change in discount cost and receivables investment, applying the ' + percent(afterTaxReturn) + '% after-tax required return.',
+    '',
+    'The current after-tax surplus is **' + surplus + '** before those two remaining costs; I will not invent the missing discount-uptake assumption.',
+  ].join('\n');
+}
