@@ -44,6 +44,7 @@ Every knowledge entry must keep:
 | MAPPED_ONLY | Official chapter title and module are indexed; no authored explanation is provided by this pack. | No |
 | AUTHOR_DRAFT_NOT_HUMAN_VERIFIED | Original teaching content exists but has not been approved by a qualified academic reviewer. | No |
 | SELF_CHECKED_NOT_HUMAN_VERIFIED | Automated regression cases exercise the content and examples; factual correctness and syllabus treatment are not independently certified. | No |
+| PROMPTS_DEFINED_NOT_EVALUATED | Distinct benchmark question prompts exist, but there is no scored answer key or evaluation run yet. | No |
 | HUMAN_REVIEWED | A recorded qualified reviewer has checked the content against the applicable official material and attempt. | Only within the recorded scope |
 | HELD_OUT_BENCHMARKED | Separate, unseen questions and approved answer keys have been reviewed and passed. | Only within the tested scope |
 
@@ -89,4 +90,4 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 This rollout covers only CA Intermediate Paper 6A, Section A. All nine FM chapters have original drafts, but none has human-approved content or human-reviewed benchmark answers. It does not provide complete coverage for the other Intermediate papers, Foundation, Final, SPOM, or Section B: Strategic Management. Those areas remain gaps until separately mapped from current official sources, authored, benchmarked and reviewed.
 
-The next content sequence is to complete the remaining eight FM chapters, then map and build Strategic Management, followed by the other paper/section pairs. Tax and law content requires separate attempt-aware statutory source controls and must not be promoted from evergreen explanations.
+The next content sequence is to map and build Section B: Strategic Management, then expand to the other Intermediate paper/section pairs and later Foundation, Final and SPOM. Tax and law content requires separate attempt-aware statutory source controls and must not be promoted from evergreen explanations.
