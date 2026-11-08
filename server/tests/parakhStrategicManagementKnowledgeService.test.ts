@@ -83,6 +83,21 @@ test('returns English, Hindi and Hinglish lesson content with all four modes', (
     course: 'CA_INTERMEDIATE',
     language: 'english',
   })?.mode, 'simpler');
+  assert.equal(searchParakhStrategicManagementKnowledge({
+    message: 'PESTEL पर सवाल पूछो',
+    course: 'CA_INTERMEDIATE',
+    language: 'hindi',
+  })?.mode, 'quiz');
+  assert.equal(searchParakhStrategicManagementKnowledge({
+    message: 'SWOT analysis को आसान भाषा में समझाओ',
+    course: 'CA_INTERMEDIATE',
+    language: 'hindi',
+  })?.mode, 'simpler');
+  assert.equal(searchParakhStrategicManagementKnowledge({
+    message: 'Porter five forces का उदाहरण',
+    course: 'CA_INTERMEDIATE',
+    language: 'hindi',
+  })?.mode, 'example');
 });
 
 test('does not answer attempt-sensitive syllabus or amendment questions from evergreen drafts', () => {
