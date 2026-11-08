@@ -449,4 +449,10 @@ test('CA Final subject mapping is visible but does not imply benchmark completio
   assert.ok(finalMapped.some((item) => item.domain === 'auditing'));
   assert.ok(finalMapped.some((item) => item.domain === 'integrated_business_solutions'));
   assert.ok(finalMapped.every((item) => item.completeVerifiedCoverage === false));
+  const fm = report.subjectDomains.find((item) => item.domain === 'financial_management');
+  const tax = report.subjectDomains.find((item) => item.domain === 'taxation');
+  assert.ok(fm?.mappedCourses.includes('SPOM'));
+  assert.ok(tax?.mappedCourses.includes('CA_FINAL'));
+  assert.ok(tax?.mappedCourses.includes('SPOM'));
+
 });
