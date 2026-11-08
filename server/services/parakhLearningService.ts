@@ -2,7 +2,7 @@ import { db } from '../db.js';
 import { getAllFirestoreDocs, getFirestoreDoc, setFirestoreDoc } from './firestoreDbService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 
-export const PARAKH_LEARNING_CONSENT_VERSION = '1.0';
+export const PARAKH_LEARNING_POLICY_VERSION = '3.0';
 const PARAKH_COLLECTION = 'parakh_learning_records';
 
 type ParakhRecordStatus =
@@ -11,9 +11,9 @@ type ParakhRecordStatus =
   | 'SELECTED_FOR_REVIEW'
   | 'VERIFIED_SAMPLE'
   | 'FAILED'
-  | 'WITHDRAWN';
+  | 'EXCLUDED';
 
-export interface ParakhLearningOptInInput {
+export interface ParakhLearningObservationInput {
   evaluationId: string;
   studentId: string;
   level: string;
@@ -48,8 +48,8 @@ function ensureParakhLearningSchema(): void {
     CREATE TABLE IF NOT EXISTS parakh_learning_records (
       evaluation_id TEXT PRIMARY KEY,
       student_id TEXT NOT NULL,
-      consent_version TEXT NOT NULL,
-      consented_at TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
       level TEXT NOT NULL,
       subject_key TEXT NOT NULL,
       subject_name TEXT NOT NULL,
@@ -60,7 +60,7 @@ function ensureParakhLearningSchema(): void {
       status TEXT NOT NULL DEFAULT 'PROCESSING'
         CHECK (status IN (
           'PROCESSING', 'COLLECTED_UNVERIFIED', 'SELECTED_FOR_REVIEW',
-          'VERIFIED_SAMPLE', 'FAILED', 'WITHDRAWN'
+          'VERIFIED_SAMPLE', 'FAILED', 'EXCLUDED'
         )),
       reviewer_id TEXT,
       review_action TEXT,
@@ -78,6 +78,11 @@ function ensureParakhLearningSchema(): void {
       ON parakh_learning_records(level, subject_key, attempt);
     CREATE INDEX IF NOT EXISTS idx_parakh_learning_student
       ON parakh_learning_records(student_id);
+
+    CREATE TABLE IF NOT EXISTS parakh_learning_exclusions (
+      student_id TEXT PRIMARY KEY,
+      excluded_at TEXT NOT NULL
+    );
   `);
 
   schemaReady = true;
@@ -105,11 +110,11 @@ async function hydrateParakhRecordFromFirestore(evaluationId: string): Promise<R
 
   try {
     const cloudRecord = await getFirestoreDoc<Record<string, any>>(PARAKH_COLLECTION, evaluationId);
-    if (!cloudRecord?.student_id || !cloudRecord?.consent_version) return undefined;
+    if (!cloudRecord?.student_id || !cloudRecord?.policy_version) return undefined;
 
     db.prepare(`
       INSERT OR IGNORE INTO parakh_learning_records (
-        evaluation_id, student_id, consent_version, consented_at,
+        evaluation_id, student_id, policy_version, recorded_at,
         level, subject_key, subject_name, material_type, paper, attempt,
         checking_mode, status, reviewer_id, review_action,
         reviewed_total_marks, reviewed_maximum_marks, reviewed_at,
@@ -118,8 +123,8 @@ async function hydrateParakhRecordFromFirestore(evaluationId: string): Promise<R
     `).run(
       evaluationId,
       cloudRecord.student_id,
-      cloudRecord.consent_version,
-      cloudRecord.consented_at || new Date().toISOString(),
+      cloudRecord.policy_version,
+      cloudRecord.recorded_at || new Date().toISOString(),
       cloudRecord.level || 'UNKNOWN',
       cloudRecord.subject_key || 'unknown',
       cloudRecord.subject_name || 'Unknown subject',
@@ -138,25 +143,34 @@ async function hydrateParakhRecordFromFirestore(evaluationId: string): Promise<R
     );
     return getLocalRecord(evaluationId);
   } catch (error) {
-    console.warn('[PARAKH] Could not hydrate consented record from Firestore:', error);
+    console.warn('[PARAKH] Could not hydrate learning record from Firestore:', error);
     return undefined;
   }
 }
 
 /**
- * Stores a consented pointer to the existing protected evaluation. It does not
+ * Stores a policy-covered observation pointer to the existing protected evaluation. It does not
  * duplicate student files or create a training dataset.
  *
  * The evaluation can finish very quickly (or on another worker) before this
  * write occurs, so its current status is checked to avoid a stuck PROCESSING row.
  */
-export async function recordParakhLearningOptIn(
-  consented: boolean,
-  input: ParakhLearningOptInInput,
+export async function recordParakhLearningObservation(
+  input: ParakhLearningObservationInput,
 ): Promise<boolean> {
-  if (consented !== true) return false;
-
   ensureParakhLearningSchema();
+  const localExclusion = db.prepare('SELECT student_id FROM parakh_learning_exclusions WHERE student_id = ?').get(input.studentId);
+  if (localExclusion) return false;
+  try {
+    const sharedExclusion = await getFirestoreDoc<{ student_id?: string; excluded_at?: string }>('parakh_learning_exclusions', input.studentId);
+    if (sharedExclusion?.student_id) {
+      db.prepare('INSERT OR IGNORE INTO parakh_learning_exclusions (student_id, excluded_at) VALUES (?, ?)')
+        .run(input.studentId, sharedExclusion.excluded_at || new Date().toISOString());
+      return false;
+    }
+  } catch (error) {
+    console.warn('[PARAKH] Could not check shared exclusion preference:', error);
+  }
   const now = new Date().toISOString();
   const evaluation = db.prepare(
     'SELECT status FROM evaluations WHERE id = ?'
@@ -183,14 +197,14 @@ export async function recordParakhLearningOptIn(
 
   db.prepare(`
     INSERT OR IGNORE INTO parakh_learning_records (
-      evaluation_id, student_id, consent_version, consented_at,
+      evaluation_id, student_id, policy_version, recorded_at,
       level, subject_key, subject_name, material_type, paper, attempt,
       checking_mode, status, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.evaluationId,
     input.studentId,
-    PARAKH_LEARNING_CONSENT_VERSION,
+    PARAKH_LEARNING_POLICY_VERSION,
     now,
     input.level,
     input.subjectKey,
@@ -306,14 +320,22 @@ export async function markParakhEvaluationAdminReviewed(
 }
 
 /** Withdraws all previous opt-ins without touching evaluation history, marks or credits. */
-export async function withdrawParakhLearningConsent(studentId: string): Promise<number> {
+export async function excludeParakhLearningForStudent(studentId: string): Promise<number> {
   ensureParakhLearningSchema();
   const normalizedStudentId = String(studentId || '').trim();
   if (!normalizedStudentId) return 0;
 
   const now = new Date().toISOString();
+  const exclusionRecord = { student_id: normalizedStudentId, excluded_at: now };
+  db.prepare('INSERT OR IGNORE INTO parakh_learning_exclusions (student_id, excluded_at) VALUES (?, ?)')
+    .run(normalizedStudentId, now);
+  try {
+    await setFirestoreDoc('parakh_learning_exclusions', normalizedStudentId, exclusionRecord);
+  } catch (error) {
+    console.warn('[PARAKH] Could not mirror learning exclusion preference:', error);
+  }
   const localRecords = db.prepare(
-    "SELECT * FROM parakh_learning_records WHERE student_id = ? AND status != 'WITHDRAWN'"
+    "SELECT * FROM parakh_learning_records WHERE student_id = ? AND status != 'EXCLUDED'"
   ).all(normalizedStudentId) as Array<Record<string, any>>;
 
   let cloudRecords: Array<Record<string, any>> = [];
@@ -322,13 +344,13 @@ export async function withdrawParakhLearningConsent(studentId: string): Promise<
     cloudRecords = await getAllFirestoreDocs<Record<string, any>>(PARAKH_COLLECTION, { failOnError: true });
     cloudAvailable = true;
   } catch (error) {
-    console.warn('[PARAKH] Could not load shared consent records during withdrawal:', error);
+    console.warn('[PARAKH] Could not load shared learning records during withdrawal:', error);
   }
 
   const candidates = new Map<string, Record<string, any>>();
   for (const record of [...cloudRecords, ...localRecords]) {
     if (String(record.student_id || '') !== normalizedStudentId) continue;
-    if (String(record.status || '').toUpperCase() === 'WITHDRAWN') continue;
+    if (String(record.status || '').toUpperCase() === 'EXCLUDED') continue;
     candidates.set(String(record.evaluation_id || record.id || ''), record);
   }
 
@@ -337,14 +359,14 @@ export async function withdrawParakhLearningConsent(studentId: string): Promise<
     if (!evaluationId) continue;
     db.prepare(`
       UPDATE parakh_learning_records
-      SET status = 'WITHDRAWN', updated_at = ?
+      SET status = 'EXCLUDED', updated_at = ?
       WHERE evaluation_id = ? AND student_id = ?
     `).run(now, evaluationId, normalizedStudentId);
 
     const updatedRecord = {
       ...record,
       evaluation_id: evaluationId,
-      status: 'WITHDRAWN',
+      status: 'EXCLUDED',
       updated_at: now,
     };
 
@@ -353,7 +375,7 @@ export async function withdrawParakhLearningConsent(studentId: string): Promise<
       try {
         mirrored = await setFirestoreDoc(PARAKH_COLLECTION, evaluationId, updatedRecord);
       } catch (error) {
-        console.warn('[PARAKH] Could not persist consent withdrawal to Firestore:', error);
+        console.warn('[PARAKH] Could not persist learning exclusion to Firestore:', error);
       }
     }
     if (!mirrored) {
@@ -444,7 +466,7 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
   }
 
   const latestActivityAt = records
-    .map((record) => String(record.reviewed_at || record.consented_at || record.updated_at || record.created_at || ''))
+    .map((record) => String(record.reviewed_at || record.recorded_at || record.updated_at || record.created_at || ''))
     .filter(Boolean)
     .sort()
     .reverse()[0] || null;
@@ -461,7 +483,7 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
     selectedForReview: countStatus('SELECTED_FOR_REVIEW'),
     verifiedSamples: countStatus('VERIFIED_SAMPLE'),
     failed: countStatus('FAILED'),
-    withdrawn: countStatus('WITHDRAWN'),
+    withdrawn: countStatus('EXCLUDED'),
     benchmarkRuns: 0,
     trainingRuns: 0,
     latestActivityAt,
