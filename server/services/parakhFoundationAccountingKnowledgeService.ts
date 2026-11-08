@@ -369,6 +369,33 @@ export function buildParakhFoundationAccountingReply(result: ParakhFoundationAcc
     + result.answer + applicability + review;
 }
 
+/**
+ * Uses signed balances: positive means favourable bank balance; negative means overdraft.
+ * Starting from the adjusted cash-book balance, apply only timing items and bank-originated
+ * entries not yet recorded in the cash book.
+ */
+export function reconcileBankStatementFromCashBook(input: {
+  cashBookBalance: number;
+  chequesIssuedNotPresented?: number;
+  depositsNotCredited?: number;
+  bankChargesNotRecorded?: number;
+  bankInterestNotRecorded?: number;
+  directDebitsNotRecorded?: number;
+  dishonouredChequesNotRecorded?: number;
+}): number {
+  const values = Object.values(input);
+  if (values.some((value) => value !== undefined && !Number.isFinite(value))) {
+    throw new Error('BRS inputs must be finite numbers.');
+  }
+  return input.cashBookBalance
+    + (input.chequesIssuedNotPresented || 0)
+    - (input.depositsNotCredited || 0)
+    - (input.bankChargesNotRecorded || 0)
+    + (input.bankInterestNotRecorded || 0)
+    - (input.directDebitsNotRecorded || 0)
+    - (input.dishonouredChequesNotRecorded || 0);
+}
+
 export function getParakhFoundationAccountingInventory() {
   return {
     course: 'CA_FOUNDATION' as const,
