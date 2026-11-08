@@ -103,7 +103,7 @@ let schemaReady = false;
 
 function ensureSchema(): void {
   if (schemaReady) return;
-  db.exec(String.raw\`
+  db.exec(String.raw`
     CREATE TABLE IF NOT EXISTS parakh_conversation_learning_signals (
       day TEXT NOT NULL,
       course TEXT NOT NULL,
@@ -116,7 +116,7 @@ function ensureSchema(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_parakh_conversation_signals_day
       ON parakh_conversation_learning_signals(day);
-  \`);
+  `);
   schemaReady = true;
 }
 
@@ -132,13 +132,13 @@ export function recordParakhConversationLearningSignal(
 
   ensureSchema();
   const now = new Date().toISOString();
-  db.prepare(String.raw\`
+  db.prepare(String.raw`
     INSERT INTO parakh_conversation_learning_signals (
       day, course, topic_key, intent_key, language, signal_count, updated_at
     ) VALUES (?, ?, ?, ?, ?, 1, ?)
     ON CONFLICT(day, course, topic_key, intent_key, language)
     DO UPDATE SET signal_count = signal_count + 1, updated_at = excluded.updated_at
-  \`).run(signal.day, signal.course, signal.topicKey, signal.intentKey, signal.language, now);
+  `).run(signal.day, signal.course, signal.topicKey, signal.intentKey, signal.language, now);
 
   // Keep only aggregate signals for the previous 180 days.
   db.prepare("DELETE FROM parakh_conversation_learning_signals WHERE day < date('now', '-180 days')").run();
@@ -149,13 +149,13 @@ export function recordParakhConversationLearningSignal(
 export function getParakhConversationLearningMetrics(days = 30): Record<string, unknown> {
   ensureSchema();
   const safeDays = Math.max(1, Math.min(180, Math.floor(Number(days) || 30)));
-  const rows = db.prepare(String.raw\`
+  const rows = db.prepare(String.raw`
     SELECT topic_key, intent_key, language, SUM(signal_count) AS signal_count
     FROM parakh_conversation_learning_signals
     WHERE day >= date('now', ?)
     GROUP BY topic_key, intent_key, language
     ORDER BY signal_count DESC, topic_key ASC
-  \`).all('-' + safeDays + ' days') as Array<{
+  `).all('-' + safeDays + ' days') as Array<{
     topic_key: string; intent_key: string; language: string; signal_count: number;
   }>;
 
