@@ -26,6 +26,25 @@ The official page lists nine chapters:
 | Module 2 | 9. Management of Working Capital | Original authored draft and operating-cycle illustration; six official units listed; not human-verified |
 
 All nine mapped FM chapters now have original draft teaching content in English, Hindi and Hinglish, with answer, example, simpler-explanation and quiz modes. The chapter drafts are a first content rollout, not a claim of complete academic depth or subject mastery.
+## Second rollout: CA Intermediate Paper 6B, Section B: Strategic Management
+
+**Source of truth:** ICAI's official Paper 6B page with separate applicability editions. The page for the next listed edition is headed “Applicable for May 2027 Exam Onwards” and lists five chapters:
+
+- https://www.icai.org/post/sm-inter-p6b-may2027
+- Paper 6B edition index: https://www.icai.org/post/sm-intermediate-paper6b
+
+| Chapter | Current PARAKH state |
+| --- | --- |
+| 1. Introduction to Strategic Management | Original authored draft in English, Hindi and Hinglish; answer/example/simpler/quiz modes; not human-verified |
+| 2. Strategic Analysis: External Environment | Original authored draft with PESTEL and industry/competitive analysis examples; not human-verified |
+| 3. Strategic Analysis: Internal Environment | Original authored draft with resources, capabilities, VRIO, value chain and SWOT examples; not human-verified |
+| 4. Strategic Choices | Original authored draft with corporate directions, competitive strategies, Ansoff and BCG illustrations; not human-verified |
+| 5. Strategy Implementation and Evaluation | Original authored draft with implementation alignment, controls, KPIs and Balanced Scorecard examples; not human-verified |
+
+The five packs have original explanations in English, Hindi and Hinglish and five distinct benchmark prompts each (25 total). The prompts span core concepts, unseen application, exam-style analysis, trade-offs/edge cases and attempt/source sensitivity. These are not approved answer keys and have not been scored. No Strategic Management chapter or benchmark is human-reviewed.
+
+**Attempt boundary:** The official page is headed May 2027 Exam Onwards. The drafts must not be used to assert chapter applicability for a different attempt without checking that student's exact ICAI material, RTP, amendment and corrigendum. This authored content does not reproduce ICAI study-material text.
+
 ## Content and intellectual-property policy
 
 ICAI's website carries an intellectual-property notice reserving its material to ICAI. PARAKH therefore stores original explanations, original examples and links to the official source page; it does not copy ICAI chapter text, reproduce its illustrations, or mirror its PDFs.
@@ -88,8 +107,8 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 ## Current scope and next expansion
 
-The paper-level catalogue now covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
+The paper-level catalogue covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
 
-This broader map does not change the authored-content boundary: only CA Intermediate Paper 6, Section A (Financial Management) has nine original chapter drafts and 45 benchmark prompts. None has human-approved content or human-reviewed benchmark answers. Foundation and Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are explicitly provisional topic pointers rather than official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper has a dedicated authored chapter pack in this release.
+Two sections of CA Intermediate Paper 6 now have original content: Section A Financial Management (9 chapter drafts, 45 benchmark prompts; catalogue headed May 2026 Exam) and Section B Strategic Management (5 chapter drafts, 25 benchmark prompts; catalogue headed May 2027 Exam Onwards). Across both sections there are 14 authored chapter drafts and 70 prompts, but zero human-reviewed chapters and zero human-reviewed benchmark sets. Foundation and other Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are provisional topic pointers, not official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper in this release has dedicated authored chapter lessons.
 
-Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, then separate benchmark answer keys and qualified review. Tax and law content requires attempt-aware statutory source controls and must not be promoted from evergreen explanations.
+Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, followed by separate benchmark answer keys and qualified review. Tax and law content needs attempt-aware statutory source controls and must not be promoted from evergreen explanations.
