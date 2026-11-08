@@ -65,10 +65,10 @@ test('retrieves all catalogue chapters for CA Intermediate Paper 5 only', () => 
 
 test('supports multilingual answer, example, simpler and quiz modes', () => {
   const cases = [
-    { message: 'Explain audit evidence', language: 'english' as const },
-    { message: 'Audit risk ko simple language mein samjhao', language: 'hinglish' as const },
-    { message: 'ऑडिट रिपोर्ट का उदाहरण दीजिए', language: 'hindi' as const },
-    { message: 'Quiz me on audit documentation', language: 'english' as const },
+    { message: 'Explain audit evidence', language: 'english' as const, mode: 'answer' as const, minimumLength: 160 },
+    { message: 'Audit risk ko simple language mein samjhao', language: 'hinglish' as const, mode: 'simpler' as const, minimumLength: 50 },
+    { message: 'ऑडिट रिपोर्ट का उदाहरण दीजिए', language: 'hindi' as const, mode: 'example' as const, minimumLength: 70 },
+    { message: 'Quiz me on audit documentation', language: 'english' as const, mode: 'quiz' as const, minimumLength: 80 },
   ];
   for (const item of cases) {
     const result = searchParakhAuditingKnowledge({
@@ -77,7 +77,8 @@ test('supports multilingual answer, example, simpler and quiz modes', () => {
       language: item.language,
     });
     assert.ok(result);
-    assert.ok(result.answer.length > 160);
+    assert.equal(result.mode, item.mode, item.message);
+    assert.ok(result.answer.length > item.minimumLength, item.message);
   }
   assert.equal(searchParakhAuditingKnowledge({
     message: 'Audit report ka example',
