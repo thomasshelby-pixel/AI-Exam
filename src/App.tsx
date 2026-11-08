@@ -91,7 +91,7 @@ const StudyPlannerAccessGate: React.FC = () => {
   }, [user?.id]);
   if (!access) return <div className="min-h-[50vh] flex items-center justify-center text-sm text-slate-500">Checking AI Planner access…</div>;
   if (!access.allowed) return <FeatureUnavailable application="CHECKER" featureKey="checker_ai_planner" featureName="AI Planner" status={access.status} studentMessage={access.studentMessage} />;
-  return <StudyPlannerAccessGate />;
+  return <StudyPlannerPage />;
 };
 
 const EvaluationReportWrapper: React.FC = () => {
