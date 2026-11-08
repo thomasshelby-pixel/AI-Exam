@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { requireFeatureAccess } from '../services/featureControlService.js';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, AuthRequest } from '../auth.js';
@@ -22,6 +23,8 @@ import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQu
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
+// Every planner API, including direct requests, is restricted to Super Admin-approved tester accounts.
+router.use(authenticateToken, requireFeatureAccess('CHECKER', 'checker_ai_planner'));
 const MAX_MESSAGE_LENGTH = 1200;
 
 const ALLOWED_STRENGTHS = new Set(['STRONG', 'MODERATE', 'WEAK']);
