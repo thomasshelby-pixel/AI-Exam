@@ -275,6 +275,14 @@ test('works through a credit-policy numerical and asks for discount uptake inste
   assert.match(answer, /percentage.*take the discount/i);
   assert.match(answer, /12% after-tax required return/i);
   assert.doesNotMatch(answer, /firm should (?:accept|reject)/i);
+  assert.match(answer, /Under the current policy/i);
+  assert.match(answer, /2% discount/i);
+  const finalAnswer = buildCreditPolicyAnalysisReply('Current policy 40%, proposed policy 60%', 'english', [question]);
+  assert.ok(finalAnswer);
+  assert.match(finalAnswer, /Average collection period: current 33\\.00 days; proposed 33\\.00 days/);
+  assert.match(finalAnswer, /Net annual benefit: ₹17,089/);
+  assert.match(finalAnswer, /Decision: ACCEPT/);
+
 });
 
 test('does not guess a credit-policy decision when the required problem data is absent', () => {
