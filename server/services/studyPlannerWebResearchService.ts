@@ -41,13 +41,13 @@ function enrichWithOfficialDomains(query: string): string {
   if (/\b(icai|ca exam|chartered accountant|admit card|exam form|examination|syllabus|attempt|registration)\b/i.test(query)) {
     return 'site:icai.org OR site:icai-cds.org ' + query;
   }
-  if (/\b(gst|income tax|taxation|cbic|input tax credit|direct tax)\b/i.test(query)) {
+  if (/\b(gst|income tax|taxation|cbic|input tax credit|direct tax)\b|जीएसटी|आयकर|कर/i.test(query)) {
     return 'site:incometax.gov.in OR site:cbic.gov.in OR site:gst.gov.in ' + query;
   }
   if (/\b(rbi|repo rate|banking|sebi|securities|monetary policy)\b/i.test(query)) {
     return 'site:rbi.org.in OR site:sebi.gov.in ' + query;
   }
-  if (/\b(company law|mca|companies act|llp|corporate affairs)\b/i.test(query)) {
+  if (/\b(company law|mca|companies act|llp|corporate affairs)\b|कंपनी अधिनियम|कंपनी कानून/i.test(query)) {
     return 'site:mca.gov.in ' + query;
   }
   return query;
