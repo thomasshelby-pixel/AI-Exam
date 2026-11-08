@@ -373,6 +373,20 @@ function scoreTopic(topic: KnowledgeTopic, queryTerms: string[]): number {
   return score;
 }
 
+/** Topic inventory used for readiness reporting; the entries are starter guidance, not verified chapter coverage. */
+export function getStudyKnowledgeTopicInventory(): Array<{ topicId: string; title: string; subjects: string[] }> {
+  return TOPICS.map((topic) => ({
+    topicId: topic.id,
+    title: topic.title,
+    subjects: [...topic.subjects],
+  }));
+}
+
+/** Subject names represented in the authored study-guidance bank. This is not a claim of full syllabus coverage. */
+export function getStudyKnowledgeSubjectInventory(): string[] {
+  return Array.from(new Set(TOPICS.flatMap((topic) => topic.subjects))).sort((a, b) => a.localeCompare(b));
+}
+
 export interface StudyKnowledgeResult {
   topicId: string;
   topicTitle: string;
@@ -511,4 +525,167 @@ export function buildKnowledgeChatReply(result: StudyKnowledgeResult, language: 
       : language === 'hinglish'
         ? '\n\nNext step: chahe toh example ya quick self-test maang le.'
         : '\n\nNext step: ask for an example or a quick self-test if useful.');
+}
+
+
+/**
+ * Works through a standard CA Intermediate FM credit-policy decision when the
+ * question supplies the core sales, contribution, bad-debt and tax figures.
+ *
+ * The decision is deliberately left open when discount uptake is not supplied:
+ * 1/15 net 45 and 2/15 net 60 do not, by themselves, determine average collection
+ * periods or cash-discount expense.
+ */
+export function buildCreditPolicyAnalysisReply(
+  message: string,
+  language: StudyReplyLanguage,
+  history: string[] = [],
+): string | null {
+  const currentMessage = String(message || '');
+  const uptakeOld = currentMessage.match(/\b(?:old|current|present)(?:\s+policy)?\b[\s:=,-]{0,25}(\d+(?:\.\d+)?)\s*%/i);
+  const uptakeNew = currentMessage.match(/\b(?:new|proposed)(?:\s+policy)?\b[\s:=,-]{0,25}(\d+(?:\.\d+)?)\s*%/i);
+  const suppliedUptake = Boolean(uptakeOld && uptakeNew);
+  const problemText = /\bcredit\s+polic(?:y|ies)\b/i.test(currentMessage)
+    ? currentMessage
+    : suppliedUptake
+      ? [...history].reverse().find((entry) => /\bcredit\s+polic(?:y|ies)\b/i.test(entry)) || ''
+      : '';
+  if (!problemText) return null;
+  if (!/\b(?:should|whether|change|accept|adopt|worthwhile)\b/i.test(problemText)) return null;
+
+  const salesMatch = problemText.match(/current\s+credit\s+sales[\s\S]{0,55}?([\d,]+(?:\.\d+)?)/i);
+  const growthMatch = problemText.match(/(?:increase\s+in\s+(?:the\s+)?sales|sales\s+(?:are\s+)?expected\s+to\s+increase|sales\s+increase)\s+by\s+(\d+(?:\.\d+)?)\s*%/i);
+  const badDebtMatch = problemText.match(/bad\s+debts?[\s\S]{0,65}?(?:go\s+up|increase|rise)\s+to\s*(\d+(?:\.\d+)?)\s*%[\s\S]{0,50}?\bfrom\s*(\d+(?:\.\d+)?)\s*%/i);
+  const contributionMatch = problemText.match(/contribution\s+to\s+sales\s+ratio[\s\S]{0,35}?(\d+(?:\.\d+)?)\s*%/i);
+  const taxMatch = problemText.match(/(?:tax\s+rate|tax|rate of tax)[\s\S]{0,20}?(?:is\s+|of\s+)?(\d+(?:\.\d+)?)\s*%/i);
+  const returnMatch = problemText.match(/after[- ]tax\s+return[\s\S]{0,25}?(\d+(?:\.\d+)?)\s*%/i);
+  const labelledOldTerms = problemText.match(/(?:present|current|existing)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
+  const oldTerms = labelledOldTerms || problemText.match(/\b(?:against|versus|vs\.?|compared with|as compared to)\s+(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
+  const newTerms = problemText.match(/(?:new|proposed)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
+
+  if (!salesMatch || !growthMatch || !badDebtMatch || !contributionMatch
+    || !taxMatch || !returnMatch || !oldTerms || !newTerms) return null;
+
+  const currentSales = Number(salesMatch[1].replace(/,/g, ''));
+  const growthRate = Number(growthMatch[1]);
+  const newBadDebtRate = Number(badDebtMatch[1]);
+  const oldBadDebtRate = Number(badDebtMatch[2]);
+  const contributionRate = Number(contributionMatch[1]);
+  const taxRate = Number(taxMatch[1]);
+  const afterTaxReturn = Number(returnMatch[1]);
+  const oldDiscountRate = Number(oldTerms[1]);
+  const oldDiscountDays = Number(oldTerms[2]);
+  const oldNetDays = Number(oldTerms[3]);
+  const newDiscountRate = Number(newTerms[1]);
+  const newDiscountDays = Number(newTerms[2]);
+  const newNetDays = Number(newTerms[3]);
+  const numericValues = [
+    currentSales, growthRate, newBadDebtRate, oldBadDebtRate, contributionRate,
+    taxRate, afterTaxReturn, oldDiscountRate, oldDiscountDays, oldNetDays,
+    newDiscountRate, newDiscountDays, newNetDays,
+  ];
+  if (numericValues.some((value) => !Number.isFinite(value) || value < 0)
+    || currentSales <= 0 || growthRate > 500 || newBadDebtRate > 100
+    || oldBadDebtRate > 100 || contributionRate > 100 || taxRate >= 100
+    || afterTaxReturn > 100 || oldDiscountDays > oldNetDays
+    || newDiscountDays > newNetDays) return null;
+
+  const proposedSales = currentSales * (1 + growthRate / 100);
+  const incrementalSales = proposedSales - currentSales;
+  const incrementalContribution = incrementalSales * contributionRate / 100;
+  const currentBadDebts = currentSales * oldBadDebtRate / 100;
+  const proposedBadDebts = proposedSales * newBadDebtRate / 100;
+  const incrementalBadDebts = proposedBadDebts - currentBadDebts;
+  const taxFactor = 1 - taxRate / 100;
+  const afterTaxContribution = incrementalContribution * taxFactor;
+  const afterTaxBadDebtCost = incrementalBadDebts * taxFactor;
+  const afterTaxSurplusBeforeDiscountAndFinance = afterTaxContribution - afterTaxBadDebtCost;
+
+  const money = (value: number) => '₹' + Math.round(value).toLocaleString('en-IN');
+  const percent = (value: number) => String(value);
+  const surplus = money(afterTaxSurplusBeforeDiscountAndFinance);
+  const initialReply = language === 'hindi'
+    ? [
+        '**यह Financial Management का credit-policy numerical है।** पहले दिए गए आँकड़ों से:',
+        '1. वर्तमान credit sales: ' + money(currentSales) + '।',
+        '2. नई sales (' + percent(growthRate) + '% वृद्धि): ' + money(proposedSales) + '। Incremental sales: ' + money(incrementalSales) + '।',
+        '3. Incremental contribution (' + percent(contributionRate) + '%): ' + money(incrementalContribution) + '।',
+        '4. Bad debts: वर्तमान ' + money(currentBadDebts) + '; नई policy में ' + money(proposedBadDebts) + '। अतिरिक्त bad debts: ' + money(incrementalBadDebts) + '।',
+        '5. Tax के बाद बचा surplus, cash discount और receivables पर return घटाने से पहले: **' + surplus + '**।',
+        '',
+        '**Final yes/no के लिए एक जानकारी missing है:** पुरानी policy में ' + oldDiscountRate + '% discount लेने वाले customers का % और नई policy में ' + newDiscountRate + '% discount लेने वाले customers का %। बाकी customers net-day पर भुगतान करेंगे।',
+        'ये दो percentages बता दीजिए; मैं average collection period, discount cost और ' + percent(afterTaxReturn) + '% after-tax return के आधार पर final decision निकाल दूँगा।',
+      ].join('\n')
+    : language === 'hinglish'
+      ? [
+          '**Bhai, ye Financial Management ka credit-policy numerical hai.** Jo data diya hai usse:',
+          '1. Current credit sales: ' + money(currentSales) + '.',
+          '2. Proposed sales (' + percent(growthRate) + '% increase): ' + money(proposedSales) + '. Incremental sales: ' + money(incrementalSales) + '.',
+          '3. Incremental contribution (' + percent(contributionRate) + '%): ' + money(incrementalContribution) + '.',
+          '4. Bad debts: current ' + money(currentBadDebts) + '; new policy mein ' + money(proposedBadDebts) + '. Extra bad-debt cost: ' + money(incrementalBadDebts) + '.',
+          '5. Tax ke baad surplus, cash discount aur receivables-financing cost se pehle: **' + surplus + '**.',
+          '',
+          '**Final yes/no ke liye ek detail missing hai:** current policy mein ' + oldDiscountRate + '% discount lene wale customers ka % aur proposed policy mein ' + newDiscountRate + '% discount lene wale customers ka %. Baaki customers net-day par pay karenge.',
+          'Ye dono percentages bhej de; main average collection period, discount cost aur ' + percent(afterTaxReturn) + '% after-tax return laga ke final decision nikal dunga.',
+        ].join('\n')
+      : [
+          '**This is a Financial Management credit-policy decision.** The supplied figures give:',
+          '1. Current credit sales: ' + money(currentSales) + '.',
+          '2. Proposed sales after a ' + percent(growthRate) + '% increase: ' + money(proposedSales) + '. Incremental sales: ' + money(incrementalSales) + '.',
+          '3. Incremental contribution at ' + percent(contributionRate) + '%: ' + money(incrementalContribution) + '.',
+          '4. Bad debts: current ' + money(currentBadDebts) + '; proposed ' + money(proposedBadDebts) + '. Incremental bad-debt cost: ' + money(incrementalBadDebts) + '.',
+          '5. After-tax surplus before the additional cash-discount cost and receivables-financing cost: **' + surplus + '**.',
+          '',
+          '**A final accept/reject decision needs one missing assumption:** the percentage of customers taking the ' + oldDiscountRate + '% discount under the current policy and the percentage taking the ' + newDiscountRate + '% discount under the proposed policy. Assume the remaining customers pay on the net day.',
+          'Please provide those two percentages. I can then calculate the average collection periods, incremental discount cost and receivables investment using the ' + percent(afterTaxReturn) + '% after-tax required return.',
+        ].join('\n');
+
+  if (!uptakeOld || !uptakeNew) {
+    return /\bcredit\s+polic(?:y|ies)\b/i.test(currentMessage) ? initialReply : null;
+  }
+
+  const oldUptake = Number(uptakeOld[1]);
+  const newUptake = Number(uptakeNew[1]);
+  if (!Number.isFinite(oldUptake) || !Number.isFinite(newUptake)
+    || oldUptake < 0 || oldUptake > 100 || newUptake < 0 || newUptake > 100) {
+    return language === 'hinglish'
+      ? 'Discount lene wale customers ka percentage 0% se 100% ke beech hona chahiye. Current aur proposed policy ke percentages alag-alag bata de.'
+      : 'Each discount-uptake percentage must be between 0% and 100%. Please provide the current-policy and proposed-policy percentages separately.';
+  }
+
+  const oldShare = oldUptake / 100;
+  const newShare = newUptake / 100;
+  const oldAverageCollectionDays = oldDiscountDays * oldShare + oldNetDays * (1 - oldShare);
+  const newAverageCollectionDays = newDiscountDays * newShare + newNetDays * (1 - newShare);
+  const oldDiscountCost = currentSales * oldDiscountRate / 100 * oldShare;
+  const newDiscountCost = proposedSales * newDiscountRate / 100 * newShare;
+  const incrementalDiscountCostAfterTax = (newDiscountCost - oldDiscountCost) * taxFactor;
+  const variableCostRatio = 1 - contributionRate / 100;
+  const oldReceivablesInvestment = currentSales * variableCostRatio * oldAverageCollectionDays / 365;
+  const newReceivablesInvestment = proposedSales * variableCostRatio * newAverageCollectionDays / 365;
+  const incrementalReceivablesInvestment = newReceivablesInvestment - oldReceivablesInvestment;
+  const receivablesFinancingCost = incrementalReceivablesInvestment * afterTaxReturn / 100;
+  const netAnnualBenefit = afterTaxSurplusBeforeDiscountAndFinance
+    - incrementalDiscountCostAfterTax - receivablesFinancingCost;
+  const decision = netAnnualBenefit > 0 ? 'ACCEPT' : 'REJECT';
+
+  const finalLines = [
+    'Discount uptake: current ' + percent(oldUptake) + '%, proposed ' + percent(newUptake) + '%.',
+    'Average collection period: current ' + oldAverageCollectionDays.toFixed(2) + ' days; proposed ' + newAverageCollectionDays.toFixed(2) + ' days.',
+    'Incremental cash-discount cost after tax: ' + money(incrementalDiscountCostAfterTax) + '.',
+    'Incremental receivables investment (at variable cost): ' + money(incrementalReceivablesInvestment) + '.',
+    'Finance cost at ' + percent(afterTaxReturn) + '% after-tax: ' + money(receivablesFinancingCost) + '.',
+    'Net annual benefit: ' + money(netAnnualBenefit) + '.',
+    '**Decision: ' + decision + '** the proposed policy, on these assumptions.',
+  ];
+  if (language === 'hinglish') {
+    return '**Bhai, ab full calculation ho gayi.**\n\n' + finalLines.join('\n')
+      + '\n\nAssumption: discount lene wale customers 15th day par aur baaki net credit day par pay karte hain; receivables investment variable-cost basis par, 365-day year ke saath nikala hai.';
+  }
+  if (language === 'hindi') {
+    return '**अब पूरी calculation हो गई है।**\n\n' + finalLines.join('\n')
+      + '\n\nमान्यता: discount लेने वाले customers 15वें दिन और बाकी net credit day पर भुगतान करते हैं; receivables investment variable-cost basis पर 365-day year से निकाला है।';
+  }
+  return '**The calculation is complete.**\n\n' + finalLines.join('\n')
+    + '\n\nAssumption: discount-taking customers pay on day 15 and the rest on the net credit day; receivables investment is measured at variable cost using a 365-day year.';
 }

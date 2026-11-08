@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, getStudyKnowledgeSubjectInventory, getStudyKnowledgeTopicInventory, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { getParakhCurriculumPapers, getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
+import {
+  assessParakhResponseQuality,
+  buildParakhQualityNotice,
+  buildParakhSubjectCoverageReport,
+  classifyParakhQuestion,
+  evaluateParakhQualityBenchmark,
+} from '../services/parakhQualityFramework.js';
 
 test('retrieves relevant study guidance without exact wording', () => {
   const result = searchStudyKnowledge({
@@ -260,4 +268,207 @@ test('Ratio Analysis is not returned for a course where the FM-SM subject is una
     language: 'hinglish',
   });
   assert.equal(result, null);
+});
+
+
+test('works through a credit-policy numerical and asks for discount uptake instead of inventing it', () => {
+  const question = "The current credit sales of a firm is ₹20,00,000 and the firm still has an unutilized capacity. In order to boost its sales, the firm is willing to relax its credit policy. The firm proposes a new credit policy of 2/15 net 60 days as against the present policy of 1/15 net 45 days. The firm expects an increase in the sales by 15%. However, it is also expected that bad debts will go up to 2.5% of sales from 1.5%. The contribution to sales ratio of the firm is 25%. The firm's tax rate is 30% and the firm requires an after tax return of 12% on its investment. Should the firm change the credit policy?";
+  const answer = buildCreditPolicyAnalysisReply(question, 'english');
+  assert.ok(answer);
+  assert.match(answer, /₹23,00,000/);
+  assert.match(answer, /₹75,000/);
+  assert.match(answer, /₹57,500/);
+  assert.match(answer, /₹27,500/);
+  assert.match(answer, /₹33,250/);
+  assert.match(answer, /percentage of customers taking the 1% discount/i);
+  assert.match(answer, /12% after-tax required return/i);
+  assert.doesNotMatch(answer, /firm should (?:accept|reject)/i);
+  assert.match(answer, /Under the current policy/i);
+  assert.match(answer, /2% discount/i);
+  const finalAnswer = buildCreditPolicyAnalysisReply('Current policy 40%, proposed policy 60%', 'english', [question]);
+  assert.ok(finalAnswer);
+  assert.match(finalAnswer, /Average collection period: current 33\.00 days; proposed 33\.00 days/);
+  assert.match(finalAnswer, /Net annual benefit: ₹17,089/);
+  assert.match(finalAnswer, /Decision: ACCEPT/);
+
+});
+
+test('does not guess a credit-policy decision when the required problem data is absent', () => {
+  assert.equal(buildCreditPolicyAnalysisReply('Should I change my credit policy?', 'english'), null);
+});
+
+
+test('quality gate marks the credit-policy numerical as partial until missing uptake is supplied', () => {
+  const question = "The current credit sales of a firm is ₹20,00,000 and the firm proposes a new credit policy of 2/15 net 60 days against 1/15 net 45 days. Sales increase by 15%, bad debts rise to 2.5% from 1.5%, contribution to sales ratio is 25%, tax is 30%, and required after-tax return is 12%. Should the firm change the credit policy?";
+  const answer = buildCreditPolicyAnalysisReply(question, 'english');
+  assert.ok(answer);
+  const assessment = assessParakhResponseQuality({
+    question,
+    answer,
+    course: 'CA_INTERMEDIATE',
+    subjects: ['Financial Management and Strategic Management'],
+    knowledgeMatched: true,
+  });
+  assert.equal(assessment.questionKind, 'numerical');
+  assert.equal(assessment.subjectDomain, 'financial_management');
+  assert.equal(assessment.status, 'PARTIAL_NEEDS_INPUT');
+  assert.equal(assessment.checks.numericalWorkings, true);
+  assert.equal(assessment.checks.assumptionsDisclosed, true);
+  assert.equal(assessment.factualAccuracyCertified, false);
+});
+
+test('current statutory questions require an authoritative primary source, not just a search result', () => {
+  const question = 'What is the latest GST rate applicable to this supply?';
+  const noSource = assessParakhResponseQuality({
+    question,
+    answer: 'The latest rate must be checked against the current official notification before applying it. Do not rely on an old summary.',
+    course: 'CA_INTERMEDIATE',
+    subjects: ['Taxation'],
+    knowledgeMatched: false,
+  });
+  assert.equal(noSource.questionKind, 'current_information');
+  assert.equal(noSource.requiresPrimarySource, true);
+  assert.equal(noSource.status, 'NEEDS_PRIMARY_SOURCE');
+
+  const withPrimarySource = assessParakhResponseQuality({
+    question,
+    answer: 'The applicable rate is stated in the official notification. Check the exact supply classification, effective date and any exemption before selecting the rate. Apply the primary notification to the facts.',
+    course: 'CA_INTERMEDIATE',
+    subjects: ['Taxation'],
+    sources: [{ title: 'CBIC notification', url: 'https://www.cbic.gov.in/notifications/example' }],
+    knowledgeMatched: true,
+  });
+  assert.equal(withPrimarySource.checks.primarySourcePresent, true);
+  assert.ok(withPrimarySource.limitations.some((item) => /does not verify the document text, effective date/i.test(item)));
+  assert.match(buildParakhQualityNotice(withPrimarySource, 'english'), /does not certify the document text, effective date or applicability/i);
+  assert.notEqual(withPrimarySource.status, 'NEEDS_PRIMARY_SOURCE');
+});
+
+test('subject readiness reports partial seed guidance without claiming complete CA coverage', () => {
+  const report = buildParakhSubjectCoverageReport([
+    'Accounting',
+    'Business Laws',
+    'Taxation',
+    'Auditing and Ethics',
+    'Financial Management and Strategic Management',
+  ]);
+  const accounting = report.subjectDomains.find((item) => item.domain === 'accounting');
+  const taxation = report.subjectDomains.find((item) => item.domain === 'taxation');
+  assert.equal(report.overallStatus, 'FOUNDATION_IN_PROGRESS');
+  assert.equal(accounting?.guidanceStatus, 'PARTIAL_GUIDANCE_SEEDED');
+  assert.equal(taxation?.guidanceStatus, 'PARTIAL_GUIDANCE_SEEDED');
+  assert.equal(accounting?.completeVerifiedCoverage, false);
+  assert.equal(accounting?.caFinalCurriculumMapping, 'MAPPED_NOT_BENCHMARKED');
+  assert.equal(report.automaticModelTraining, false);
+  assert.equal(report.humanReviewRequiredForKnowledgeChanges, true);
+});
+
+test('benchmark harness checks required answer evidence without certifying factual accuracy', () => {
+  const result = evaluateParakhQualityBenchmark({
+    id: 'gst-current-primary-source',
+    question: 'What is the latest GST rate for this supply?',
+    course: 'CA_INTERMEDIATE',
+    expectedQuestionKind: 'current_information',
+    requiredPatterns: ['effective date', 'official notification'],
+    forbiddenPatterns: ['always 18%'],
+    requiresPrimarySource: true,
+  }, '1. Check the official notification for the exact supply classification.\n2. Verify the effective date and any exemption before applying the stated rate.\nConclusion: apply the rate only after the supply facts match the published notification.', [
+    { title: 'CBIC notification', url: 'https://cbic.gov.in/notifications/example' },
+  ], true);
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.failedRequirements, []);
+  assert.equal(result.assessment.factualAccuracyCertified, false);
+});
+
+test('subject classifier distinguishes Financial Management and Strategic Management', () => {
+  assert.equal(classifyParakhQuestion('Explain current ratio in FM', ['Financial Management and Strategic Management']).domain, 'financial_management');
+  assert.equal(classifyParakhQuestion('Explain SWOT analysis in SM', ['Financial Management and Strategic Management']).domain, 'strategic_management');
+  assert.equal(classifyParakhQuestion('How should I prepare audit evidence?', ['Auditing and Ethics']).domain, 'auditing');
+});
+
+test('subject classifier recognises CA Final and SPOM paper titles from the official curriculum registry', () => {
+  assert.equal(classifyParakhQuestion('Explain Advanced Financial Management', ['Advanced Financial Management']).domain, 'financial_management');
+  assert.equal(classifyParakhQuestion('Explain Direct Tax Laws & International Taxation', ['Direct Tax Laws & International Taxation']).domain, 'taxation');
+  assert.equal(classifyParakhQuestion('Explain Integrated Business Solutions', ['Integrated Business Solutions']).domain, 'integrated_business_solutions');
+  assert.equal(classifyParakhQuestion('Explain Strategic Cost & Performance Management', ['Strategic Cost & Performance Management']).domain, 'cost_accounting');
+  assert.equal(classifyParakhQuestion('Explain Valuation', ['Valuation']).domain, 'financial_management');
+});
+
+
+
+test('authored topic inventory reports the exact current seed count and never claims verification', () => {
+  const topics = getStudyKnowledgeTopicInventory();
+  assert.equal(topics.length, 12);
+  assert.ok(topics.some((topic) => topic.topicId === 'intermediate-fm-ratio-analysis'));
+  assert.ok(topics.every((topic) => Array.isArray(topic.subjects)));
+});
+
+test('authored subject inventory is reported as guidance seed data, not complete syllabus coverage', () => {
+  const subjects = getStudyKnowledgeSubjectInventory();
+  assert.ok(subjects.includes('Accounting'));
+  assert.ok(subjects.includes('Taxation'));
+  assert.ok(subjects.includes('Financial Management and Strategic Management'));
+  assert.ok(subjects.includes('Auditing and Ethics'));
+});
+
+
+test('student-facing quality notices disclose primary-source, coverage and incomplete-answer limitations', () => {
+  const base = {
+    frameworkVersion: '1.0' as const,
+    structuralScore: 20,
+    questionKind: 'statutory_application' as const,
+    subjectDomain: 'taxation' as const,
+    requiresPrimarySource: true,
+    primarySources: [],
+    checks: {
+      substantiveAnswer: true,
+      structuredExplanation: false,
+      topicKnowledgeMatched: false,
+      numericalWorkings: true,
+      conclusionOrNextStep: false,
+      assumptionsDisclosed: true,
+      primarySourcePresent: false,
+    },
+    limitations: [],
+    factualAccuracyCertified: false as const,
+  };
+  assert.match(buildParakhQualityNotice({ ...base, status: 'NEEDS_PRIMARY_SOURCE' }, 'hinglish'), /recognised official primary-source domain/i);
+  assert.match(buildParakhQualityNotice({ ...base, requiresPrimarySource: false, status: 'NEEDS_HUMAN_REVIEW' }, 'english'), /verified subject-specific reference/i);
+  assert.match(buildParakhQualityNotice({ ...base, requiresPrimarySource: false, status: 'INCOMPLETE' }, 'hindi'), /complete worked answer/i);
+  assert.equal(buildParakhQualityNotice({ ...base, requiresPrimarySource: false, status: 'STRUCTURE_READY' }, 'english'), '');
+});
+
+
+test('official curriculum registry covers Foundation, Intermediate, Final and SPOM paper lists', () => {
+  const foundation = getParakhCurriculumPapers('CA_FOUNDATION');
+  const intermediate = getParakhCurriculumPapers('CA_INTERMEDIATE');
+  const final = getParakhCurriculumPapers('CA_FINAL');
+  const spom = getParakhCurriculumPapers('SPOM');
+  assert.equal(foundation.length, 4);
+  assert.equal(intermediate.length, 6);
+  assert.equal(final.length, 6);
+  assert.equal(spom.length, 16);
+  assert.ok(intermediate.some((paper) => paper.title === 'Taxation' && paper.sections.includes('Goods and Services Tax')));
+  assert.ok(final.some((paper) => paper.title === 'Integrated Business Solutions'));
+  assert.ok(spom.some((paper) => paper.title === 'Strategic Cost & Performance Management'));
+  const summary = getParakhCurriculumSummary();
+  assert.equal(summary.status, 'OFFICIAL_PAPER_MAPPING_ONLY');
+  assert.equal(summary.knowledgeCoverageVerified, false);
+  assert.equal(summary.courses.length, 4);
+});
+
+test('CA Final subject mapping is visible but does not imply benchmark completion', () => {
+  const report = buildParakhSubjectCoverageReport(getStudyKnowledgeSubjectInventory());
+  const finalMapped = report.subjectDomains.filter((item) => item.caFinalCurriculumMapping === 'MAPPED_NOT_BENCHMARKED');
+  assert.ok(finalMapped.some((item) => item.domain === 'accounting'));
+  assert.ok(finalMapped.some((item) => item.domain === 'financial_management'));
+  assert.ok(finalMapped.some((item) => item.domain === 'auditing'));
+  assert.ok(finalMapped.some((item) => item.domain === 'integrated_business_solutions'));
+  assert.ok(finalMapped.every((item) => item.completeVerifiedCoverage === false));
+  const fm = report.subjectDomains.find((item) => item.domain === 'financial_management');
+  const tax = report.subjectDomains.find((item) => item.domain === 'taxation');
+  assert.ok(fm?.mappedCourses.includes('SPOM'));
+  assert.ok(tax?.mappedCourses.includes('CA_FINAL'));
+  assert.ok(tax?.mappedCourses.includes('SPOM'));
+
 });

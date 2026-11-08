@@ -1,0 +1,527 @@
+import { getParakhCurriculumPapers } from './parakhCurriculumRegistry.js';
+
+export type ParakhCourseLevel = 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL' | 'SPOM';
+
+export type ParakhSubjectDomain =
+  | 'accounting'
+  | 'business_law'
+  | 'taxation'
+  | 'auditing'
+  | 'cost_accounting'
+  | 'financial_management'
+  | 'strategic_management'
+  | 'quantitative_aptitude'
+  | 'economics'
+  | 'integrated_business_solutions'
+  | 'general_ca';
+
+export type ParakhQuestionKind =
+  | 'current_information'
+  | 'statutory_application'
+  | 'numerical'
+  | 'conceptual'
+  | 'exam_strategy'
+  | 'study_planning'
+  | 'general';
+
+export type ParakhQualityStatus =
+  | 'STRUCTURE_READY'
+  | 'PARTIAL_NEEDS_INPUT'
+  | 'NEEDS_PRIMARY_SOURCE'
+  | 'NEEDS_HUMAN_REVIEW'
+  | 'INCOMPLETE';
+
+export interface ParakhSourceReference {
+  title?: string;
+  url: string;
+}
+
+export interface ParakhQualityAssessmentInput {
+  question: string;
+  answer: string;
+  course: ParakhCourseLevel | string;
+  subjects?: string[];
+  sources?: ParakhSourceReference[];
+  knowledgeMatched?: boolean;
+}
+
+export interface ParakhQualityAssessment {
+  frameworkVersion: '1.0';
+  status: ParakhQualityStatus;
+  structuralScore: number;
+  questionKind: ParakhQuestionKind;
+  subjectDomain: ParakhSubjectDomain;
+  requiresPrimarySource: boolean;
+  primarySources: string[];
+  checks: {
+    substantiveAnswer: boolean;
+    structuredExplanation: boolean;
+    topicKnowledgeMatched: boolean;
+    numericalWorkings: boolean;
+    conclusionOrNextStep: boolean;
+    assumptionsDisclosed: boolean;
+    primarySourcePresent: boolean;
+  };
+  limitations: string[];
+  factualAccuracyCertified: false;
+}
+
+const SUBJECT_DOMAINS: Array<{
+  key: ParakhSubjectDomain;
+  label: string;
+  aliases: string[];
+  mappedCourses: ParakhCourseLevel[];
+  seededSubjects: string[];
+}> = [
+  {
+    key: 'accounting',
+    label: 'Accounting and Financial Reporting',
+    aliases: ['accounting', 'accounts', 'financial reporting', 'advanced accounting', 'company accounts'],
+    mappedCourses: ['CA_FOUNDATION', 'CA_INTERMEDIATE'],
+    seededSubjects: ['Accounting', 'Advanced Accounting'],
+  },
+  {
+    key: 'business_law',
+    label: 'Business and Corporate Law',
+    aliases: ['business law', 'business laws', 'corporate law', 'company law', 'companies act', 'llp act', 'law'],
+    mappedCourses: ['CA_FOUNDATION', 'CA_INTERMEDIATE'],
+    seededSubjects: ['Business Laws', 'Corporate and Other Laws'],
+  },
+  {
+    key: 'taxation',
+    label: 'Taxation',
+    aliases: ['tax', 'taxation', 'income tax', 'direct tax', 'gst', 'indirect tax', 'input tax credit'],
+    mappedCourses: ['CA_INTERMEDIATE'],
+    seededSubjects: ['Taxation'],
+  },
+  {
+    key: 'auditing',
+    label: 'Auditing and Ethics',
+    aliases: ['audit', 'auditing', 'auditor', 'auditing and ethics', 'audit evidence', 'audit report'],
+    mappedCourses: ['CA_INTERMEDIATE'],
+    seededSubjects: ['Auditing and Ethics'],
+  },
+  {
+    key: 'cost_accounting',
+    label: 'Cost and Management Accounting',
+    aliases: ['costing', 'cost accounting', 'cost and management accounting', 'marginal costing', 'standard costing'],
+    mappedCourses: ['CA_INTERMEDIATE'],
+    seededSubjects: ['Cost and Management Accounting'],
+  },
+  {
+    key: 'financial_management',
+    label: 'Financial Management',
+    aliases: ['financial management', 'fm', 'working capital', 'cost of capital', 'capital structure', 'ratio analysis'],
+    mappedCourses: ['CA_INTERMEDIATE'],
+    seededSubjects: ['Financial Management and Strategic Management'],
+  },
+  {
+    key: 'strategic_management',
+    label: 'Strategic Management',
+    aliases: ['strategic management', 'sm', 'swot', 'porter', 'pestel', 'value chain'],
+    mappedCourses: ['CA_INTERMEDIATE'],
+    seededSubjects: ['Financial Management and Strategic Management'],
+  },
+  {
+    key: 'quantitative_aptitude',
+    label: 'Quantitative Aptitude and Statistics',
+    aliases: ['quantitative aptitude', 'business mathematics', 'statistics', 'logical reasoning', 'probability'],
+    mappedCourses: ['CA_FOUNDATION'],
+    seededSubjects: ['Quantitative Aptitude'],
+  },
+  {
+    key: 'economics',
+    label: 'Business Economics',
+    aliases: ['business economics', 'economics', 'demand and supply', 'elasticity', 'market structure'],
+    mappedCourses: ['CA_FOUNDATION'],
+    seededSubjects: ['Business Economics'],
+  },
+  {
+    key: 'integrated_business_solutions',
+    label: 'Integrated Business Solutions',
+    aliases: ['integrated business solutions', 'multidisciplinary case study'],
+    mappedCourses: ['CA_FINAL'],
+    seededSubjects: [],
+  },
+  {
+    key: 'general_ca',
+    label: 'Cross-subject CA learning skills',
+    aliases: ['ca', 'icai', 'revision', 'mock test', 'exam strategy'],
+    mappedCourses: ['CA_FOUNDATION', 'CA_INTERMEDIATE', 'CA_FINAL'],
+    seededSubjects: [],
+  },
+];
+
+const PRIMARY_SOURCE_HOSTS = [
+  'icai.org',
+  'icai-cds.org',
+  'incometax.gov.in',
+  'incometaxindia.gov.in',
+  'cbic.gov.in',
+  'gst.gov.in',
+  'mca.gov.in',
+  'indiacode.nic.in',
+  'egazette.nic.in',
+  'rbi.org.in',
+  'sebi.gov.in',
+];
+
+function normalizeText(value: string): string {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function containsAlias(text: string, alias: string): boolean {
+  const normalizedText = normalizeText(text);
+  const normalizedAlias = normalizeText(alias);
+  if (!normalizedText || !normalizedAlias) return false;
+  return (' ' + normalizedText + ' ').includes(' ' + normalizedAlias + ' ');
+}
+
+export function resolveParakhSubjectDomain(
+  question: string,
+  subjects: string[] = [],
+): ParakhSubjectDomain {
+  const questionFmSignal = /\b(fm|financial management|ratio analysis|working capital|cost of capital|capital structure)\b/i.test(question);
+  const questionSmSignal = /\b(sm|strategic management|swot|porter|pestel|value chain)\b/i.test(question);
+  if (questionFmSignal && !questionSmSignal) return 'financial_management';
+  if (questionSmSignal && !questionFmSignal) return 'strategic_management';
+
+  const supplied = subjects.join(' ');
+  const text = question + ' ' + supplied;
+
+  // Use the authoritative paper registry to recognise course-specific titles,
+  // including CA Final and SPOM topics that are not in the planner's legacy aliases.
+  for (const paper of getParakhCurriculumPapers()) {
+    const paperMatched = containsAlias(question, paper.title)
+      || containsAlias(supplied, paper.title)
+      || paper.sections.some((section) => containsAlias(question, section) || containsAlias(supplied, section));
+    if (!paperMatched) continue;
+    const mappedDomain = paper.domainKeys.find((key) => key !== 'general_ca');
+    if (mappedDomain) return mappedDomain as ParakhSubjectDomain;
+  }
+
+  for (const domain of SUBJECT_DOMAINS) {
+    if (domain.key === 'general_ca') continue;
+    if (domain.aliases.some((alias) => containsAlias(text, alias))) return domain.key;
+  }
+  return 'general_ca';
+}
+
+function isCurrentInformationQuestion(question: string): boolean {
+  if (/\bcurrent\s+ratio\b/i.test(question)) return false;
+  return /\b(latest|most recent|currently applicable|as of today|as on today|today's|recent amendment|latest amendment|latest notification|latest circular|current rate|current limit|current due date|effective from|in force as of|finance act 20\d{2}|assessment year 20\d{2}|previous year 20\d{2})\b/i.test(question);
+}
+
+function isStatutoryApplicationQuestion(question: string, domain: ParakhSubjectDomain): boolean {
+  if (!['business_law', 'taxation'].includes(domain)) return false;
+  return /\b(section|sub[- ]?section|rule|notification|circular|rate|limit|deduction|exemption|taxability|eligible|eligibility|penalty|interest|due date|applicability|finance act|provision|amendment|residential status|input tax credit)\b/i.test(question);
+}
+
+function isNumericalQuestion(question: string): boolean {
+  return /\b(calculate|compute|work out|find the value|determine the amount|solve|numerical|problem|sum|working note|should the firm|net benefit|payback|irr|npv|break even|break-even|ratio|variance)\b/i.test(question)
+    || /(?:₹|rs\.?|inr|\$)\s*[\d,]+/i.test(question)
+    || /\d[\d,]*(?:\.\d+)?\s*(?:%|days?|units?|years?)\b/i.test(question);
+}
+
+export function classifyParakhQuestion(
+  question: string,
+  subjects: string[] = [],
+): { kind: ParakhQuestionKind; domain: ParakhSubjectDomain; requiresPrimarySource: boolean } {
+  const domain = resolveParakhSubjectDomain(question, subjects);
+  if (isCurrentInformationQuestion(question)) {
+    return { kind: 'current_information', domain, requiresPrimarySource: true };
+  }
+  if (isStatutoryApplicationQuestion(question, domain)) {
+    return { kind: 'statutory_application', domain, requiresPrimarySource: true };
+  }
+  if (isNumericalQuestion(question)) {
+    return { kind: 'numerical', domain, requiresPrimarySource: false };
+  }
+  if (/\b(study plan|timetable|schedule|study routine|roadmap|daily plan|weekly plan)\b/i.test(question)) {
+    return { kind: 'study_planning', domain, requiresPrimarySource: false };
+  }
+  if (/\b(mock|past paper|previous year|time management|answer presentation|exam strategy|attempt strategy)\b/i.test(question)) {
+    return { kind: 'exam_strategy', domain, requiresPrimarySource: false };
+  }
+  if (/\b(what is|what are|explain|define|meaning|difference between|why|how does|how do|samjhao|kya hai|kaise)\b/i.test(question)) {
+    return { kind: 'conceptual', domain, requiresPrimarySource: false };
+  }
+  return { kind: 'general', domain, requiresPrimarySource: false };
+}
+
+function isPrimarySourceUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname.toLowerCase();
+    return PRIMARY_SOURCE_HOSTS.some((domain) => host === domain || host.endsWith('.' + domain));
+  } catch {
+    return false;
+  }
+}
+
+function hasStructuredExplanation(answer: string): boolean {
+  return /(?:^|\n)\s*(?:\d+[.)]|[-*•])\s+/m.test(answer)
+    || /\b(step\s*1|firstly|first,|then,|finally,)\b/i.test(answer);
+}
+
+function hasNumericalWorkings(answer: string): boolean {
+  const hasNumericEvidence = /(?:₹|rs\.?|inr|\$)\s*[\d,]+|\b\d+(?:\.\d+)?\s*%|\b\d+(?:\.\d+)?\s*(?:days?|units?|years?)\b/i.test(answer);
+  const hasWorkingLanguage = /\b(formula|working|calculation|calculated|incremental|total|net benefit|average collection|contribution|bad debt|receivable|variance|step)\b/i.test(answer);
+  return hasNumericEvidence && hasWorkingLanguage;
+}
+
+function hasConclusionOrNextStep(answer: string): boolean {
+  return /\b(final answer|answer|conclusion|therefore|hence|decision|accept|reject|net benefit|next step|please provide|share the missing|send the exact)\b/i.test(answer);
+}
+
+function disclosesAssumptionsOrMissingInputs(answer: string): boolean {
+  return /\b(assumption|assume|assuming|missing|not provided|depends on|based on the data|given data|provided figures|cannot determine|please provide|need one more|remaining information)\b/i.test(answer);
+}
+
+export function assessParakhResponseQuality(
+  input: ParakhQualityAssessmentInput,
+): ParakhQualityAssessment {
+  const question = String(input.question || '');
+  const answer = String(input.answer || '');
+  const sources = Array.isArray(input.sources) ? input.sources : [];
+  const classification = classifyParakhQuestion(question, input.subjects || []);
+  const safeSources = sources
+    .map((source) => String(source.url || '').trim())
+    .filter((url) => /^https:\/\//i.test(url));
+  const primarySources = safeSources.filter(isPrimarySourceUrl);
+  const substantiveAnswer = answer.trim().length >= 80;
+  const structuredExplanation = hasStructuredExplanation(answer);
+  const topicKnowledgeMatched = Boolean(input.knowledgeMatched);
+  const numericalWorkings = classification.kind === 'numerical'
+    ? hasNumericalWorkings(answer)
+    : true;
+  const conclusionOrNextStep = hasConclusionOrNextStep(answer);
+  const assumptionsDisclosed = classification.kind !== 'numerical'
+    || disclosesAssumptionsOrMissingInputs(answer);
+  const primarySourcePresent = primarySources.length > 0;
+
+  let structuralScore = 0;
+  if (substantiveAnswer) structuralScore += 20;
+  if (structuredExplanation) structuralScore += 15;
+  if (topicKnowledgeMatched) structuralScore += 20;
+  if (numericalWorkings) structuralScore += 20;
+  if (conclusionOrNextStep) structuralScore += 10;
+  if (assumptionsDisclosed) structuralScore += 10;
+  if (primarySourcePresent) structuralScore += 5;
+  structuralScore = Math.max(0, Math.min(100, structuralScore));
+
+  let status: ParakhQualityStatus = 'STRUCTURE_READY';
+  if (classification.requiresPrimarySource && !primarySourcePresent) {
+    status = 'NEEDS_PRIMARY_SOURCE';
+  } else if (classification.kind === 'numerical' && numericalWorkings && assumptionsDisclosed
+    && /\b(missing|not provided|please provide|cannot determine|need one more|depends on)\b/i.test(answer)) {
+    status = 'PARTIAL_NEEDS_INPUT';
+  } else if (!substantiveAnswer || (classification.kind === 'numerical' && !numericalWorkings)) {
+    status = 'INCOMPLETE';
+  } else if (!topicKnowledgeMatched && safeSources.length === 0) {
+    status = 'NEEDS_HUMAN_REVIEW';
+  } else if (!structuredExplanation || !conclusionOrNextStep) {
+    status = 'NEEDS_HUMAN_REVIEW';
+  }
+
+  const limitations = [
+    'This gate checks response structure and evidence signals; it does not prove factual correctness or mathematical validity.',
+  ];
+  if (classification.requiresPrimarySource && !primarySourcePresent) {
+    limitations.push('No link from a recognised official primary-source domain was supplied.');
+  }
+  if (classification.requiresPrimarySource && primarySourcePresent) {
+    limitations.push('The allowlist recognises the source domain only; it does not verify the document text, effective date, provision or applicability to the facts.');
+  }
+  if (classification.kind === 'numerical' && status === 'PARTIAL_NEEDS_INPUT') {
+    limitations.push('The answer must keep the decision conditional until the missing inputs are supplied.');
+  }
+  if (!topicKnowledgeMatched && safeSources.length === 0) {
+    limitations.push('No subject-specific knowledge entry or source was matched; human review is required.');
+  }
+
+  return {
+    frameworkVersion: '1.0',
+    status,
+    structuralScore,
+    questionKind: classification.kind,
+    subjectDomain: classification.domain,
+    requiresPrimarySource: classification.requiresPrimarySource,
+    primarySources,
+    checks: {
+      substantiveAnswer,
+      structuredExplanation,
+      topicKnowledgeMatched,
+      numericalWorkings,
+      conclusionOrNextStep,
+      assumptionsDisclosed,
+      primarySourcePresent,
+    },
+    limitations,
+    factualAccuracyCertified: false,
+  };
+}
+
+export type ParakhQualityReplyLanguage = 'english' | 'hindi' | 'hinglish';
+
+/** Student-facing caveat for replies that do not meet evidence or coverage requirements. */
+export function buildParakhQualityNotice(
+  assessment: ParakhQualityAssessment,
+  language: ParakhQualityReplyLanguage,
+): string {
+  if (assessment.requiresPrimarySource && !assessment.checks.primarySourcePresent) {
+    if (language === 'hinglish') return '\n\nBhai, answer ke saath recognised official primary-source domain ka link nahi mila. Isse final legal/tax position mat maan; ICAI ya relevant government authority ki current notification verify kar.';
+    if (language === 'hindi') return '\n\nउत्तर के साथ मान्यता-प्राप्त official primary-source domain का link नहीं मिला। इसे अंतिम legal/tax position न मानें; ICAI या संबंधित सरकारी authority की current notification verify करें।';
+    return '\n\nNo link from a recognised official primary-source domain was found. Do not treat this as the final legal/tax position; verify the current ICAI or relevant government-authority notification.';
+  }
+  if (assessment.requiresPrimarySource && assessment.checks.primarySourcePresent) {
+    if (language === 'hinglish') return '\n\nOfficial-domain source link mila hai, lekin ye check document ka exact text, effective date ya is question par applicability certify nahi karta. Relevant notification/provision ko kholkar facts se match kar.';
+    if (language === 'hindi') return '\n\nOfficial-domain source link मिला है, लेकिन यह check document के exact text, effective date या इस प्रश्न पर applicability certify नहीं करता। संबंधित notification/provision खोलकर facts से मिलाएँ।';
+    return '\n\nAn official-domain source link was found, but this check does not certify the document text, effective date or applicability to this question. Open the relevant notification/provision and match it to the facts.';
+  }
+  if (assessment.status === 'NEEDS_HUMAN_REVIEW') {
+    if (language === 'hinglish') return '\n\nYe explanation available general guidance par based hai; is exact topic ka verified subject-specific reference abhi match nahi hua. ICAI module ka page ya exact question bhej de, main uske basis par answer cross-check karunga.';
+    if (language === 'hindi') return '\n\nयह explanation उपलब्ध सामान्य guidance पर आधारित है; इस exact topic का verified subject-specific reference अभी match नहीं हुआ। ICAI module का page या exact question भेजें, मैं उसके आधार पर उत्तर cross-check करूँगा।';
+    return '\n\nThis explanation uses general guidance; a verified subject-specific reference for this exact topic was not matched. Share the ICAI module page or exact question so the answer can be cross-checked.';
+  }
+  if (assessment.status === 'INCOMPLETE') {
+    if (language === 'hinglish') return '\n\nBhai, is reply mein complete worked answer ke liye required steps/data abhi cover nahi hue. Exact question aur saare figures bhej de; incomplete answer ko final mat maan.';
+    if (language === 'hindi') return '\n\nइस reply में complete worked answer के लिए आवश्यक steps/data अभी cover नहीं हुए हैं। Exact question और सभी figures भेजें; अधूरे उत्तर को final न मानें।';
+    return '\n\nThis reply does not yet contain all steps or data required for a complete worked answer. Share the exact question and all figures; do not treat this as final.';
+  }
+  return '';
+}
+
+export interface ParakhSubjectCoverageRow {
+  domain: ParakhSubjectDomain;
+  label: string;
+  seededSubjects: string[];
+  guidanceStatus: 'PARTIAL_GUIDANCE_SEEDED' | 'KNOWLEDGE_GAP' | 'GENERAL_GUIDANCE_ONLY';
+  benchmarkFamiliesRequired: string[];
+  completeVerifiedCoverage: false;
+  mappedCourses: ParakhCourseLevel[];
+  caFinalCurriculumMapping: 'MAPPED_NOT_BENCHMARKED' | 'NOT_IN_FINAL_PAPER_MAP';
+}
+
+
+export const PARAKH_QUALITY_BENCHMARK_FAMILIES = [
+  'core_concept',
+  'unseen_numerical_or_application',
+  'exam_style_question',
+  'edge_case_and_common_mistake',
+  'source_sensitive_or_amendment_check',
+] as const;
+
+const REQUIRED_BENCHMARK_FAMILIES = [...PARAKH_QUALITY_BENCHMARK_FAMILIES];
+
+export function buildParakhSubjectCoverageReport(
+  knowledgeSubjects: string[] = [],
+): {
+  frameworkVersion: '1.0';
+  overallStatus: 'FOUNDATION_IN_PROGRESS';
+  automaticModelTraining: false;
+  humanReviewRequiredForKnowledgeChanges: true;
+  subjectDomains: ParakhSubjectCoverageRow[];
+} {
+  const normalizedSubjects = knowledgeSubjects.map(normalizeText);
+  const curriculumPapers = getParakhCurriculumPapers();
+  const finalPaperDomains = new Set(
+    curriculumPapers.filter((paper) => paper.course === 'CA_FINAL').flatMap((paper) => paper.domainKeys),
+  );
+  const subjectDomains = SUBJECT_DOMAINS
+    .filter((domain) => domain.key !== 'general_ca')
+    .map((domain): ParakhSubjectCoverageRow => {
+      const seededSubjects = domain.seededSubjects.filter((subject) =>
+        normalizedSubjects.includes(normalizeText(subject)),
+      );
+      return {
+        domain: domain.key,
+        label: domain.label,
+        seededSubjects,
+        guidanceStatus: seededSubjects.length
+          ? 'PARTIAL_GUIDANCE_SEEDED'
+          : 'KNOWLEDGE_GAP',
+        benchmarkFamiliesRequired: [...REQUIRED_BENCHMARK_FAMILIES],
+        completeVerifiedCoverage: false,
+        mappedCourses: Array.from(new Set([
+          ...domain.mappedCourses,
+          ...curriculumPapers
+            .filter((paper) => paper.domainKeys.includes(domain.key))
+            .map((paper) => paper.course),
+        ])),
+        caFinalCurriculumMapping: finalPaperDomains.has(domain.key)
+          ? 'MAPPED_NOT_BENCHMARKED'
+          : 'NOT_IN_FINAL_PAPER_MAP',
+      };
+    });
+
+  return {
+    frameworkVersion: '1.0',
+    overallStatus: 'FOUNDATION_IN_PROGRESS',
+    automaticModelTraining: false,
+    humanReviewRequiredForKnowledgeChanges: true,
+    subjectDomains,
+  };
+}
+
+
+export interface ParakhQualityBenchmarkSpec {
+  id: string;
+  question: string;
+  course: ParakhCourseLevel;
+  expectedQuestionKind: ParakhQuestionKind;
+  requiredPatterns?: string[];
+  forbiddenPatterns?: string[];
+  requiresPrimarySource?: boolean;
+}
+
+export interface ParakhQualityBenchmarkResult {
+  id: string;
+  passed: boolean;
+  assessment: ParakhQualityAssessment;
+  failedRequirements: string[];
+}
+
+/**
+ * A deterministic benchmark harness for repeatable answer-shape and evidence checks.
+ * Subject owners must add verified answer fixtures; passing this harness alone does
+ * not certify that the answer's facts, calculations or ICAI treatment are correct.
+ */
+export function evaluateParakhQualityBenchmark(
+  spec: ParakhQualityBenchmarkSpec,
+  answer: string,
+  sources: ParakhSourceReference[] = [],
+  knowledgeMatched = false,
+): ParakhQualityBenchmarkResult {
+  const assessment = assessParakhResponseQuality({
+    question: spec.question,
+    answer,
+    course: spec.course,
+    sources,
+    knowledgeMatched,
+  });
+  const failedRequirements: string[] = [];
+  if (assessment.questionKind !== spec.expectedQuestionKind) {
+    failedRequirements.push('question_kind');
+  }
+  for (const pattern of spec.requiredPatterns || []) {
+    if (!new RegExp(pattern, 'i').test(answer)) failedRequirements.push('required_pattern:' + pattern);
+  }
+  for (const pattern of spec.forbiddenPatterns || []) {
+    if (new RegExp(pattern, 'i').test(answer)) failedRequirements.push('forbidden_pattern:' + pattern);
+  }
+  if (spec.requiresPrimarySource && !assessment.checks.primarySourcePresent) {
+    failedRequirements.push('primary_source_required');
+  }
+  if (!['STRUCTURE_READY', 'PARTIAL_NEEDS_INPUT'].includes(assessment.status)) {
+    failedRequirements.push('quality_gate:' + assessment.status);
+  }
+  return {
+    id: spec.id,
+    passed: failedRequirements.length === 0,
+    assessment,
+    failedRequirements,
+  };
+}
+

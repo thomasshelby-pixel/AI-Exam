@@ -88,6 +88,9 @@ import { verifyEvaluationConsistency } from '../services/evaluationConsistencySe
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } from '../services/parakhLearningService.js';
 import { getParakhConversationLearningMetrics } from '../services/parakhConversationLearningService.js';
+import { getStudyKnowledgeSubjectInventory, getStudyKnowledgeTopicInventory } from '../services/studyPlannerKnowledgeService.js';
+import { buildParakhSubjectCoverageReport } from '../services/parakhQualityFramework.js';
+import { getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { findAuthoritativeMaterialWithFallback, findEvaluationMaterialByExactIdForRecovery, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
@@ -517,6 +520,28 @@ router.get('/parakh-learning/metrics', async (_req: AuthRequest, res: Response) 
 });
 
 // Aggregate conversation-learning signals only; no student ids or raw chat text are exposed.
+router.get('/parakh-learning/quality-readiness', (_req: AuthRequest, res: Response) => {
+  try {
+    const report = buildParakhSubjectCoverageReport(getStudyKnowledgeSubjectInventory());
+    const knowledgeTopics = getStudyKnowledgeTopicInventory();
+    return res.json({
+      success: true,
+      report: {
+        ...report,
+        curriculum: getParakhCurriculumSummary(),
+        knowledgeBank: {
+          topicCount: knowledgeTopics.length,
+          topics: knowledgeTopics,
+          coverageVerified: false,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[PARAKH] Failed to load subject quality readiness:', error);
+    return res.status(500).json({ error: 'Failed to load PARAKH quality readiness.' });
+  }
+});
+
 router.get('/parakh-learning/conversation-insights', (_req: AuthRequest, res: Response) => {
   try {
     const metrics = getParakhConversationLearningMetrics(30);

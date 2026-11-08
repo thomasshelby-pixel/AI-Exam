@@ -14,9 +14,10 @@ import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRo
 import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildTopicIntentClarification, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
-import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
+import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -704,8 +705,46 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       });
     }
 
+    // Recognise the CA Intermediate FM credit-policy decision as a numerical question.
+    // It is deterministic and must never be sent to web search or the generic fallback.
+    const creditPolicyReply = course === 'CA_INTERMEDIATE'
+      ? buildCreditPolicyAnalysisReply(message, replyLanguage, studentHistory)
+      : null;
+    if (creditPolicyReply) {
+      const qualityGate = assessParakhResponseQuality({
+        question: message,
+        answer: creditPolicyReply,
+        course,
+        subjects: ['Financial Management and Strategic Management'],
+        knowledgeMatched: true,
+      });
+      const parsed = parsedProbe;
+      parsed.intent = 'general_guidance';
+      parsed.subjects = ['Financial Management and Strategic Management'];
+      parsed.missing_info = [];
+      parsed.should_call_planner = false;
+      return res.json({
+        success: true,
+        status: 'knowledge_answered',
+        sources: [],
+        message: creditPolicyReply,
+        parsed,
+        plan: null,
+        metadata: {
+          version: 'study-chat-credit-policy-numerical-v1',
+          modelUsed: false,
+          knowledgeMatched: true,
+          webResearchRequested: false,
+          webResearchAvailable: false,
+          qualityGate,
+          persistentStorage: false,
+        },
+      });
+    }
+
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const requestsWebResearch = shouldUseParakhWebResearch(message);
+    const requestClassification = classifyParakhQuestion(message, parsedProbe.subjects);
+    const requestsWebResearch = shouldUseParakhWebResearch(message) || requestClassification.requiresPrimarySource;
     const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history) || requestsWebResearch) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
@@ -722,21 +761,22 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       const webMessage = webSources.length
         ? buildParakhWebResearchMessage(replyLanguage, webSources.length)
         : null;
-      const currentInfoUnavailableNote = requestsWebResearch && !webSources.length
-        ? (replyLanguage === 'hinglish'
-          ? '\n\nBhai, abhi live web search se reliable result nahi mil paya. Main latest information guess nahi karunga; thodi der baad dobara try kar ya official source directly check kar.'
-          : replyLanguage === 'hindi'
-            ? '\n\nअभी live web search से reliable result नहीं मिल पाया। मैं latest जानकारी का अनुमान नहीं लगाऊँगा; कुछ देर बाद दोबारा कोशिश करें या official source सीधे देखें।'
-            : '\n\nLive web search did not return a reliable result just now. I will not guess at current information; please retry later or check the official source directly.')
-        : '';
-
       const guidance = buildGeneralStudyAnswer(message, parsed);
-      const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer) + currentInfoUnavailableNote;
+      const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
+      const qualityGate = assessParakhResponseQuality({
+        question: message,
+        answer,
+        course,
+        subjects: parsed.subjects,
+        sources: webSources,
+        knowledgeMatched: Boolean(knowledge),
+      });
+      const finalAnswer = answer + buildParakhQualityNotice(qualityGate, replyLanguage);
       return res.json({
         success: true,
         status: webSources.length ? 'web_research_answered' : knowledge ? 'knowledge_answered' : 'general_guidance_answered',
         sources: webSources,
-        message: answer,
+        message: finalAnswer,
         parsed,
         plan: null,
         metadata: {
@@ -746,6 +786,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
           webResearchRequested: requestsWebResearch,
           webResearchAvailable: Boolean(webSources.length),
           searchProvider: webResearch?.provider || null,
+          qualityGate,
           persistentStorage: false,
         },
       });

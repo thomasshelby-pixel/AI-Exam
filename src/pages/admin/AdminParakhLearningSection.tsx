@@ -34,6 +34,49 @@ interface ParakhConversationMetrics {
   automaticModelTraining: boolean;
 }
 
+interface ParakhQualityReadiness {
+  frameworkVersion: string;
+  overallStatus: string;
+  automaticModelTraining: boolean;
+  humanReviewRequiredForKnowledgeChanges: boolean;
+  subjectDomains: Array<{
+    domain: string;
+    label: string;
+    seededSubjects: string[];
+    guidanceStatus: 'PARTIAL_GUIDANCE_SEEDED' | 'KNOWLEDGE_GAP' | 'GENERAL_GUIDANCE_ONLY';
+    benchmarkFamiliesRequired: string[];
+    completeVerifiedCoverage: false;
+    mappedCourses: string[];
+    caFinalCurriculumMapping: 'MAPPED_NOT_BENCHMARKED' | 'NOT_IN_FINAL_PAPER_MAP';
+  }>;
+  curriculum: {
+    scheme: string;
+    checkedAt: string;
+    status: string;
+    knowledgeCoverageVerified: false;
+    courses: Array<{
+      course: string;
+      title: string;
+      paperCount: number;
+      sourceUrl: string;
+      papers: Array<{
+        code: string;
+        title: string;
+        group: string | null;
+        sections: string[];
+        domainKeys: string[];
+        sourceUrl: string;
+      }>;
+    }>;
+    limitations: string[];
+  };
+  knowledgeBank: {
+    topicCount: number;
+    topics: Array<{ topicId: string; title: string; subjects: string[] }>;
+    coverageVerified: false;
+  };
+}
+
 interface ParakhMetrics {
   engineName: string;
   trainingEnabled: boolean;
@@ -67,6 +110,7 @@ function formatDate(value?: string | null): string {
 export const AdminParakhLearningSection: React.FC = () => {
   const [metrics, setMetrics] = useState<ParakhMetrics | null>(null);
   const [conversationMetrics, setConversationMetrics] = useState<ParakhConversationMetrics | null>(null);
+  const [qualityReadiness, setQualityReadiness] = useState<ParakhQualityReadiness | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -77,12 +121,14 @@ export const AdminParakhLearningSection: React.FC = () => {
     setError('');
 
     try {
-      const [response, conversationResponse] = await Promise.all([
+      const [response, conversationResponse, qualityResponse] = await Promise.all([
         apiRequest<{ success: boolean; metrics: ParakhMetrics }>('/api/admin/parakh-learning/metrics'),
         apiRequest<{ success: boolean; metrics: ParakhConversationMetrics }>('/api/admin/parakh-learning/conversation-insights'),
+        apiRequest<{ success: boolean; report: ParakhQualityReadiness }>('/api/admin/parakh-learning/quality-readiness'),
       ]);
       setMetrics(response.metrics);
       setConversationMetrics(conversationResponse.metrics);
+      setQualityReadiness(qualityResponse.report);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : 'Could not load PARAKH learning metrics.');
     } finally {
@@ -271,6 +317,133 @@ export const AdminParakhLearningSection: React.FC = () => {
           <p className="mt-3 rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
             {conversationMetrics?.enabled ? 'No aggregate chat-learning signals have been recorded yet.' : 'Conversation learning is OFF until its privacy notice and applicable consent/legal basis are reviewed.'}
           </p>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
+              <BookOpen className="h-4 w-4 text-indigo-500" />
+              Subject-wise answer quality readiness
+            </h2>
+            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+              Authored guidance is only a starting point. Complete subject coverage requires verified sources and held-out benchmarks.
+            </p>
+          </div>
+          <span className="inline-flex w-fit rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+            {qualityReadiness?.overallStatus?.replace(/_/g, ' ') || 'READINESS UNAVAILABLE'}
+          </span>
+        </div>
+        {qualityReadiness ? (
+          <>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[620px] text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-[10px] uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                    <th className="px-2 py-2 font-bold">Subject domain</th>
+                    <th className="px-2 py-2 font-bold">Existing guidance</th>
+                    <th className="px-2 py-2 font-bold">Mapped course levels</th>
+                    <th className="px-2 py-2 font-bold">Benchmark families required</th>
+                    <th className="px-2 py-2 font-bold">Verified coverage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qualityReadiness.subjectDomains.map((item) => (
+                    <tr key={item.domain} className="border-b border-slate-100 last:border-0 dark:border-slate-800/70">
+                      <td className="px-2 py-3 font-semibold text-slate-900 dark:text-white">{item.label}</td>
+                      <td className="px-2 py-3 text-slate-600 dark:text-slate-300">
+                        {item.seededSubjects.length ? item.seededSubjects.join(', ') : 'Knowledge gap'}
+                        <span className="mt-1 block text-[9px] text-slate-400">{item.guidanceStatus.replace(/_/g, ' ')}</span>
+                      </td>
+                      <td className="px-2 py-3 text-slate-600 dark:text-slate-300">
+                        {item.mappedCourses.map((course) => course.replace('CA_', '')).join(', ') || 'Not mapped'}
+                        <span className="mt-1 block text-[9px] text-slate-400">
+                          {item.caFinalCurriculumMapping === 'MAPPED_NOT_BENCHMARKED' ? 'CA Final paper mapped; benchmarks pending' : 'No CA Final core-paper mapping'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-3 text-slate-600 dark:text-slate-300">
+                        {item.benchmarkFamiliesRequired.length} required; 0 verified sets
+                      </td>
+                      <td className="px-2 py-3">
+                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                          Not yet verified
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+              <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                <div>
+                  <h3 className="text-xs font-black text-slate-900 dark:text-white">Official course and paper map</h3>
+                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                    ICAI New Scheme catalogue checked {qualityReadiness.curriculum.checkedAt}; this is paper mapping, not verified answer coverage.
+                  </p>
+                </div>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {qualityReadiness.curriculum.status.replace(/_/g, ' ')}
+                </span>
+              </div>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                  <div>
+                    <p className="text-xs font-bold text-slate-900 dark:text-white">Authored knowledge bank</p>
+                    <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-300">
+                      {qualityReadiness.knowledgeBank.topicCount} starter topic entries · chapter-level verification still pending
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    Not complete syllabus coverage
+                  </span>
+                </div>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">View authored topic seeds</summary>
+                  <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {qualityReadiness.knowledgeBank.topics.map((topic) => (
+                      <li key={topic.topicId} className="rounded-md bg-white/80 px-2 py-1.5 text-[10px] text-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+                        <span className="font-semibold">{topic.title}</span>
+                        {topic.subjects.length ? <span className="block text-slate-400">{topic.subjects.join(', ')}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                {qualityReadiness.curriculum.courses.map((course) => (
+                  <div key={course.course} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white">{course.title}</h4>
+                      <span className="text-[10px] font-black tabular-nums text-slate-500">{course.paperCount} papers/modules</span>
+                    </div>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">View official paper list</summary>
+                      <ul className="mt-2 space-y-1 pl-4 text-[10px] text-slate-600 dark:text-slate-300">
+                        {course.papers.map((paper) => (
+                          <li key={paper.code}>
+                            <span className="font-semibold">{paper.code} · {paper.title}</span>
+                            {paper.group ? <span className="text-slate-400"> ({paper.group})</span> : null}
+                            {paper.sections.length ? <span className="block pl-2 text-slate-400">{paper.sections.join(' · ')}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                    <a href={course.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[10px] font-bold text-indigo-600 underline dark:text-indigo-300">Open ICAI source</a>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
+                Official paper mapping is not chapter mapping. Select attempt-specific study material, RTP/MTP and amendments before using an answer as exam-current.
+              </p>
+            </div>
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              Official course-paper titles are mapped from ICAI's New Scheme pages. This does not mean chapter-level content or benchmarks are complete: the current guidance bank has only a small seed set, and every subject still needs attempt-specific material, verified explanations and held-out tests. Knowledge changes require human review; chat insights do not automatically train or update a model.
+            </p>
+          </>
+        ) : (
+          <p className="mt-4 text-xs text-slate-400">Quality readiness data is not available right now.</p>
         )}
       </section>
 
