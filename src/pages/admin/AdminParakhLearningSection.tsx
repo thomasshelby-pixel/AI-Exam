@@ -617,7 +617,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                   ))}
                 </div>
                 <p className="mt-3 text-[9px] leading-relaxed text-amber-700 dark:text-amber-300">
-                  Important: a chapter/topic index is not a full lesson. Only the nine Intermediate FM Section A chapters have original teaching drafts; none is human-reviewed. CA Final topic pointers are provisional, and SPOM chapter indexing remains pending.
+                  Important: a chapter/topic index is not a full lesson. Only Intermediate Paper 6 has original teaching drafts: 9 Financial Management chapters (May 2026 catalogue edition) and 5 Strategic Management chapters (May 2027 onwards catalogue edition). None is human-reviewed; all 70 benchmark prompts await reviewed answer keys. CA Final topic pointers are provisional, and SPOM chapter indexing remains pending.
                 </p>
               </div>
               <p className="mt-3 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
