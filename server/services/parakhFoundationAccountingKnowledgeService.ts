@@ -64,9 +64,9 @@ const CHAPTERS: ChapterPack[] = [
       hindi: 'Bank Reconciliation Statement cash book के bank balance और bank statement/pass book के balance का अंतर समझाता है। Timing differences में issued but unpresented cheques तथा uncredited deposits आते हैं। अन्य items में bank charges, interest, direct debits, standing instructions और dishonoured cheques शामिल हो सकते हैं। पहले starting balance तथा overdraft/favourable nature पहचानें, फिर प्रत्येक item का सही add/less effect लागू करें।',
     },
     example: {
-      english: 'Cash-book favourable balance is ₹20,000. Cheques issued but not presented are ₹5,000; deposits not yet credited are ₹3,000; bank charges not entered in the cash book are ₹500. After updating the cash book for charges, the reconciled bank statement balance is ₹20,000 − ₹5,000 + ₹3,000? Check the direction carefully: the bank statement balance is ₹20,000 − ₹5,000 + ₹3,000 − ₹500 = ₹17,500 only when the ₹20,000 is the pre-adjustment cash-book balance and the charge is deducted from it; if the cash book is first updated to ₹19,500, reconcile only timing items: ₹19,500 − ₹5,000 + ₹3,000 = ₹17,500.',
-      hinglish: 'Cash-book favourable ₹20,000; issued not presented ₹5,000; deposit not credited ₹3,000; bank charges ₹500 cash book mein absent. Pehle cash book ₹19,500 karo; phir timing items: ₹19,500 − ₹5,000 + ₹3,000 = bank statement ₹17,500. Starting balance/approach consistent rakho.',
-      hindi: 'Cash-book balance ₹20,000 है; unpresented cheques ₹5,000, uncredited deposit ₹3,000 और bank charges ₹500 हैं। पहले cash book को ₹19,500 करें; फिर timing items adjust करें: ₹19,500 − ₹5,000 + ₹3,000 = ₹17,500 bank statement balance।',
+      english: 'Cash-book favourable balance is ₹20,000. Cheques issued but not presented are ₹5,000; deposits not yet credited are ₹3,000; bank charges not entered in the cash book are ₹500. Bank statement balance = ₹20,000 + ₹5,000 − ₹3,000 − ₹500 = ₹21,500 when starting from the pre-adjustment cash-book balance. Alternatively, first update the cash book to ₹19,500 for bank charges, then add unpresented cheques and subtract uncredited deposits: ₹19,500 + ₹5,000 − ₹3,000 = ₹21,500.',
+      hinglish: 'Cash-book favourable ₹20,000; issued not presented ₹5,000; deposit not credited ₹3,000; bank charges ₹500 cash book mein absent. Pehle cash book ₹19,500 karo; phir timing items: ₹19,500 + ₹5,000 − ₹3,000 = bank statement ₹21,500. Starting balance/approach consistent rakho.',
+      hindi: 'Cash-book balance ₹20,000 है; unpresented cheques ₹5,000, uncredited deposit ₹3,000 और bank charges ₹500 हैं। पहले cash book को ₹19,500 करें; फिर timing items adjust करें: ₹19,500 + ₹5,000 − ₹3,000 = ₹21,500 bank statement balance।',
     },
     simpler: {
       english: 'BRS is a bridge between two records. Identify why each record differs and use the correct direction—not a memorised add/less list.',
@@ -232,9 +232,9 @@ const CHAPTERS: ChapterPack[] = [
       hindi: 'Partnership accounts partners के capital, profit-sharing, reconstitution और dissolution को record करते हैं। Partnership deed profit-sharing ratio, interest, salary और commission जैसे terms तय करती है। Admission पर new ratio, sacrificing ratio, goodwill और revaluation; retirement/death पर gaining ratio और outgoing partner का settlement किया जाता है। Dissolution में assets realise, external liabilities तथा partner loans settle करके शेष राशि partners में बाँटी जाती है। LLP agreement और entity-specific requirements अलग verify करें।',
     },
     example: {
-      english: 'A and B share profits 3:2. C is admitted for 1/5 share, acquired equally from A and B. A sacrifices 3/25 and B sacrifices 2/25; the sacrificing ratio is 3:2. Confirm the exact new ratio and goodwill adjustment from the full facts before posting.',
-      hinglish: 'A:B ratio 3:2. C ko 1/5 share equal sacrifice se diya. A sacrifice 3/25, B 2/25; sacrificing ratio 3:2. Full question ke facts se new ratio aur goodwill adjustment verify karo.',
-      hindi: 'A और B का ratio 3:2 है। C को 1/5 share equal sacrifice से दिया गया। A का sacrifice 3/25 और B का 2/25 है; sacrificing ratio 3:2 होगा।',
+      english: 'A and B share profits 3:2. C is admitted for 1/5 share, acquired from A and B in their old profit-sharing ratio of 3:2. A sacrifices 3/25 and B sacrifices 2/25; the sacrificing ratio is 3:2. Confirm the exact new ratio and goodwill adjustment from the full facts before posting.',
+      hinglish: 'A:B ratio 3:2. C ko 1/5 share A aur B se unke old ratio 3:2 mein sacrifice karwa kar diya. A sacrifice 3/25, B 2/25; sacrificing ratio 3:2. Full question ke facts se new ratio aur goodwill adjustment verify karo.',
+      hindi: 'A और B का ratio 3:2 है। C को 1/5 share A और B से उनके पुराने ratio 3:2 में sacrifice करवा कर दिया गया। A का sacrifice 3/25 और B का 2/25 है; sacrificing ratio 3:2 होगा।',
     },
     simpler: {
       english: 'When partners change, recalculate who owns which share of future profit and compensate partners who give up part of their share.',
