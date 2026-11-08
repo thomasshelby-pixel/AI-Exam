@@ -1871,7 +1871,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // a tracking/storage issue must never fail evaluation or affect entitlements.
     if (req.body?.parakhLearningConsent === true) {
       try {
-        recordParakhLearningOptIn(true, {
+        await recordParakhLearningOptIn(true, {
           evaluationId,
           studentId,
           level: String(level || ''),
