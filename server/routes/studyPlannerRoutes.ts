@@ -688,7 +688,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, studentHistory)) && !isExplicitStudyPlanRequest(message)
+    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history)) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
       const parsed = parsedProbe;
@@ -698,7 +698,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
-      const knowledge = searchStudyKnowledge({ message, course, history: studentHistory, language: replyLanguage });
+      const knowledge = searchStudyKnowledge({ message, course, history, language: replyLanguage });
       const guidance = buildGeneralStudyAnswer(message, parsed);
       const answer = knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer;
       return res.json({
