@@ -234,7 +234,7 @@ test('teaches Ratio Analysis from zero for an Intermediate FM difficulty stateme
   });
   assert.equal(result?.topicId, 'intermediate-fm-ratio-analysis');
   assert.equal(result?.mode, 'simpler');
-  assert.match(buildKnowledgeChatReply(result!, 'hinglish'), /Ratio Analysis ka simple matlab/);
+  assert.match(buildKnowledgeChatReply(result!, 'hinglish'), /ratio ko do numbers ke beech ka relationship/i);
   assert.match(buildKnowledgeChatReply(result!, 'hinglish'), /Current Ratio/);
 });
 
