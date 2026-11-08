@@ -114,8 +114,8 @@ test('chapter assessment prompts, completion replies and options preserve the de
   assert.deepEqual(buildPlanScopeOptions('english'), ['One-day revision plan', 'Full exam roadmap + weekly timetable until exam']);
   assert.deepEqual(buildPlanScopeOptions('hinglish'), ['Sirf ek din ka revision plan', 'Exam tak roadmap + weekly timetable']);
   assert.deepEqual(buildPlanScopeOptions('hindi'), ['सिर्फ एक दिन का revision plan', 'Exam तक roadmap + weekly timetable']);
-  assert.match(buildIntermediateSMClarification('english'), /^I understand/);
-  assert.match(buildIntermediateSMClarification('hinglish'), /samajh gaya bhai/);
+  assert.match(buildIntermediateSMClarification('english'), /in your own words/);
+  assert.match(buildIntermediateSMClarification('hinglish'), /apne words mein bata/);
 });
 
 
@@ -190,4 +190,9 @@ test('keeps assistant topic markers for knowledge follow-ups without using them 
   assert.match(buildSocialConversationReply('namaste', 'hinglish') || '', /नमस्ते|Arre hello/);
   assert.equal(detectStudyReplyLanguage('shukriya'), 'hinglish');
   assert.equal(detectStudyReplyLanguage('thak gaya'), 'hinglish');
+});
+
+
+test('recognises Hindi-script greetings without requiring a course or menu', () => {
+  assert.match(buildSocialConversationReply('नमस्ते', 'hindi') || '', /नमस्ते/);
 });
