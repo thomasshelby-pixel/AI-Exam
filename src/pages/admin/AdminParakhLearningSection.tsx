@@ -70,6 +70,11 @@ interface ParakhQualityReadiness {
     }>;
     limitations: string[];
   };
+  knowledgeBank: {
+    topicCount: number;
+    topics: Array<{ topicId: string; title: string; subjects: string[] }>;
+    coverageVerified: false;
+  };
 }
 
 interface ParakhMetrics {
@@ -381,6 +386,30 @@ export const AdminParakhLearningSection: React.FC = () => {
                 <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black text-slate-700 dark:bg-slate-800 dark:text-slate-300">
                   {qualityReadiness.curriculum.status.replace(/_/g, ' ')}
                 </span>
+              </div>
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                  <div>
+                    <p className="text-xs font-bold text-slate-900 dark:text-white">Authored knowledge bank</p>
+                    <p className="mt-1 text-[10px] text-slate-600 dark:text-slate-300">
+                      {qualityReadiness.knowledgeBank.topicCount} starter topic entries · chapter-level verification still pending
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    Not complete syllabus coverage
+                  </span>
+                </div>
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">View authored topic seeds</summary>
+                  <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                    {qualityReadiness.knowledgeBank.topics.map((topic) => (
+                      <li key={topic.topicId} className="rounded-md bg-white/80 px-2 py-1.5 text-[10px] text-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+                        <span className="font-semibold">{topic.title}</span>
+                        {topic.subjects.length ? <span className="block text-slate-400">{topic.subjects.join(', ')}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </div>
               <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                 {qualityReadiness.curriculum.courses.map((course) => (
