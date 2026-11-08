@@ -56,15 +56,16 @@ test('retrieves every Foundation Quantitative Aptitude chapter',()=>{
 
 test('supports multilingual content and learning modes',()=>{
   const cases=[
-    {message:'Explain mathematics of finance',language:'english' as const},
-    {message:'Probability ko simple language mein samjhao',language:'hinglish' as const},
-    {message:'दिशा परीक्षण का उदाहरण दीजिए',language:'hindi' as const},
-    {message:'Quiz me on correlation and regression',language:'english' as const},
+    {message:'Explain mathematics of finance',language:'english' as const,mode:'answer' as const,minimumLength:160},
+    {message:'Probability ko simple language mein samjhao',language:'hinglish' as const,mode:'simpler' as const,minimumLength:40},
+    {message:'दिशा परीक्षण का उदाहरण दीजिए',language:'hindi' as const,mode:'example' as const,minimumLength:50},
+    {message:'Quiz me on correlation and regression',language:'english' as const,mode:'quiz' as const,minimumLength:40},
   ];
   for(const item of cases){
     const result=searchParakhFoundationQuantitativeAptitudeKnowledge({message:item.message,course:'CA_FOUNDATION',language:item.language});
     assert.ok(result);
-    assert.ok(result.answer.length>160);
+    assert.equal(result.mode,item.mode,item.message);
+    assert.ok(result.answer.length>item.minimumLength,item.message);
   }
   assert.equal(searchParakhFoundationQuantitativeAptitudeKnowledge({
     message:'Explain AP example',course:'CA_FOUNDATION',language:'english'
