@@ -442,7 +442,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                       {qualityReadiness.chapterKnowledge.paperTitle} · {qualityReadiness.chapterKnowledge.section}
                     </p>
                     <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
-                      {qualityReadiness.chapterKnowledge.chapterCount} mapped chapters · {qualityReadiness.chapterKnowledge.authoredContentCount} authored content draft · {qualityReadiness.chapterKnowledge.humanReviewedContentCount} human-reviewed
+                      {qualityReadiness.chapterKnowledge.chapterCount} mapped chapters · {qualityReadiness.chapterKnowledge.authoredContentCount} authored chapter drafts · {qualityReadiness.chapterKnowledge.humanReviewedContentCount} human-reviewed
                     </p>
                   </div>
                   <span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
@@ -478,7 +478,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                 </details>
                 <a href={qualityReadiness.chapterKnowledge.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[10px] font-bold text-indigo-600 underline dark:text-indigo-300">Open official ICAI Paper 6A chapter list</a>
                 <p className="mt-2 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  This rollout maps CA Intermediate FM Section A only. Chapter 3 has an original authored draft; the remaining chapters are mapped only. Neither the draft nor its automated checks are marked human-verified.
+                  This rollout maps CA Intermediate FM Section A only. Original authored drafts cover all nine chapters and automated checks include chapter-specific practice cases. No chapter or benchmark is human-verified yet.
                 </p>
               </div>
               <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
