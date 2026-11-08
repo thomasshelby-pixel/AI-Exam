@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, getStudyKnowledgeSubjectInventory, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import {
   assessParakhResponseQuality,
   buildParakhSubjectCoverageReport,
@@ -368,7 +368,7 @@ test('benchmark harness checks required answer evidence without certifying factu
     requiredPatterns: ['effective date', 'official notification'],
     forbiddenPatterns: ['always 18%'],
     requiresPrimarySource: true,
-  }, 'Check the official notification and its effective date for the exact supply classification. Do not apply an undated summary.', [
+  }, '1. Check the official notification for the exact supply classification.\n2. Verify the effective date and any exemption before applying the stated rate.\nConclusion: apply the rate only after the supply facts match the published notification.', [
     { title: 'CBIC notification', url: 'https://cbic.gov.in/notifications/example' },
   ], true);
   assert.equal(result.passed, true);
@@ -380,4 +380,13 @@ test('subject classifier distinguishes Financial Management and Strategic Manage
   assert.equal(classifyParakhQuestion('Explain current ratio in FM', ['Financial Management and Strategic Management']).domain, 'financial_management');
   assert.equal(classifyParakhQuestion('Explain SWOT analysis in SM', ['Financial Management and Strategic Management']).domain, 'strategic_management');
   assert.equal(classifyParakhQuestion('How should I prepare audit evidence?', ['Auditing and Ethics']).domain, 'auditing');
+});
+
+
+test('authored subject inventory is reported as guidance seed data, not complete syllabus coverage', () => {
+  const subjects = getStudyKnowledgeSubjectInventory();
+  assert.ok(subjects.includes('Accounting'));
+  assert.ok(subjects.includes('Taxation'));
+  assert.ok(subjects.includes('Financial Management and Strategic Management'));
+  assert.ok(subjects.includes('Auditing and Ethics'));
 });
