@@ -3,7 +3,7 @@ export type ParakhFoundationQaMode='answer'|'example'|'simpler'|'quiz';
 type Localised=Record<ParakhFoundationQaLanguage,string>;
 type QaChapter={chapterNumber:number;title:string;section:'Business Mathematics'|'Logical Reasoning'|'Statistics';aliases:string[];answer:Localised;example:Localised;simpler:Localised;quiz:Localised};
 
-export const PARAKH_FOUNDATION_QA_SOURCE_URL='https://www.icai.org/post/sm-foundation-p3-may2027';
+export const PARAKH_FOUNDATION_QA_SOURCE_URL='https://www.icai.org/post/24402';
 export const PARAKH_FOUNDATION_QA_APPLICABILITY='ICAI official Foundation Paper 3 page marks this material Relevant for May 2027 and Onwards Examination. Verify the exact attempt edition and corrigendum before treating the chapter mapping as final.';
 
 const CHAPTERS:QaChapter[]=[
