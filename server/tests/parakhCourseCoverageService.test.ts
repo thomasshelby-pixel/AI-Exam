@@ -105,6 +105,15 @@ test('resolves FM chapter context and returns section-level status for Strategic
   });
   assert.equal(sm?.paperCode, 'INT-G2-P6');
   assert.equal(sm?.section, 'Section B: Strategic Management');
+  assert.equal(sm?.sourceUrl, 'https://www.icai.org/post/sm-inter-p6b-may2027');
+  assert.equal(resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain Strategic Management',
+  })?.section, 'Section B: Strategic Management');
+  assert.equal(resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain Financial Management',
+  })?.section, 'Section A: Financial Management');
   assert.equal(sm?.humanReviewedChapterCount, 0);
   assert.equal(sm?.authoredChapterCount, 14);
   assert.equal(sm?.benchmarkPromptCount, 70);
