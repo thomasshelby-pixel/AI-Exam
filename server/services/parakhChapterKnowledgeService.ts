@@ -658,10 +658,10 @@ export function buildParakhChapterKnowledgeReply(
       ? '\n\nNext step: chahe toh ek aur numerical ya quick self-test maang le.'
       : '\n\nNext step: ask for another numerical or a quick self-test if useful.';
   const reviewNote = language === 'hindi'
-    ? '\n\nध्यान दें: यह PARAKH की original learning explanation है, ICAI का reproduced text नहीं। अपने exact attempt की applicable study material और RTP से final syllabus treatment verify करें।'
+    ? '\n\nगुणवत्ता सूचना: यह PARAKH का original authored draft है और अभी qualified academic reviewer द्वारा independently review नहीं किया गया है। यह ICAI का reproduced text नहीं है। अपने exact attempt की applicable study material और RTP से final syllabus treatment verify करें।'
     : language === 'hinglish'
-      ? '\n\nNote: ye PARAKH ki original learning explanation hai, ICAI material ka copied text nahi. Apne exact attempt ki applicable study material aur RTP se final syllabus treatment verify kar.'
-      : '\n\nNote: this is PARAKH’s original learning explanation, not reproduced ICAI text. Verify final syllabus treatment against the study material and RTP applicable to your exact attempt.';
+      ? '\n\nQuality note: ye PARAKH ka original authored draft hai; qualified academic reviewer ne abhi independently verify nahi kiya. Ye ICAI material ka copied text nahi. Apne exact attempt ki applicable study material aur RTP se final syllabus treatment verify kar.'
+      : '\n\nQuality note: this is an original PARAKH authored draft; it has not yet been independently reviewed by a qualified academic reviewer and is not reproduced ICAI text. Verify final syllabus treatment against the study material and RTP applicable to your exact attempt.';
   return '**' + heading + ': ' + result.topicTitle + '**\n\n' + result.answer + nextStep + reviewNote;
 }
 
