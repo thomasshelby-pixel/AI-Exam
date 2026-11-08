@@ -520,7 +520,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                 </details>
                 <a href={qualityReadiness.chapterKnowledge.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[10px] font-bold text-indigo-600 underline dark:text-indigo-300">Open official ICAI Paper 6A chapter list</a>
                 <p className="mt-2 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  This rollout maps CA Intermediate FM Section A only. Original authored drafts cover all nine chapters and automated checks include chapter-specific practice cases. No chapter or benchmark is human-verified yet.
+                  This panel shows the CA Intermediate FM Section A rollout. Additional authored chapter packs and their separate statuses are listed in the all-course coverage inventory below. No pack or benchmark is human-reviewed yet.
                 </p>
               </div>
               <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -625,7 +625,7 @@ export const AdminParakhLearningSection: React.FC = () => {
               </p>
             </div>
             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-              Official course-paper titles are mapped from ICAI's New Scheme pages. This does not mean chapter-level content or benchmarks are complete: the current guidance bank has only a small seed set, and every subject still needs attempt-specific material, verified explanations and held-out tests. Knowledge changes require human review; chat insights do not automatically train or update a model.
+              Official course-paper titles are mapped from ICAI's New Scheme pages. The general study-guidance bank is a small starter set; separately authored chapter packs are counted in the inventory above. Every pack still needs exact-attempt source checks, qualified review and held-out answer-key evaluation before any verified-quality claim. Knowledge changes require human review; chat insights do not automatically train or update a model.
             </p>
           </>
         ) : (
