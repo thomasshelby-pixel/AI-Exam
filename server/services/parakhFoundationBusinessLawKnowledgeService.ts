@@ -3,7 +3,7 @@ export type ParakhFoundationLawMode='answer'|'example'|'simpler'|'quiz';
 type Localised=Record<ParakhFoundationLawLanguage,string>;
 type LawChapter={chapterNumber:number;title:string;aliases:string[];answer:Localised;example:Localised;simpler:Localised;quiz:Localised};
 
-export const PARAKH_FOUNDATION_LAW_SOURCE_URL='https://www.icai.org/post/sm-foundation-p2-may2027';
+export const PARAKH_FOUNDATION_LAW_SOURCE_URL='https://www.icai.org/post/24381';
 export const PARAKH_FOUNDATION_LAW_APPLICABILITY='ICAI official Foundation Paper 2 page marks the linked material Relevant for May 2027 and Onwards Examination. Statutory amendments, section references, limitation periods, penalties and exact legal consequences must be verified against current primary law and the exact attempt material.';
 
 const CHAPTERS:LawChapter[]=[
