@@ -1,5 +1,5 @@
 import { db } from '../db.js';
-import { getAllFirestoreDocs, getFirestoreDoc } from './firestoreDbService.js';
+import { getAllFirestoreDocs, getFirestoreDoc, setFirestoreDoc } from './firestoreDbService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export const PARAKH_LEARNING_CONSENT_VERSION = '1.0';
@@ -202,6 +202,74 @@ export async function markParakhEvaluationAdminReviewed(input: ParakhLearningRev
 
   if (record) await mirrorRecord(record);
   return Boolean(record);
+}
+
+/**
+ * Withdraws a student's earlier PARAKH opt-ins. Existing evaluation history is
+ * untouched; withdrawn references are excluded from future candidate selection.
+ */
+export async function withdrawParakhLearningConsent(studentId: string): Promise<number> {
+  ensureParakhLearningSchema();
+  const normalizedStudentId = String(studentId || '').trim();
+  if (!normalizedStudentId) return 0;
+
+  const now = new Date().toISOString();
+  const localRecords = db.prepare(
+    "SELECT * FROM parakh_learning_records WHERE student_id = ? AND status != 'WITHDRAWN'"
+  ).all(normalizedStudentId) as Array<Record<string, any>>;
+
+  let cloudRecords: Array<Record<string, any>> = [];
+  let cloudAvailable = false;
+  try {
+    cloudRecords = await getAllFirestoreDocs<Record<string, any>>(PARAKH_COLLECTION, { failOnError: true });
+    cloudAvailable = true;
+  } catch (error) {
+    console.warn('[PARAKH] Could not load shared consent records during withdrawal:', error);
+  }
+
+  const candidates = new Map<string, Record<string, any>>();
+  for (const record of [...cloudRecords, ...localRecords]) {
+    if (String(record.student_id || '') !== normalizedStudentId) continue;
+    if (String(record.status || '').toUpperCase() === 'WITHDRAWN') continue;
+    candidates.set(String(record.evaluation_id || record.id || ''), record);
+  }
+
+  let withdrawnCount = 0;
+  for (const [evaluationId, record] of candidates) {
+    if (!evaluationId) continue;
+
+    const updatedAt = now;
+    db.prepare(`
+      UPDATE parakh_learning_records
+      SET status = 'WITHDRAWN', updated_at = ?
+      WHERE evaluation_id = ? AND student_id = ?
+    `).run(updatedAt, evaluationId, normalizedStudentId);
+
+    const updatedRecord = {
+      ...record,
+      evaluation_id: evaluationId,
+      status: 'WITHDRAWN',
+      updated_at: updatedAt,
+    };
+
+    let mirrored = false;
+    if (cloudAvailable) {
+      try {
+        mirrored = await setFirestoreDoc(PARAKH_COLLECTION, evaluationId, updatedRecord);
+      } catch (error) {
+        console.warn('[PARAKH] Could not persist consent withdrawal to Firestore:', error);
+      }
+    }
+    if (!mirrored) {
+      const localRecord = db.prepare(
+        'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
+      ).get(evaluationId) as Record<string, any> | undefined;
+      if (localRecord) await mirrorRecord(localRecord);
+    }
+    withdrawnCount += 1;
+  }
+
+  return withdrawnCount;
 }
 
 export async function getParakhLearningDashboardMetrics(): Promise<Record<string, any>> {
