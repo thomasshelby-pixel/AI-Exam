@@ -37,3 +37,25 @@ export function getCourseUnderDevelopmentReply(course: PlannerChatCourse): strin
   if (course !== 'CA_FINAL') return null;
   return 'Coming soon for CA Final — under development. The CA Final AI Study Planner is being built and will be available in a future release.';
 }
+
+
+/**
+ * The client sends role-tagged turns ("Student:" / "Planner:").
+ * Only student turns may influence intent, subject parsing, or knowledge follow-ups.
+ * Keep untagged legacy histories working as user-supplied context.
+ */
+export function extractStudentConversationHistory(history: string[]): string[] {
+  const entries = history.filter((item) => typeof item === 'string').map((item) => item.trim()).filter(Boolean);
+  const hasRoleTags = entries.some((item) => /^(?:Student|Planner):\s*/i.test(item));
+  if (!hasRoleTags) return entries;
+  return entries.flatMap((item) => {
+    const match = item.match(/^Student:\s*(.*)$/i);
+    return match && match[1].trim() ? [match[1].trim()] : [];
+  });
+}
+
+/** A subject-only message is not consent to start a chapter-rating workflow. */
+export function shouldAskTopicIntentClarification(input: { message: string; hasTarget: boolean }): boolean {
+  if (!input.hasTarget) return false;
+  return !/\b(?:explain|teach|what|why|how|difference|meaning|revision|revise|study|plan|timetable|schedule|practice|question|doubt|concept|formula|strategy|tips|prepare|preparation|chapter|tell me|help me|batao|btao|kaise|samjhao|padhai)\b/i.test(String(input.message || ''));
+}
