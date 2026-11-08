@@ -78,6 +78,22 @@ import { FeatureUnavailable } from './components/common/FeatureUnavailable.js';
 import { DisclaimerModal } from './components/student/DisclaimerModal.js';
 
 // Wrapper for Evaluation Report that enforces disclaimer gate before rendering evaluation content
+const StudyPlannerAccessGate: React.FC = () => {
+  const { user } = useAuth();
+  const [access, setAccess] = useState<{ allowed: boolean; status: 'TESTING' | 'DISABLED' | 'COMING_SOON' | 'ENABLED'; studentMessage: string } | null>(null);
+  useEffect(() => {
+    let active = true;
+    setAccess(null);
+    featureApi.checkAccess('checker_ai_planner', 'CHECKER')
+      .then((result) => { if (active) setAccess(result); })
+      .catch(() => { if (active) setAccess({ allowed: false, status: 'DISABLED', studentMessage: 'AI Planner access could not be verified. Please try again later.' }); });
+    return () => { active = false; };
+  }, [user?.id]);
+  if (!access) return <div className="min-h-[50vh] flex items-center justify-center text-sm text-slate-500">Checking AI Planner access…</div>;
+  if (!access.allowed) return <FeatureUnavailable application="CHECKER" featureKey="checker_ai_planner" featureName="AI Planner" status={access.status} studentMessage={access.studentMessage} />;
+  return <StudyPlannerAccessGate />;
+};
+
 const EvaluationReportWrapper: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -345,6 +361,19 @@ const StudentWorkspaceLayout: React.FC<{
   });
   const [navSearch, setNavSearch] = useState('');
   const [isArenaLinkAvailable, setIsArenaLinkAvailable] = useState(false);
+  const [isPlannerLinkAvailable, setIsPlannerLinkAvailable] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id) {
+      setIsPlannerLinkAvailable(false);
+      return () => { active = false; };
+    }
+    featureApi.checkAccess('checker_ai_planner', 'CHECKER')
+      .then((result) => { if (active) setIsPlannerLinkAvailable(Boolean(result.allowed)); })
+      .catch(() => { if (active) setIsPlannerLinkAvailable(false); });
+    return () => { active = false; };
+  }, [user?.id]);
 
   useEffect(() => {
     let active = true;
@@ -375,6 +404,7 @@ const StudentWorkspaceLayout: React.FC<{
   ];
   const filteredNavigation = navigationItems.filter((item) =>
     (item.label !== 'MCQ Arena' || isArenaLinkAvailable) &&
+    (item.label !== 'Study Planner' || isPlannerLinkAvailable) &&
     item.label.toLowerCase().includes(navSearch.trim().toLowerCase())
   );
   const toggleSidebarCollapsed = () => {
