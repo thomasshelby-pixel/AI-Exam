@@ -139,6 +139,7 @@ test('calculates original chapter examples for cost of capital, leverage, invest
   assert.match(dividend?.answer || '', /30%/);
   assert.match(workingCapital?.answer || '', /75 days/);
   assert.match(workingCapital?.answer || '', /net operating cycle.*cash conversion cycle/i);
+  assert.match(workingCapital?.answer || '', /gross operating cycle/i);
 });
 
 test('routes a singular investment-decision request to Chapter 7', () => {
