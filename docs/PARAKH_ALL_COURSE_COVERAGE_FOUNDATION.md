@@ -35,11 +35,11 @@ For CA Final, existing subject metadata is represented as a provisional topic in
 
 Only Intermediate Paper 6, Section A: Financial Management currently has original chapter teaching drafts in this knowledge service:
 
-- 9 Section A Financial Management chapter packs and 5 Section B Strategic Management chapter packs (14 total), in English, Hindi and Hinglish.
-- Answer, worked-example, simpler-explanation and quiz modes.
-- 70 distinct benchmark prompts across five benchmark families (45 FM + 25 SM).
-- 0 human-reviewed chapter packs.
-- 0 human-reviewed benchmark sets.
+- Paper 4 Cost and Management Accounting: 15 chapter packs, in English, Hindi and Hinglish, with answer/example/simpler/quiz modes and 75 benchmark prompts.
+- Paper 6 Section A Financial Management: 9 chapter packs and 45 benchmark prompts.
+- Paper 6 Section B Strategic Management: 5 chapter packs and 25 benchmark prompts.
+- Across Paper 4 and Paper 6: 29 original chapter drafts and 145 benchmark prompts.
+- 0 human-reviewed chapter packs and 0 human-reviewed benchmark sets.
 
 The remaining mapped subjects are not silently promoted to authored content. The student response path may identify the matching paper and explain the coverage gap. Current/statutory questions continue to require live primary-source support.
 
