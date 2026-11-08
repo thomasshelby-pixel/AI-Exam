@@ -27,27 +27,36 @@ The registry maps 32 official paper/module entries:
 | SPOM | 16 modules/papers |
 | **Total** | **32** |
 
-The registry reuses the application's chapter index for most Foundation and Intermediate papers with an explicit attempt-verification status. Foundation Paper 1, Intermediate Paper 4 and 5, and both sections of Paper 6 have their own source-linked chapter catalogues and original draft packs. Intermediate Paper 6 is split into Financial Management and Strategic Management sections.
+Foundation Papers 1–4 and all Intermediate Papers 1–6 now have source-linked chapter catalogues for the authored packs. Paper 3 Taxation is split into Section A (Income-tax Law) and Section B (GST); Paper 6 is split into Financial Management and Strategic Management. Exact attempt editions and amendments still require verification.
 
 For CA Final, existing subject metadata is represented as a provisional topic index. Those entries are not labelled as official ICAI chapter titles. SPOM is mapped at module/paper level; this release does not pretend to have imported its detailed chapter/unit index.
 
 ## What this release authors
 
-Original teaching drafts currently cover all four Foundation papers and Intermediate Papers 1, 4, 5 and 6:
+Original teaching drafts cover all four Foundation papers and all six Intermediate papers:
 
 - Foundation Paper 1 Accounting: 11 chapter packs and 55 benchmark prompts.
 - Foundation Paper 2 Business Laws: 7 chapter packs and 35 benchmark prompts.
 - Foundation Paper 3 Quantitative Aptitude: 18 chapter packs and 90 benchmark prompts.
 - Foundation Paper 4 Business Economics: 10 chapter packs and 50 benchmark prompts.
 - Intermediate Paper 1 Advanced Accounting: 15 chapter packs and 75 benchmark prompts.
+- Intermediate Paper 2 Corporate and Other Laws: 15 chapter packs and 75 benchmark prompts (12 Company Law/LLP chapters and 3 Other Laws chapters).
+- Intermediate Paper 3 Section A Income-tax Law: 9 chapter packs and 45 benchmark prompts.
+- Intermediate Paper 3 Section B GST: 15 chapter packs and 75 benchmark prompts.
 - Intermediate Paper 4 Cost and Management Accounting: 15 chapter packs and 75 benchmark prompts.
 - Intermediate Paper 5 Auditing and Ethics: 11 chapter packs and 55 benchmark prompts.
 - Intermediate Paper 6 Section A Financial Management: 9 chapter packs and 45 benchmark prompts.
 - Intermediate Paper 6 Section B Strategic Management: 5 chapter packs and 25 benchmark prompts.
-- Across Foundation Papers 1–4 and Intermediate Papers 1, 4–6: **101 original chapter drafts and 505 benchmark prompts**.
-- 0 human-reviewed chapter packs and 0 human-reviewed benchmark sets.
+- Foundation total: **46 original chapter drafts and 230 benchmark prompts**.
+- Intermediate total: **94 original chapter drafts and 470 benchmark prompts**.
+- Combined total: **140 original chapter drafts and 700 benchmark prompts**.
+- Qualified human-reviewed chapter packs: **0**. Human-reviewed benchmark answer-key sets: **0**.
 
-The remaining mapped subjects are not silently promoted to authored content. The student response path may identify the matching paper and explain the coverage gap. Current/statutory questions continue to require live primary-source support.
+The Paper 2 and Paper 3 chapter drafts are original PARAKH teaching notes in English, Hindi and Hinglish, with answer, example, simpler and quiz modes. They are not reproductions of ICAI material. Paper 2 source: https://www.icai.org/post/24331. Paper 3 Section A source: https://www.icai.org/post/24313. Paper 3 Section B source: https://www.icai.org/post/24360. Current statutory rules, rates, thresholds, filing dates, notifications, effective dates and attempt-specific questions are routed away from evergreen drafts and require current primary-source verification.
+
+The 700 benchmark items are prompt scaffolds, not a held-out scored benchmark. No approved answer-key set or qualified human review has been completed. Passing retrieval tests does not establish factual accuracy or exam readiness. Foundation and Intermediate coverage is broader, but neither level should be described as fully verified until qualified subject review and independently checked benchmark evaluation are complete.
+
+CA Final and SPOM are not part of this implementation phase; their existing mapping metadata is left unchanged.
 
 ## Coverage-aware chat behaviour
 
@@ -73,7 +82,7 @@ No coverage status in this release represents human verification.
 The protected study-planner suite checks:
 
 1. All four course tracks and the 32-paper/module count.
-2. Foundation Papers 1–4 and Intermediate Papers 4–6 resolve to source-linked chapter catalogues with distinct authorship and benchmark counts.
+2. Foundation Papers 1–4 and Intermediate Papers 1–6 resolve to source-linked chapter catalogues with distinct authorship, benchmark counts and Paper 3 section-level routing.
 3. Five benchmark prompts per authored chapter remain separate from mapped-only subjects.
 4. CA Final topic pointers are not misrepresented as official chapters.
 5. SPOM mapping does not imply chapter/unit coverage.
@@ -87,11 +96,12 @@ This release adds no paid model, model-provider call, model fine-tuning, model-w
 
 ## Remaining work before claiming full-syllabus quality
 
-- Verify authored Foundation and Intermediate chapter catalogues against each student's exact attempt edition.
-- Import official chapter/unit trees for all Foundation, Intermediate, Final and SPOM paper/module entries.
-- Author original chapter lessons, worked examples and multilingual explanations for each chapter.
-- Create separate unseen benchmark questions and independently checked answer keys.
-- Have qualified CA subject reviewers approve each content set against the exact applicable ICAI material.
-- Re-run the protected regression suite after every content or syllabus update.
+- Verify every authored Foundation and Intermediate chapter against each student's exact attempt edition, including RTP/MTP, amendments, exclusions and corrigenda.
+- Expand worked numericals, case-law reasoning, tax computations and exam-style answer presentation where reviewers identify gaps.
+- Create held-out benchmark questions that are not reused as authoring examples, with independently checked answer keys and difficulty calibration.
+- Have qualified CA reviewers for Accounting, Law, Tax, Audit, Costing, FM/SM, Quantitative Aptitude and Economics approve every content set against the exact applicable ICAI material.
+- Evaluate factual accuracy, calculations, question routing, multilingual fidelity and uncertainty handling; resolve critical failures before any verified label.
+- Keep CA Final and SPOM deferred until Foundation and Intermediate pass their own quality gates.
+- Re-run the full protected regression suite after every content or syllabus update.
 
 The current inventory is a complete paper-level map, not complete CA subject knowledge coverage.
