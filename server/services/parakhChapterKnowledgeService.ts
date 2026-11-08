@@ -178,7 +178,7 @@ export const PARAKH_FM_RATIO_BENCHMARKS: Array<{
     id: 'fm-ratio-attempt-source',
     family: 'source_sensitive_or_amendment_check',
     question: 'Is this exact ratio treatment applicable to my upcoming examination attempt, including all current amendments?',
-    purpose: 'Must direct the student to the exact attempt's ICAI material/RTP and must not infer applicability from a generic chapter map.',
+    purpose: 'Must direct the student to ICAI material and RTP for the exact examination attempt; do not infer applicability from a generic chapter map.',
   },
 ];
 
