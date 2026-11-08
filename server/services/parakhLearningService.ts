@@ -97,6 +97,41 @@ async function mirrorRecord(record: Record<string, any>): Promise<void> {
   }
 }
 
+async function getStudentLearningExclusionState(studentId: string): Promise<boolean | null> {
+  if (!studentId) return null;
+  const local = db.prepare(
+    'SELECT student_id FROM parakh_learning_exclusions WHERE student_id = ?'
+  ).get(studentId);
+  if (local) return true;
+
+  try {
+    const shared = await getFirestoreDoc<{ student_id?: string; excluded_at?: string }>(
+      'parakh_learning_exclusions',
+      studentId,
+    );
+    if (!shared?.student_id) return false;
+    db.prepare('INSERT OR IGNORE INTO parakh_learning_exclusions (student_id, excluded_at) VALUES (?, ?)')
+      .run(studentId, shared.excluded_at || new Date().toISOString());
+    return true;
+  } catch (error) {
+    // Unknown is not treated as permission to collect. This prevents a delayed
+    // worker callback from bypassing an exclusion saved by another instance.
+    console.warn('[PARAKH] Could not verify student exclusion state:', error);
+    return null;
+  }
+}
+
+async function markLearningRecordExcluded(evaluationId: string): Promise<void> {
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE parakh_learning_records
+    SET status = 'EXCLUDED', updated_at = ?
+    WHERE evaluation_id = ? AND status != 'EXCLUDED'
+  `).run(now, evaluationId);
+  const record = getLocalRecord(evaluationId);
+  if (record) await mirrorRecord(record);
+}
+
 function getLocalRecord(evaluationId: string): Record<string, any> | undefined {
   return db.prepare(
     'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
@@ -159,21 +194,8 @@ export async function recordParakhLearningObservation(
   input: ParakhLearningObservationInput,
 ): Promise<boolean> {
   ensureParakhLearningSchema();
-  const localExclusion = db.prepare('SELECT student_id FROM parakh_learning_exclusions WHERE student_id = ?').get(input.studentId);
-  if (localExclusion) return false;
-  try {
-    const sharedExclusion = await getFirestoreDoc<{ student_id?: string; excluded_at?: string }>('parakh_learning_exclusions', input.studentId);
-    if (sharedExclusion?.student_id) {
-      db.prepare('INSERT OR IGNORE INTO parakh_learning_exclusions (student_id, excluded_at) VALUES (?, ?)')
-        .run(input.studentId, sharedExclusion.excluded_at || new Date().toISOString());
-      return false;
-    }
-  } catch (error) {
-    // Fail closed: do not collect a new observation when a cross-instance exclusion
-    // preference cannot be checked against the shared record.
-    console.warn('[PARAKH] Could not verify shared exclusion preference; skipping observation:', error);
-    return false;
-  }
+  const exclusionState = await getStudentLearningExclusionState(input.studentId);
+  if (exclusionState !== false) return false;
   const now = new Date().toISOString();
   const evaluation = db.prepare(
     'SELECT status FROM evaluations WHERE id = ?'
@@ -238,7 +260,14 @@ export async function markParakhEvaluationCompleted(
   ensureParakhLearningSchema();
   const nextStatus: ParakhRecordStatus =
     input.evaluationStatus === 'NEEDS_REVIEW' ? 'SELECTED_FOR_REVIEW' : 'COLLECTED_UNVERIFIED';
-  await hydrateParakhRecordFromFirestore(input.evaluationId);
+  const existing = await hydrateParakhRecordFromFirestore(input.evaluationId);
+  if (!existing) return false;
+  const exclusionState = await getStudentLearningExclusionState(String(existing.student_id || ''));
+  if (exclusionState === true) {
+    await markLearningRecordExcluded(input.evaluationId);
+    return false;
+  }
+  if (exclusionState === null) return false;
   const now = new Date().toISOString();
 
   const result = db.prepare(`
@@ -280,7 +309,15 @@ export async function markParakhEvaluationAdminReviewed(
   // Finalization may run on another application instance; recover the policy-covered
   // observation pointer from shared Firestore before applying the reviewer label.
   let existing = await hydrateParakhRecordFromFirestore(input.evaluationId);
-  if (existing && String(existing.status || '').toUpperCase() === 'PROCESSING') {
+  if (!existing) return false;
+  const exclusionState = await getStudentLearningExclusionState(String(existing.student_id || ''));
+  if (exclusionState === true) {
+    await markLearningRecordExcluded(input.evaluationId);
+    return false;
+  }
+  if (exclusionState === null) return false;
+
+  if (String(existing.status || '').toUpperCase() === 'PROCESSING') {
     const evaluation = db.prepare('SELECT status FROM evaluations WHERE id = ?').get(input.evaluationId) as { status?: string } | undefined;
     const status = String(evaluation?.status || '').toUpperCase();
     const promoted = status === 'NEEDS_REVIEW' ? 'SELECTED_FOR_REVIEW'
