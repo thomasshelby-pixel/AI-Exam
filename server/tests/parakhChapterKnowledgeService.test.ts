@@ -24,7 +24,7 @@ test('maps the complete official CA Intermediate FM Section A chapter list witho
   assert.equal(inventory.chapters[8].units.length, 6);
   assert.equal(inventory.chapters.filter((chapter) => chapter.contentStatus === 'MAPPED_ONLY').length, 0);
   assert.ok(inventory.chapters.every((chapter) => chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED'));
-  assert.ok(inventory.chapters.every((chapter) => chapter.benchmarkStatus === 'SELF_CHECKED_NOT_HUMAN_VERIFIED'));
+  assert.ok(inventory.chapters.every((chapter) => chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED'));
 });
 
 test('retrieves the original Ratio Analysis chapter explanation for current-ratio wording', () => {
@@ -122,7 +122,7 @@ test('retrieves original chapter explanations across all nine Financial Manageme
     assert.equal(result?.topicId, topicId, message);
     assert.match(result?.answer || '', pattern, message);
     assert.equal(result?.contentReviewStatus, 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED');
-    assert.equal(result?.benchmarkStatus, 'SELF_CHECKED_NOT_HUMAN_VERIFIED');
+    assert.equal(result?.benchmarkStatus, 'PROMPTS_DEFINED_NOT_EVALUATED');
   }
 });
 
