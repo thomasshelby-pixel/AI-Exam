@@ -6,7 +6,7 @@ This document governs the move from a paper-level curriculum locator to chapter-
 
 ## First rollout: CA Intermediate Financial Management
 
-**Source of truth:** ICAI's official Intermediate Paper 6A page for Section A: Financial Management, applicable from the May 2026 examination onward:
+**Source of truth:** ICAI's official Intermediate Paper 6A page for Section A: Financial Management, headed “Applicable for May 2026 Exam”:
 
 - https://www.icai.org/post/sm-inter-p6a-may2026
 - Parent course page: https://www.icai.org/post/intermediate-nset
@@ -49,7 +49,7 @@ Every knowledge entry must keep:
 
 No current item in this rollout is HUMAN_REVIEWED or HELD_OUT_BENCHMARKED.
 
-## Chapter 3: Ratio Analysis content
+## Chapter-level authored content
 
 The nine chapter packs provide:
 - Original explanations in English, Hindi and Hinglish, with answer, example, simpler and quiz modes.
@@ -63,7 +63,7 @@ It is deliberately not a statutory or attempt-amendment answer. Questions asking
 
 ## Benchmark coverage
 
-Five benchmark families are defined for the first pack:
+Five benchmark families are applied to every chapter, with five distinct prompts per chapter:
 1. Core concept and interpretation.
 2. Unseen numerical/application.
 3. Exam-style presentation and workings.
