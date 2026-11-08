@@ -545,8 +545,8 @@ export function buildCreditPolicyAnalysisReply(
   const contributionMatch = problemText.match(/contribution\\s+to\\s+sales\\s+ratio[\\s\\S]{0,35}?(\\d+(?:\\.\\d+)?)\\s*%/i);
   const taxMatch = problemText.match(/tax\\s+rate[\\s\\S]{0,20}?(\\d+(?:\\.\\d+)?)\\s*%/i);
   const returnMatch = problemText.match(/after[- ]tax\\s+return[\\s\\S]{0,25}?(\\d+(?:\\.\\d+)?)\\s*%/i);
-  const oldTerms = problemText.match(/(?:present|current|existing)\\s+(?:credit\\s+)?polic(?:y|ies)[\\s\\S]{0,55}?(\\d+(?:\\.\\d+)?)\\s*\\/\\s*(\\d+)\\s*net\\s*(\\d+)/i);
-  const newTerms = problemText.match(/(?:new|proposed)\\s+(?:credit\\s+)?polic(?:y|ies)[\\s\\S]{0,55}?(\\d+(?:\\.\\d+)?)\\s*\\/\\s*(\\d+)\\s*net\\s*(\\d+)/i);
+  const oldTerms = problemText.match(/(?:present|current|existing)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
+  const newTerms = problemText.match(/(?:new|proposed)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
 
   if (!salesMatch || !growthMatch || !badDebtMatch || !contributionMatch
     || !taxMatch || !returnMatch || !oldTerms || !newTerms) return null;
