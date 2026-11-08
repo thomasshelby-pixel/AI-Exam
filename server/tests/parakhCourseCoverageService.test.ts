@@ -36,12 +36,22 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   assert.equal(foundationLaws.indexEntries.length, 7);
   assert.equal(foundationLaws.authoredChapterCount, 7);
   assert.equal(foundationLaws.benchmarkPromptCount, 35);
+  const foundationQa = foundation.papers.find((paper) => paper.code === 'FND-P3')!;
+  assert.equal(foundationQa.mappingStatus, 'OFFICIAL_CHAPTER_CATALOGUE_LINKED');
+  assert.equal(foundationQa.indexEntries.length, 18);
+  assert.equal(foundationQa.authoredChapterCount, 18);
+  assert.equal(foundationQa.benchmarkPromptCount, 90);
+  const foundationEconomics = foundation.papers.find((paper) => paper.code === 'FND-P4')!;
+  assert.equal(foundationEconomics.mappingStatus, 'OFFICIAL_CHAPTER_CATALOGUE_LINKED');
+  assert.equal(foundationEconomics.indexEntries.length, 10);
+  assert.equal(foundationEconomics.authoredChapterCount, 10);
+  assert.equal(foundationEconomics.benchmarkPromptCount, 50);
   const final = inventory.courses.find((course) => course.course === 'CA_FINAL')!;
   const spom = inventory.courses.find((course) => course.course === 'SPOM')!;
 
-  assert.equal(inventory.authoredChapterCount, 58);
+  assert.equal(inventory.authoredChapterCount, 86);
   assert.equal(inventory.humanReviewedChapterCount, 0);
-  assert.equal(inventory.benchmarkPromptCount, 290);
+  assert.equal(inventory.benchmarkPromptCount, 430);
   assert.equal(inventory.humanReviewedBenchmarkCount, 0);
   assert.equal(fm.indexKind, 'chapter');
   assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section A: Financial Management' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 9);
@@ -49,7 +59,7 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section B: Strategic Management' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 5);
   assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section B: Strategic Management' && entry.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED').length, 5);
   assert.ok(fm.indexEntries.some((entry) => entry.section === 'Section B: Strategic Management' && entry.title === 'Strategic Analysis: Internal Environment' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED'));
-  assert.ok(foundation.papers.filter((paper) => paper.code !== 'FND-P1').every((paper) => paper.authoredChapterCount === 0));
+  assert.ok(foundation.papers.filter((paper) => !['FND-P1', 'FND-P2', 'FND-P3', 'FND-P4'].includes(paper.code)).every((paper) => paper.authoredChapterCount === 0));
   assert.ok(final.papers.every((paper) => paper.indexKind === 'topic' || paper.indexKind === 'none'));
   assert.ok(final.papers.every((paper) => paper.mappingStatus === 'PROVISIONAL_TOPIC_INDEX_NOT_OFFICIAL_CHAPTERS'));
   assert.ok(spom.papers.every((paper) => paper.indexKind === 'none' && paper.indexEntries.length === 0));
@@ -104,6 +114,24 @@ test('resolves a paper using the authenticated course context, without cross-cou
   assert.equal(foundationLaw?.authoredChapterCount, 7);
   assert.equal(foundationLaw?.benchmarkPromptCount, 35);
   assert.equal(foundationLaw?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p2-may2027');
+  const foundationQa = resolveParakhCoursePaperContext({
+    course: 'CA_FOUNDATION',
+    message: 'Explain probability and theoretical distributions',
+  });
+  assert.equal(foundationQa?.paperCode, 'FND-P3');
+  assert.equal(foundationQa?.matchedIndexEntry, 'Probability');
+  assert.equal(foundationQa?.authoredChapterCount, 18);
+  assert.equal(foundationQa?.benchmarkPromptCount, 90);
+  assert.equal(foundationQa?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p3-may2027');
+  const foundationEconomics = resolveParakhCoursePaperContext({
+    course: 'CA_FOUNDATION',
+    message: 'Explain demand and supply elasticity',
+  });
+  assert.equal(foundationEconomics?.paperCode, 'FND-P4');
+  assert.equal(foundationEconomics?.matchedIndexEntry, 'Theory of Demand and Supply');
+  assert.equal(foundationEconomics?.authoredChapterCount, 10);
+  assert.equal(foundationEconomics?.benchmarkPromptCount, 50);
+  assert.equal(foundationEconomics?.sourceUrl, 'https://www.icai.org/post/24403');
 
   assert.equal(resolveParakhCoursePaperContext({
     course: 'CA_INTERMEDIATE',
