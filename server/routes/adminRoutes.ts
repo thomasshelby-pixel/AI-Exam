@@ -92,6 +92,7 @@ import { getStudyKnowledgeSubjectInventory, getStudyKnowledgeTopicInventory } fr
 import { getParakhChapterKnowledgeInventory } from '../services/parakhChapterKnowledgeService.js';
 import { buildParakhSubjectCoverageReport } from '../services/parakhQualityFramework.js';
 import { getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
+import { getParakhCourseCoverageInventory } from '../services/parakhCourseCoverageService.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { findAuthoritativeMaterialWithFallback, findEvaluationMaterialByExactIdForRecovery, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
@@ -530,6 +531,7 @@ router.get('/parakh-learning/quality-readiness', (_req: AuthRequest, res: Respon
       report: {
         ...report,
         curriculum: getParakhCurriculumSummary(),
+        courseCoverage: getParakhCourseCoverageInventory(),
         knowledgeBank: {
           topicCount: knowledgeTopics.length,
           topics: knowledgeTopics,
