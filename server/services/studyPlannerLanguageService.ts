@@ -11,8 +11,8 @@ export function detectStudyReplyLanguage(text: string): StudyReplyLanguage {
 }
 
 export function isGeneralStudyQuestion(text: string): boolean {
-  if (/[\u0900-\u097F]/.test(text) && /(कैसे|क्या|पढ़|revision|समझ|बताइ|करूँ|करें)/i.test(text)) return true;
-  return /\b(how\s+(?:can|do|should|to)\s+i|how\s+to|explain(?:ed)?|explain\s+me|what\s+(?:is|are)|tell\s+me\s+about|define|describe|difference\s+between|compare|why\s+(?:does|is|are|do)|meaning\s+of|concept\s+of|help\s+me\s+understand|effective|strategy|strategies|tips|improve|remember|memorize|study\s+method|revision\s+method|revision\s+strategy|prepare\s+for|exam\s+strategy|batao|btao|kaise|samjhao|samjha[o]?|kya\s+hai|kyu|kyun|kaise\s+kar|kaise\s+kru|kaise\s+karu|kaise\s+kri|kaise\s+karun|kaise\s+kare|revision\s+kaise\s+(?:kru|karu|kri|karun)|effective\s+revision|revision\s+kaise|padhai\s+kaise|yaad\s+kaise|samajh\s+kaise)\b/i.test(text);
+  if (/[\u0900-\u097F]/.test(text) && /(कैसे|क्या|पढ़|revision|समझ|बताइ|करूँ|करें|मदद|सवाल|डाउट|उलझ|समस्या)/i.test(text)) return true;
+  return /\b(how\s+(?:can|do|should|to)\s+i|how\s+to|explain(?:ed)?|explain\s+me|what\s+(?:is|are)|tell\s+me\s+about|define|describe|difference\s+between|compare|why\s+(?:does|is|are|do)|meaning\s+of|concept\s+of|help\s+me\s+understand|i(?:'m|\s+am)\s+(?:confused|stuck|struggling)|i\s+(?:don't|do\s+not)\s+understand|i\s+have\s+(?:a\s+)?(?:doubt|question)|confused\s+about|stuck\s+on|struggling\s+with|doubt\s+about|effective|strategy|strategies|tips|improve|remember|memorize|study\s+method|revision\s+method|revision\s+strategy|prepare\s+for|exam\s+strategy|batao|btao|kaise|samjhao|samjha[o]?|kya\s+hai|kyu|kyun|kaise\s+kar|kaise\s+kru|kaise\s+karu|kaise\s+kri|kaise\s+karun|kaise\s+kare|revision\s+kaise\s+(?:kru|karu|kri|karun)|effective\s+revision|revision\s+kaise|padhai\s+kaise|yaad\s+kaise|samajh\s+kaise)\b/i.test(text);
 }
 
 export function buildGeneralStudyAnswer(
