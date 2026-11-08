@@ -56,24 +56,28 @@ test('supports English, Hindi, Hinglish, example, simpler and quiz response mode
     language: 'english',
   });
   assert.ok(english && english.answer.length > 180);
+  assert.equal(english?.mode, 'answer');
   const hindi = searchParakhIntermediateLawTaxKnowledge({
     message: 'GST में input tax credit समझाइए',
     course: 'CA_INTERMEDIATE',
     language: 'hindi',
   });
   assert.ok(hindi && hindi.answer.length > 100);
+  assert.equal(hindi?.mode, 'answer');
   const hinglish = searchParakhIntermediateLawTaxKnowledge({
     message: 'Explain FEMA capital account transaction',
     course: 'CA_INTERMEDIATE',
     language: 'hinglish',
   });
   assert.ok(hinglish && hinglish.answer.length > 100);
+  assert.equal(hinglish?.mode, 'answer');
   const example = searchParakhIntermediateLawTaxKnowledge({
     message: 'Give an example of e-way bill',
     course: 'CA_INTERMEDIATE',
     language: 'english',
   });
   assert.equal(example?.mode, 'example');
+  assert.ok((example?.answer || '').length > 50);
   assert.match(example?.answer || '', /transporter/i);
   const simpler = searchParakhIntermediateLawTaxKnowledge({
     message: 'Explain place of supply in simple words',
@@ -81,6 +85,7 @@ test('supports English, Hindi, Hinglish, example, simpler and quiz response mode
     language: 'english',
   });
   assert.equal(simpler?.mode, 'simpler');
+  assert.ok((simpler?.answer || '').length > 40);
   assert.match(simpler?.answer || '', /^In simple terms:/);
   const quiz = searchParakhIntermediateLawTaxKnowledge({
     message: 'Quiz me on input tax credit',
@@ -88,6 +93,7 @@ test('supports English, Hindi, Hinglish, example, simpler and quiz response mode
     language: 'english',
   });
   assert.equal(quiz?.mode, 'quiz');
+  assert.ok((quiz?.answer || '').length > 40);
   assert.match(quiz?.answer || '', /\?/);
 });
 
