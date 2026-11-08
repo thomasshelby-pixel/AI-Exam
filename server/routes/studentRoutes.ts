@@ -31,6 +31,7 @@ import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
+import { recordParakhLearningObservation, excludeParakhLearningForStudent } from '../services/parakhLearningService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
@@ -1865,6 +1866,24 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Once enqueueEvaluation returns, the background worker owns final status
     // and entitlement settlement. The request catch must not refund a running job.
     asyncEvaluationAccepted = true;
+
+    // Collect a policy-disclosed, metadata-only learning observation without delaying or
+    // changing the evaluation. A student's exclusion preference is enforced by the service.
+    try {
+      await recordParakhLearningObservation({
+        evaluationId,
+        studentId,
+        level: String(level || ''),
+        subjectKey: String(subjectKey || ''),
+        subjectName: String(subjectName || ''),
+        materialType: String(materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP')),
+        paper: String(referenceMaterial.paper || 'Paper 1'),
+        attempt: String(evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026')),
+        checkingMode: String(checkingMode || 'standard'),
+      });
+    } catch (parakhError) {
+      console.warn('[PARAKH] Observation record failed; evaluation continues without interruption:', parakhError);
+    }
 
     return res.json({
       success: true,
@@ -5414,5 +5433,30 @@ router.get(
     });
   }
 );
+
+
+/**
+ * Exclude the signed-in student's previous and future PARAKH observations.
+ * This does not alter evaluation history, marks, reports or credits
+ * are not modified.
+ */
+router.post('/parakh-learning/exclude-previous', async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = String(req.user?.id || '').trim();
+    if (!studentId) {
+      return res.status(401).json({ error: 'Student authentication is required.' });
+    }
+
+    const excludedCount = await excludeParakhLearningForStudent(studentId);
+    return res.json({
+      success: true,
+      excludedCount,
+      message: 'Your previous observations have been excluded and future PARAKH collection is paused for this account. Your evaluations remain unchanged.',
+    });
+  } catch (error) {
+    console.error('[PARAKH] Student learning exclusion request failed:', error);
+    return res.status(500).json({ error: 'Could not save the PARAKH exclusion request. Please try again.' });
+  }
+});
 
 export default router;
