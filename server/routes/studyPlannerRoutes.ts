@@ -17,7 +17,7 @@ import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, reso
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
-import { assessParakhResponseQuality, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
+import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -761,16 +761,8 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       const webMessage = webSources.length
         ? buildParakhWebResearchMessage(replyLanguage, webSources.length)
         : null;
-      const currentInfoUnavailableNote = requestsWebResearch && !webSources.length
-        ? (replyLanguage === 'hinglish'
-          ? '\n\nBhai, abhi live web search se reliable result nahi mil paya. Main latest information guess nahi karunga; thodi der baad dobara try kar ya official source directly check kar.'
-          : replyLanguage === 'hindi'
-            ? '\n\nअभी live web search से reliable result नहीं मिल पाया। मैं latest जानकारी का अनुमान नहीं लगाऊँगा; कुछ देर बाद दोबारा कोशिश करें या official source सीधे देखें।'
-            : '\n\nLive web search did not return a reliable result just now. I will not guess at current information; please retry later or check the official source directly.')
-        : '';
-
       const guidance = buildGeneralStudyAnswer(message, parsed);
-      const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer) + currentInfoUnavailableNote;
+      const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
       const qualityGate = assessParakhResponseQuality({
         question: message,
         answer,
@@ -779,14 +771,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         sources: webSources,
         knowledgeMatched: Boolean(knowledge),
       });
-      const primarySourceWarning = qualityGate.status === 'NEEDS_PRIMARY_SOURCE' && webSources.length > 0
-        ? (replyLanguage === 'hinglish'
-          ? '\n\nBhai, search results mein verified official primary source nahi mila. Isse final legal/tax position mat maan; current ICAI ya relevant government authority ki notification verify kar.'
-          : replyLanguage === 'hindi'
-            ? '\n\nउपलब्ध search results में verified official primary source नहीं मिला। इसे अंतिम legal/tax position न मानें; current ICAI या संबंधित सरकारी authority की notification verify करें।'
-            : '\n\nThe available search results did not include a verified official primary source. Do not treat this as the final legal/tax position; verify the current ICAI or relevant government-authority notification.')
-        : '';
-      const finalAnswer = answer + primarySourceWarning;
+      const finalAnswer = answer + buildParakhQualityNotice(qualityGate, replyLanguage);
       return res.json({
         success: true,
         status: webSources.length ? 'web_research_answered' : knowledge ? 'knowledge_answered' : 'general_guidance_answered',
