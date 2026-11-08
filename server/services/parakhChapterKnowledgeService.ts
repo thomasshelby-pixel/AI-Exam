@@ -667,7 +667,7 @@ export function getParakhChapterKnowledgeInventory(): {
   paperCode: 'INT-G2-P6';
   paperTitle: 'Financial Management and Strategic Management';
   section: 'Section A: Financial Management';
-  syllabusApplicability: 'May 2026 examination onwards';
+  syllabusApplicability: string;
   sourceCheckedAt: string;
   sourceUrl: string;
   chapterCount: number;
@@ -690,7 +690,7 @@ export function getParakhChapterKnowledgeInventory(): {
     paperCode: 'INT-G2-P6',
     paperTitle: 'Financial Management and Strategic Management',
     section: 'Section A: Financial Management',
-    syllabusApplicability: 'May 2026 examination onwards',
+    syllabusApplicability: 'Official ICAI catalogue page headed Applicable for May 2026 Exam; later-attempt applicability must be rechecked',
     sourceCheckedAt: SOURCE_CHECKED_AT,
     sourceUrl: ICAI_FM_SOURCE_URL,
     chapterCount: FM_CHAPTERS.length,
