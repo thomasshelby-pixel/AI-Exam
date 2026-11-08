@@ -533,27 +533,6 @@ export const StudyPlannerPage: React.FC = () => {
         <ArrowLeft className="h-4 w-4" /> Back to dashboard
       </button>
 
-      <section
-        role="status"
-        aria-label="AI Planner testing phase notice"
-        className="mb-5 flex flex-col gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100 sm:flex-row sm:items-start sm:justify-between"
-      >
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300">
-            <Sparkles className="h-4 w-4" />
-          </span>
-          <div>
-            <p className="text-sm font-bold">AI Planner · Testing Phase</p>
-            <p className="mt-1 text-xs leading-5 text-amber-900/80 dark:text-amber-200/80">
-              We’re testing and improving the AI Planner. Please review generated study schedules before relying on them. Your feedback will help us make the experience more useful.
-            </p>
-          </div>
-        </div>
-        <span className="inline-flex w-fit shrink-0 items-center rounded-full border border-amber-400/70 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:border-amber-700 dark:text-amber-200">
-          Early access
-        </span>
-      </section>
-
       <header className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm"><Sparkles className="h-6 w-6" /></span>
