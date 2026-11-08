@@ -113,7 +113,7 @@ test('resolves a paper using the authenticated course context, without cross-cou
   assert.equal(foundationLaw?.matchedIndexEntry, 'The Indian Contract Act, 1872');
   assert.equal(foundationLaw?.authoredChapterCount, 7);
   assert.equal(foundationLaw?.benchmarkPromptCount, 35);
-  assert.equal(foundationLaw?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p2-may2027');
+  assert.equal(foundationLaw?.sourceUrl, 'https://www.icai.org/post/24381');
   const foundationQa = resolveParakhCoursePaperContext({
     course: 'CA_FOUNDATION',
     message: 'Explain probability and theoretical distributions',
