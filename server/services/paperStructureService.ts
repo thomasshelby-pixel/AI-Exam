@@ -555,6 +555,98 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   return deduplicateQuestionList(subQuestions);
 }
 
+interface OptionalAttemptSelectionRule {
+  allowedCount: number;
+  questionNumbers: string[];
+  choiceRule: string;
+}
+
+const ATTEMPT_COUNT_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+};
+
+function parseAttemptCount(value: string): number {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^\d+$/.test(normalized) ? Number(normalized) : (ATTEMPT_COUNT_WORDS[normalized] || 0);
+}
+
+/**
+ * Read optional-question selection only from explicit Question Paper / Marking
+ * Scheme wording. If the source does not identify an unambiguous allowed set,
+ * return null rather than guessing from conventional CA paper layouts.
+ */
+export function extractOptionalAttemptSelectionRule(
+  questionPaperText: string,
+  markingSchemeText: string,
+  availableQuestionNumbers: string[],
+): OptionalAttemptSelectionRule | null {
+  const sourceText = `${questionPaperText || ''}\n${markingSchemeText || ''}`;
+  if (!sourceText.trim()) return null;
+
+  const available = [...new Set(availableQuestionNumbers.map((value) => String(Number(value))))]
+    .filter((value) => /^\d+$/.test(value))
+    .sort((left, right) => Number(left) - Number(right));
+  if (!available.length) return null;
+
+  const directPattern = /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+(?:questions?\s*)?((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
+  const directMatch = sourceText.match(directPattern);
+
+  let allowedCount = 0;
+  let allowedNumbers: string[] = [];
+  let expectedRangeLength = 0;
+
+  if (directMatch) {
+    allowedCount = parseAttemptCount(directMatch[1]);
+    const tail = directMatch[2];
+    const numbers = (tail.match(/\d{1,2}/g) || []).map((value) => Number(value));
+    if (/\bto\b|\s-\s/i.test(tail) && numbers.length >= 2) {
+      const from = Math.min(numbers[0], numbers[1]);
+      const to = Math.max(numbers[0], numbers[1]);
+      if (to - from <= 20) {
+        expectedRangeLength = to - from + 1;
+        allowedNumbers = Array.from({ length: expectedRangeLength }, (_, index) => String(from + index));
+      }
+    } else {
+      allowedNumbers = [...new Set(numbers.map(String))];
+    }
+  } else {
+    // Example: "Question No. 1 is compulsory. Answer any four questions
+    // from the remaining five." Derive the remaining parent IDs only when
+    // the explicit compulsory IDs and the stated remaining count reconcile.
+    const remainingMatch = sourceText.match(
+      /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+questions?\s+from\s+(?:the\s+)?remaining\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i,
+    );
+    if (!remainingMatch) return null;
+
+    allowedCount = parseAttemptCount(remainingMatch[1]);
+    const statedRemainingCount = parseAttemptCount(remainingMatch[2]);
+    const compulsoryMatches = Array.from(sourceText.matchAll(
+      /\b(?:question\s*(?:no\.?\s*)?|q\.?\s*)(\d{1,2})\s*(?:is|shall\s+be)\s+compulsory\b/gi,
+    ));
+    const compulsoryNumbers = new Set(compulsoryMatches.map((match) => String(Number(match[1]))));
+    allowedNumbers = available.filter((number) => !compulsoryNumbers.has(number));
+    if (!compulsoryNumbers.size || allowedNumbers.length !== statedRemainingCount) return null;
+  }
+
+  allowedNumbers = [...new Set(allowedNumbers)]
+    .filter((number) => available.includes(number))
+    .sort((left, right) => Number(left) - Number(right));
+  if (!Number.isInteger(allowedCount) || allowedCount < 1 ||
+      allowedNumbers.length < 2 || allowedNumbers.some((number) => !available.includes(number)) ||
+      (expectedRangeLength > 0 && allowedNumbers.length !== expectedRangeLength)) {
+    return null;
+  }
+  if (directMatch) {
+    const rawNumbers = (directMatch[2].match(/\d{1,2}/g) || []).map((value) => Number(value));
+    if (rawNumbers.some((number) => !available.includes(String(number)))) return null;
+  }
+  if (allowedCount >= allowedNumbers.length) return null;
+
+  const choiceRule = `Attempt any ${allowedCount} of ${allowedNumbers.map((number) => `Q${number}`).join(', ')}`;
+  return { allowedCount, questionNumbers: allowedNumbers, choiceRule };
+}
+
 function buildGenericPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -623,10 +715,23 @@ function buildGenericPaperStructure(options: {
     });
   }
 
+  const baseQuestions = Array.from(questionsMap.values());
+  const attemptRule = extractOptionalAttemptSelectionRule(
+    String(options.questionPaperText || ''),
+    String(options.markingSchemeText || ''),
+    baseQuestions.map((question) => question.questionNumber),
+  );
+  const optionalQuestionNumbers = new Set(attemptRule?.questionNumbers || []);
+  const questions = attemptRule
+    ? baseQuestions.map((question) => optionalQuestionNumbers.has(String(Number(question.questionNumber)))
+      ? { ...question, compulsory: false, choiceRule: attemptRule.choiceRule }
+      : question)
+    : baseQuestions;
+
   return {
     paperTitle: 'Chartered Accountancy Examination',
     totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
-    questions: Array.from(questionsMap.values()),
+    questions,
     subQuestions,
     mcqs,
   };
