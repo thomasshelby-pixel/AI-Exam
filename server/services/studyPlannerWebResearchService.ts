@@ -8,7 +8,7 @@ export interface ParakhWebResearchSource {
 export interface ParakhWebResearchResponse {
   available: boolean;
   provider: 'searxng' | 'google-news-rss' | null;
-  results: ParakhWebResearchSource[];
+  /\b(latest|currently|today|yesterday|recent|new(?:est)?|updated?|amendment|notification|circular|announcement|press release|budget|result|results|admit card|exam date|registration date|last date|deadline|due date|cut[- ]?off|repo rate|policy rate|current (?:rate|policy|notification|rule|amendment|syllabus|exam date|version|status|information|update)|as of 20\d{2}|20\d{2}|browse|web search|search the internet|internet se|online source|latest update)\b/i: ParakhWebResearchSource[];
   reason?: 'disabled' | 'not_configured' | 'unavailable' | 'no_results';
 }
 
