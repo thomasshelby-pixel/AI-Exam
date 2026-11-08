@@ -160,6 +160,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [data, setData] = useState<DashboardData | null>(null);
   const [showNotificationModal, setShowNotificationModal] = useState<boolean>(false);
   const [unreadNotifCount, setUnreadNotifCount] = useState<number>(0);
+  const [canAccessStudyPlanner, setCanAccessStudyPlanner] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    featureApi.checkAccess('checker_ai_planner', 'CHECKER')
+      .then((result) => { if (active) setCanAccessStudyPlanner(Boolean(result.allowed)); })
+      .catch(() => { if (active) setCanAccessStudyPlanner(false); });
+    return () => { active = false; };
+  }, [user?.id]);
 
   const fetchUnreadNotifications = async () => {
     try {
@@ -615,16 +624,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <span>Faculty Mock Tests</span>
           </button>
 
-          <button
-            id="dashboard-study-planner-btn"
-            type="button"
-            onClick={() => navigate('/student/study-planner')}
-            aria-label="Open AI Planner"
-            title="AI Planner"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-100 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900/70 dark:focus-visible:ring-offset-slate-900"
-          >
-            <Sparkles className="h-5 w-5" aria-hidden="true" />
-          </button>
+          {canAccessStudyPlanner && (
+            <button
+              id="dashboard-study-planner-btn"
+              type="button"
+              onClick={() => navigate('/student/study-planner')}
+              aria-label="Open AI Planner"
+              title="AI Planner"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-indigo-100 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300 dark:hover:bg-indigo-900/70 dark:focus-visible:ring-offset-slate-900"
+            >
+              <Sparkles className="h-5 w-5" aria-hidden="true" />
+            </button>
+          )}
 
           <a
             id="dashboard-progress-trend-btn"
