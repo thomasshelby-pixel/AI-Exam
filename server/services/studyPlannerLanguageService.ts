@@ -33,22 +33,74 @@ export function isSocialGreeting(text: string): boolean {
 
 export function buildSocialGreetingReply(language: StudyReplyLanguage): string {
   if (language === 'hindi') {
-    return 'नमस्ते! 😊 बताइए, आज CA की पढ़ाई में किस चीज़ में मदद चाहिए? कोई doubt समझना है, revision strategy चाहिए या study plan बनाना है?';
+    return 'नमस्ते! 😊 कैसे हैं आप? पढ़ाई हो या कोई और बात, अपने शब्दों में बताइए—हम आराम से बात आगे बढ़ाएँगे।';
   }
   if (language === 'hinglish') {
-    return 'Arre hello bhai! 😄 Haan, bolo—kaise ho? Aaj CA ki padhai mein kya help chahiye: koi doubt samjhein, revision strategy banayein ya study plan?';
+    return 'Arre hello bhai! 😄 Kaisa chal raha hai? Padhai ho ya koi aur baat, apne words mein bata—main conversation ko naturally aage badhaunga.';
   }
-  return 'Hello! I’m PARAKH, your CA learning companion. What would you like to work on today—a concept, a revision strategy, or a study plan?';
+  return 'Hello! I’m PARAKH, your CA learning companion. How are you doing? We can talk naturally—about studies or anything else on your mind.';
+}
+
+export function buildSocialConversationReply(text: string, language: StudyReplyLanguage): string | null {
+  const value = String(text || '').trim();
+  if (!value) return null;
+  if (isSocialGreeting(value)) return buildSocialGreetingReply(language);
+
+  if (/^(?:how are you|how's it going|how are things|what's up)[?.! ]*$/i.test(value)
+    || /\b(?:kaise ho|kaisa hai|kya haal(?: hai)?|sab kaise chal raha)\b/i.test(value)) {
+    if (language === 'hindi') return 'मैं बढ़िया हूँ, धन्यवाद! 😊 आप बताइए, सब कैसा चल रहा है? पढ़ाई हो या कोई और बात, आराम से बताइए।';
+    if (language === 'hinglish') return 'Main badhiya hoon bhai! 😄 Tu bata, sab kaisa chal raha hai? Padhai ho ya koi aur baat, aaram se bol.';
+    return 'I’m doing well, thanks for asking! How are things with you? We can talk about studies or anything else on your mind.';
+  }
+
+  if (/^(?:thanks|thank you|thankyou|thx|shukriya|dhanyavaad|धन्यवाद|शुक्रिया)[!. ]*$/i.test(value)) {
+    if (language === 'hindi') return 'खुशी हुई मदद करके! जब भी कोई doubt हो या किसी topic को आगे समझना हो, यहीं से जारी रखेंगे।';
+    if (language === 'hinglish') return 'Arey anytime bhai! 😄 Koi bhi doubt ho ya topic aage continue karna ho, bas message kar dena.';
+    return 'You’re welcome! Whenever you want to continue or work through another question, just send it here.';
+  }
+
+  if (/^(?:bye|goodbye|see you|good night|gn|milte hain|chalta hoon|चलता हूँ|अलविदा)[!. ]*$/i.test(value)) {
+    if (language === 'hindi') return 'ठीक है, फिर मिलते हैं! अपना ध्यान रखिए। जब वापस आएँगे, बातचीत यहीं से आगे बढ़ा लेंगे।';
+    if (language === 'hinglish') return 'Theek hai bhai, milte hain! Apna dhyan rakhna. Jab wapas aayega, yahin se continue kar lenge.';
+    return 'Take care! See you next time. We can pick up the conversation from here whenever you return.';
+  }
+
+  if (/^(?:what can you do|how can you help|what do you do|what is your role|tum kya kar sakte ho|aap kya kar sakte hain|kya kar sakte ho|kaise help karoge)[?.! ]*$/i.test(value)) {
+    if (language === 'hindi') return 'मैं CA concepts, numericals, chapters, revision, exam strategy और study planning में मदद कर सकता हूँ। अपना सवाल जैसे मन में आए वैसे लिखिए—कोई fixed format या menu चुनने की जरूरत नहीं।';
+    if (language === 'hinglish') return 'Bhai, main CA concepts, numericals, chapters, revision, exam strategy aur study planning mein help kar sakta hoon. Apna doubt jaise mann mein aaye waise likh—koi fixed format ya menu choose karne ki zaroorat nahi.';
+    return 'I can help with CA concepts, numericals, chapters, revision, exam strategy and study planning. Ask in your own words—there is no fixed format or menu you need to follow.';
+  }
+
+  if (/^(?:who are you|what is your name|tumhara naam kya hai|aap kaun ho)[?.! ]*$/i.test(value)) {
+    if (language === 'hindi') return 'मैं PARAKH हूँ—आपका CA learning companion. मेरा काम concepts समझने, doubts सुलझाने और पढ़ाई की planning में मदद करना है।';
+    if (language === 'hinglish') return 'Main PARAKH hoon bhai—tera CA learning companion. Concepts samjhana, doubts solve karna aur padhai plan karne mein help karta hoon.';
+    return 'I’m PARAKH, your CA learning companion. I’m here to help you understand concepts, work through doubts and plan your preparation.';
+  }
+
+  if (/^(?:i am fine|i'm fine|i am good|i'm good|doing good|all good|main thik hoon|main theek hoon|mai thik hu|badhiya|mast hoon|सब ठीक है|मैं ठीक हूँ)[!. ]*$/i.test(value)) {
+    if (language === 'hindi') return 'अच्छा लगा सुनकर! 😊 आज कुछ पढ़ने का मन है या बस थोड़ी बातचीत करनी है?';
+    if (language === 'hinglish') return 'Badhiya bhai! 😄 Aaj kuch padhne ka mood hai ya bas thodi baat-cheet karni hai?';
+    return 'Good to hear! 😊 Are you in the mood to study something today, or just have a quick chat?';
+  }
+
+  if (/\b(?:i am|i'm)\s+(?:tired|stressed|bored|upset|sad|overwhelmed)\b/i.test(value)
+    || /\b(?:thak gaya|thak gayi|bore ho raha|bore ho rahi|tension hai|stress ho raha|stress ho rahi|mood off|man nahi lag raha)\b/i.test(value)) {
+    if (language === 'hindi') return 'समझ सकता हूँ—कभी-कभी break लेना भी जरूरी होता है। थोड़ा आराम कर लीजिए। अगर पढ़ाई का pressure है, तो उसे छोटे steps में बाँटकर साथ में संभाल सकते हैं; और अगर बस बात करनी है, वह भी ठीक है।';
+    if (language === 'hinglish') return 'Samajh raha hoon bhai—kabhi-kabhi break lena bhi zaroori hota hai. Thoda relax kar. Agar padhai ka pressure hai toh use chhote steps mein tod lenge; aur bas baat karni hai toh woh bhi theek hai.';
+    return 'That sounds tiring. It is okay to take a short break. If study pressure is behind it, we can break the work into smaller steps; or we can simply talk for a bit.';
+  }
+
+  return null;
 }
 
 export function buildTopicIntentClarification(language: StudyReplyLanguage, subject: string): string {
   if (language === 'hindi') {
-    return subject + ' समझ गया। आपको किस तरह की मदद चाहिए—concept explanation, revision strategy या chapter-wise study plan?';
+    return subject + ' में जरूर मदद करूँगा। जिस concept, formula, numerical या chapter में दिक्कत है, अपने शब्दों में बताइए या सवाल भेजिए। वहीं से शुरू करते हैं।';
   }
   if (language === 'hinglish') {
-    return subject + ' samajh gaya bhai. Kya chahiye—kisi concept ki explanation, revision strategy, ya chapter-wise study plan?';
+    return 'Haan bhai, ' + subject + ' mein bilkul help karunga. Concept, formula, numerical ya chapter—jo bhi dikkat hai apne words mein bata ya direct question bhej de. Wahi se shuru karte hain.';
   }
-  return 'I understand you mean ' + subject + '. What would help most: a concept explanation, a revision strategy, or a chapter-wise study plan?';
+  return 'I can help with ' + subject + '. Tell me what is confusing you, or paste a question and we’ll work through it step by step.';
 }
 
 export function buildTopicIntentOptions(language: StudyReplyLanguage, subject: string): string[] {
