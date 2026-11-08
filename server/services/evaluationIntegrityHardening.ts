@@ -29,6 +29,7 @@ import {
 } from '../../src/types/index.js';
 import {
   toCanonicalQuestionId,
+  parseCanonicalQuestionIdentity,
   deduplicateQuestionList,
   validateQuestionDeduplication,
 } from './canonicalQuestionService.js';
@@ -206,6 +207,56 @@ export function validatePreEvaluationGate(params: {
         // them to a child question.
         if (!validCanonicalSet.has(attemptCanon)) {
           const message = `UNMAPPED_ATTEMPT_DETECTED: Candidate attempted ${attemptCanon} which does not exist as a canonical question in the Question Paper.`;
+          sourceConflicts.push(message);
+          failedInvariants.push(message);
+          criticalFailures.push(message);
+        }
+      }
+
+      // Enforce only source-backed optional-attempt rules. Different child
+      // parts of the same parent count once; MCQs are not descriptive parents.
+      const checkedChoiceRules = new Set<string>();
+      for (const parentQuestion of paperStructure.questions || []) {
+        const rule = String(parentQuestion.choiceRule || '').trim();
+        if (!rule || checkedChoiceRules.has(rule)) continue;
+        checkedChoiceRules.add(rule);
+
+        const ruleMatch = rule.match(
+          /ATTEMPT\s+ANY\s+(ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN|\d{1,2})\s+OF\s+(.+)/i,
+        );
+        if (!ruleMatch) continue;
+        const wordCounts: Record<string, number> = {
+          ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5,
+          SIX: 6, SEVEN: 7, EIGHT: 8, NINE: 9, TEN: 10,
+        };
+        const countToken = ruleMatch[1].toUpperCase();
+        const allowedCount = /^\d+$/.test(countToken) ? Number(countToken) : wordCounts[countToken];
+        const tail = ruleMatch[2];
+        const uniqueAllowed = [...new Set(
+          (tail.match(/Q?\s*\d{1,2}/gi) || [])
+            .map((token) => String(Number(token.replace(/[^\d]/g, ''))))
+            .filter((value) => value !== '0'),
+        )];
+        if (!Number.isInteger(allowedCount) || allowedCount < 1 || uniqueAllowed.length < 2) continue;
+
+        const attemptedOptionalParents = new Set<string>();
+        for (const attempt of coverageMap.attemptedQuestions) {
+          const canonicalId = toCanonicalQuestionId(
+            attempt.fullQuestionCode || attempt.questionNumber,
+            attempt.subQuestionNumber,
+          );
+          const parsed = parseCanonicalQuestionIdentity(canonicalId);
+          if (parsed.isMcq) continue;
+          const parentNumber = String(Number(parsed.questionNumber));
+          if (uniqueAllowed.includes(parentNumber)) attemptedOptionalParents.add(parentNumber);
+        }
+
+        if (attemptedOptionalParents.size > allowedCount) {
+          const attemptedList = Array.from(attemptedOptionalParents)
+            .sort((left, right) => Number(left) - Number(right))
+            .map((number) => `Q${number}`)
+            .join(', ');
+          const message = `OPTIONAL_ATTEMPT_LIMIT_EXCEEDED: Student attempted ${attemptedOptionalParents.size} optional parent questions (${attemptedList}), but the selected source permits only ${allowedCount} from ${uniqueAllowed.map((number) => `Q${number}`).join(', ')}. Manual selection is required; the system will not guess which answers to discard.`;
           sourceConflicts.push(message);
           failedInvariants.push(message);
           criticalFailures.push(message);
