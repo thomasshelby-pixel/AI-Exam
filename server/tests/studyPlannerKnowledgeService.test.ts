@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 
 test('retrieves relevant study guidance without exact wording', () => {
   const result = searchStudyKnowledge({
@@ -260,4 +260,23 @@ test('Ratio Analysis is not returned for a course where the FM-SM subject is una
     language: 'hinglish',
   });
   assert.equal(result, null);
+});
+
+
+test('works through a credit-policy numerical and asks for discount uptake instead of inventing it', () => {
+  const question = "The current credit sales of a firm is ₹20,00,000 and the firm still has an unutilized capacity. In order to boost its sales, the firm is willing to relax its credit policy. The firm proposes a new credit policy of 2/15 net 60 days as against the present policy of 1/15 net 45 days. The firm expects an increase in the sales by 15%. However, it is also expected that bad debts will go up to 2.5% of sales from 1.5%. The contribution to sales ratio of the firm is 25%. The firm's tax rate is 30% and the firm requires an after tax return of 12% on its investment. Should the firm change the credit policy?";
+  const answer = buildCreditPolicyAnalysisReply(question, 'english');
+  assert.ok(answer);
+  assert.match(answer, /₹23,00,000/);
+  assert.match(answer, /₹75,000/);
+  assert.match(answer, /₹57,500/);
+  assert.match(answer, /₹27,500/);
+  assert.match(answer, /₹33,250/);
+  assert.match(answer, /percentage.*take the discount/i);
+  assert.match(answer, /12% after-tax required return/i);
+  assert.doesNotMatch(answer, /firm should (?:accept|reject)/i);
+});
+
+test('does not guess a credit-policy decision when the required problem data is absent', () => {
+  assert.equal(buildCreditPolicyAnalysisReply('Should I change my credit policy?', 'english'), null);
 });
