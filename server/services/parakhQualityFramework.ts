@@ -349,6 +349,14 @@ export interface ParakhSubjectCoverageRow {
 }
 
 
+export const PARAKH_QUALITY_BENCHMARK_FAMILIES = [
+  'core_concept',
+  'unseen_numerical_or_application',
+  'exam_style_question',
+  'edge_case_and_common_mistake',
+  'source_sensitive_or_amendment_check',
+] as const;
+
 const REQUIRED_BENCHMARK_FAMILIES = [...PARAKH_QUALITY_BENCHMARK_FAMILIES];
 
 export function buildParakhSubjectCoverageReport(
@@ -449,10 +457,3 @@ export function evaluateParakhQualityBenchmark(
   };
 }
 
-export const PARAKH_QUALITY_BENCHMARK_FAMILIES = [
-  'core_concept',
-  'unseen_numerical_or_application',
-  'exam_style_question',
-  'edge_case_and_common_mistake',
-  'source_sensitive_or_amendment_check',
-] as const;
