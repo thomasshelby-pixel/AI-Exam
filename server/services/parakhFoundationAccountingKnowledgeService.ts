@@ -3,7 +3,7 @@ export type ParakhFoundationAccountingMode = 'answer' | 'example' | 'simpler' | 
 type Localised = Record<ParakhFoundationAccountingLanguage, string>;
 type ChapterPack = { chapterNumber: number; title: string; aliases: string[]; answer: Localised; example: Localised; simpler: Localised; quiz: Localised };
 
-export const PARAKH_FOUNDATION_ACCOUNTING_SOURCE_URL = 'https://www.icai.org/post/sm-foundation-p1-may2027';
+export const PARAKH_FOUNDATION_ACCOUNTING_SOURCE_URL = 'https://www.icai.org/post/24417';
 export const PARAKH_FOUNDATION_ACCOUNTING_APPLICABILITY = 'ICAI official Foundation Paper 1 page lists these chapters as Relevant for May 2027 and Onwards Examination. Check the exact attempt edition, corrigendum and applicable accounting standards before relying on attempt-sensitive treatment.';
 
 const CHAPTERS: ChapterPack[] = [
