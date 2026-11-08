@@ -589,11 +589,12 @@ export function extractOptionalAttemptSelectionRule(
     .sort((left, right) => Number(left) - Number(right));
   if (!available.length) return null;
 
-  const directPattern = /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
+  const directPattern = /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+(?:questions?\s*)?((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
   const directMatch = sourceText.match(directPattern);
 
   let allowedCount = 0;
   let allowedNumbers: string[] = [];
+  let expectedRangeLength = 0;
 
   if (directMatch) {
     allowedCount = parseAttemptCount(directMatch[1]);
@@ -603,7 +604,8 @@ export function extractOptionalAttemptSelectionRule(
       const from = Math.min(numbers[0], numbers[1]);
       const to = Math.max(numbers[0], numbers[1]);
       if (to - from <= 20) {
-        allowedNumbers = Array.from({ length: to - from + 1 }, (_, index) => String(from + index));
+        expectedRangeLength = to - from + 1;
+        allowedNumbers = Array.from({ length: expectedRangeLength }, (_, index) => String(from + index));
       }
     } else {
       allowedNumbers = [...new Set(numbers.map(String))];
@@ -631,7 +633,8 @@ export function extractOptionalAttemptSelectionRule(
     .filter((number) => available.includes(number))
     .sort((left, right) => Number(left) - Number(right));
   if (!Number.isInteger(allowedCount) || allowedCount < 1 ||
-      allowedNumbers.length < 2 || allowedNumbers.some((number) => !available.includes(number))) {
+      allowedNumbers.length < 2 || allowedNumbers.some((number) => !available.includes(number)) ||
+      (expectedRangeLength > 0 && allowedNumbers.length !== expectedRangeLength)) {
     return null;
   }
   if (directMatch) {
