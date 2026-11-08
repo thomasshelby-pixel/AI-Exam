@@ -585,7 +585,7 @@ export const StudyPlannerPage: React.FC = () => {
               </span>
             </div>
 
-            <div ref={bottomRef} id="parakh-chat-log" role="log" aria-live="polite" aria-relevant="additions" className="h-[320px] space-y-4 overflow-y-auto bg-slate-50/70 p-4 dark:bg-slate-900/60 sm:h-[380px] sm:p-5">
+            <div id="parakh-chat-log" role="log" aria-live="polite" aria-relevant="additions" className="h-[320px] space-y-4 overflow-y-auto bg-slate-50/70 p-4 dark:bg-slate-900/60 sm:h-[380px] sm:p-5">
               {messages.map((message) => (
                 <div key={message.id} className={"flex items-end gap-2 sm:gap-3 " + (message.role === 'user' ? 'justify-end' : 'justify-start')}>
                   {message.role === 'assistant' && (
