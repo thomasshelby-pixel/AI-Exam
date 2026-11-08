@@ -608,7 +608,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     const requestedReplyLanguage = body.reply_language;
-    const replyLanguage = requestedReplyLanguage === 'english' || requestedReplyLanguage === 'hinglish' || requestedReplyLanguage === 'hindi'
+    let replyLanguage = requestedReplyLanguage === 'english' || requestedReplyLanguage === 'hinglish' || requestedReplyLanguage === 'hindi'
       ? requestedReplyLanguage
       : detectStudyReplyLanguage(message);
 
@@ -663,6 +663,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
     const studentHistory = extractStudentConversationHistory(history);
+    if (!requestedReplyLanguage) replyLanguage = detectStudyReplyLanguage(message, studentHistory);
 
     // Only student turns decide intent. Assistant copy is context for scope prompts only,
     // never evidence that the student asked for revision, a plan, or a chapter assessment.
