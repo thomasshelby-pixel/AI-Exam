@@ -278,6 +278,35 @@ test('resolves FM chapter context and returns section-level status for Strategic
   assert.equal(auditing?.sourceUrl, 'https://www.icai.org/post/sm-inter-p5-may2027');
 });
 
+test('does not silently assume a section for combined Intermediate papers', () => {
+  const taxation = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain Taxation',
+  });
+  assert.equal(taxation?.paperCode, 'INT-G1-P3');
+  assert.equal(taxation?.section, null);
+  assert.equal(taxation?.sourceUrl, 'https://www.icai.org/post/intermediate-nset');
+
+  const paper6 = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain Financial Management and Strategic Management',
+  });
+  assert.equal(paper6?.paperCode, 'INT-G2-P6');
+  assert.equal(paper6?.section, null);
+
+  const incomeTax = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain Income-tax Law',
+  });
+  assert.equal(incomeTax?.section, 'Section A: Income-tax Law');
+
+  const gst = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain GST',
+  });
+  assert.equal(gst?.section, 'Section B: Goods and Services Tax');
+});
+
 test('creates language-specific and honest coverage notices for mapped-only papers', () => {
   const context = resolveParakhCoursePaperContext({
     course: 'CA_FINAL',
