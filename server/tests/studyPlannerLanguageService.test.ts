@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
 import { parseStudyPlannerRequest } from '../services/studyPlannerEngine.js';
 
 test('detects Hinglish, Hindi script, and English independently', () => {
@@ -162,4 +162,21 @@ test('English action chips inherit the recent Hinglish or Hindi conversation lan
   assert.equal(detectStudyReplyLanguage('Explain a FM concept', [
     'I need help with Financial Management',
   ]), 'english');
+});
+
+
+test('PARAKH handles open-ended greetings, small talk, thanks, farewells and mood messages', () => {
+  assert.match(buildSocialConversationReply('kaise ho?', 'hinglish') || '', /Main badhiya hoon/);
+  assert.match(buildSocialConversationReply('How are you?', 'english') || '', /doing well/);
+  assert.match(buildSocialConversationReply('Thanks bhai', 'hinglish') || '', /anytime bhai/);
+  assert.match(buildSocialConversationReply('thank you', 'english') || '', /You’re welcome/);
+  assert.match(buildSocialConversationReply('bye', 'hinglish') || '', /Theek hai bhai/);
+  assert.match(buildSocialConversationReply('I am stressed', 'english') || '', /short break/);
+  assert.match(buildSocialConversationReply('thak gaya bhai', 'hinglish') || '', /break lena/);
+  assert.equal(buildSocialConversationReply('Explain ratio analysis', 'english'), null);
+});
+
+test('open-ended topic clarification does not force a category menu', () => {
+  assert.match(buildTopicIntentClarification('hinglish', 'FM'), /apne words mein bata/);
+  assert.match(buildTopicIntentClarification('english', 'FM'), /paste a question/);
 });
