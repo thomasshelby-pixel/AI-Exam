@@ -561,6 +561,7 @@ export function buildCreditPolicyAnalysisReply(
   const returnMatch = problemText.match(/after[- ]tax\s+return[\s\S]{0,25}?(\d+(?:\.\d+)?)\s*%/i);
   const labelledOldTerms = problemText.match(/(?:present|current|existing)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
   const oldTerms = labelledOldTerms || problemText.match(/\b(?:against|versus|vs\.?|compared with|as compared to)\s+(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
+  const newTerms = problemText.match(/(?:new|proposed)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
 
   if (!salesMatch || !growthMatch || !badDebtMatch || !contributionMatch
     || !taxMatch || !returnMatch || !oldTerms || !newTerms) return null;
@@ -688,4 +689,3 @@ export function buildCreditPolicyAnalysisReply(
   return '**The calculation is complete.**\n\n' + finalLines.join('\n')
     + '\n\nAssumption: discount-taking customers pay on day 15 and the rest on the net credit day; receivables investment is measured at variable cost using a 365-day year.';
 }
-  const newTerms = problemText.match(/(?:new|proposed)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
