@@ -11,7 +11,7 @@ import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
@@ -612,19 +612,20 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       ? requestedReplyLanguage
       : detectStudyReplyLanguage(message);
 
-    // Greetings are ordinary conversation, not missing study-planner details.
-    if (isSocialGreeting(message)) {
+    // Social conversation should work even if the student has not selected a planner course.
+    const socialReply = buildSocialConversationReply(message, replyLanguage);
+    if (socialReply) {
       return res.json({
         success: true,
-        status: 'greeting_answered',
-        message: buildSocialGreetingReply(replyLanguage),
+        status: 'social_conversation_answered',
+        message: socialReply,
         parsed: {
           intent: 'general_guidance', course: null, subjects: [], duration_minutes: null, focus_text: '',
           date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
           missing_info: [], should_call_planner: false,
         },
         plan: null,
-        metadata: { version: 'parakh-social-chat-v1', modelUsed: false, persistentStorage: false },
+        metadata: { version: 'parakh-open-conversation-v1', modelUsed: false, persistentStorage: false },
       });
     }
 
@@ -638,24 +639,6 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         success: false,
         status: 'profile_course_missing',
         error: 'Your CA course is missing from your student profile. Please update your profile before using AI Planner.',
-      });
-    }
-
-    // CA Final chat is intentionally unavailable for now: answer consistently before
-    // subject parsing or clarification, so it never asks Final students for missing details.
-    const courseUnderDevelopmentReply = getCourseUnderDevelopmentReply(course);
-    if (courseUnderDevelopmentReply) {
-      return res.json({
-        success: true,
-        status: 'course_under_development',
-        message: courseUnderDevelopmentReply,
-        parsed: {
-          intent: 'out_of_scope', course, subjects: [], duration_minutes: null, focus_text: '',
-          date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
-          missing_info: [], should_call_planner: false,
-        },
-        plan: null,
-        metadata: { version: 'planner-course-availability-v1', modelUsed: false, persistentStorage: false },
       });
     }
 
@@ -730,6 +713,23 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
           knowledgeMatched: Boolean(knowledge),
           persistentStorage: false,
         },
+      });
+    }
+
+    // Keep CA Final schedule generation gated, but allow greetings and ordinary study conversation above.
+    const courseUnderDevelopmentReply = getCourseUnderDevelopmentReply(course);
+    if (courseUnderDevelopmentReply) {
+      return res.json({
+        success: true,
+        status: 'course_under_development',
+        message: courseUnderDevelopmentReply,
+        parsed: {
+          intent: 'out_of_scope', course, subjects: [], duration_minutes: null, focus_text: '',
+          date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
+          missing_info: [], should_call_planner: false,
+        },
+        plan: null,
+        metadata: { version: 'planner-course-availability-v1', modelUsed: false, persistentStorage: false },
       });
     }
 
@@ -1082,10 +1082,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     if (parsed.intent === 'out_of_scope') {
       status = 'out_of_scope';
       responseMessage = replyLanguage === 'hinglish'
-        ? 'Bhai, main CA study-related topics mein help karta hoon. CA level/subject clear karke question dobara bhej de.'
+        ? 'Bhai, main general baat bhi kar sakta hoon, lekin is topic par agar latest ya exact details chahiye toh verify kiye bina guess nahi karunga. CA studies se related angle ho toh woh bhi saath mein samjha dunga.'
         : replyLanguage === 'hindi'
-          ? 'मैं CA की पढ़ाई से जुड़े topics में मदद करता हूँ। CA level या subject स्पष्ट करके question दोबारा भेजें।'
-          : 'I focus on CA study-related questions. Please clarify the CA level or subject and try again.';
+          ? 'मैं सामान्य बातचीत भी कर सकता हूँ। इस topic की exact या latest जानकारी बिना verify किए नहीं बताऊँगा, लेकिन CA studies से जुड़ा पहलू हो तो उसे भी समझा सकता हूँ।'
+          : 'I can keep the conversation open, but I will not guess at exact or up-to-date details I cannot verify. If there is a CA-learning angle, I can help connect it.';
     } else if (parsed.intent === 'clarify') {
       status = 'needs_clarification';
       if (parsed.missing_info.includes('available study time') && parsed.subjects.length > 0) {
@@ -1096,10 +1096,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
             : 'How much time can you study each day for ' + parsed.subjects.join(' and ') + '? I’ll build the plan around that.';
       } else if (parsed.missing_info.includes('subject or study goal')) {
         responseMessage = replyLanguage === 'hinglish'
-          ? 'Bhai, kis subject ya topic par help chahiye? Main explanation, revision strategy ya timetable mein help kar sakta hoon.'
+          ? 'Bhai, bata kya chal raha hai? CA study ka doubt ho toh topic ya question seedha bhej de; aur agar bas baat karni hai toh woh bhi bilkul theek hai.'
           : replyLanguage === 'hindi'
-            ? 'किस subject या topic पर मदद चाहिए? मैं concept समझाने, revision strategy या timetable में मदद कर सकता हूँ।'
-            : 'Which subject or topic do you need help with? I can explain concepts, suggest revision strategies, or build a timetable.';
+            ? 'बताइए, क्या चल रहा है? CA की पढ़ाई का doubt हो तो topic या सवाल भेजिए; और अगर बस बातचीत करनी है तो वह भी ठीक है।'
+            : 'Tell me what is on your mind. You can ask about CA studies in your own words, or simply continue the conversation.';
       } else if (parsed.missing_info.length > 0) {
         responseMessage = replyLanguage === 'hinglish'
           ? 'Bhai, bas ye detail bata de: ' + parsed.missing_info.join(', ') + '.'
@@ -1108,10 +1108,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
             : 'Please provide this detail: ' + parsed.missing_info.join(', ') + '.';
       } else {
         responseMessage = replyLanguage === 'hinglish'
-          ? 'Bhai, apna subject/topic bata de, main help karta hoon.'
+          ? 'Haan bhai, bol—kis baat mein help chahiye? Apne words mein bata, main samajhne ki koshish karta hoon.'
           : replyLanguage === 'hindi'
-            ? 'अपना subject/topic बताइए, मैं मदद करता हूँ।'
-            : 'Please share your subject or topic so I can help.';
+            ? 'बताइए, किस बात में मदद चाहिए? अपने शब्दों में बताइए, मैं समझने की कोशिश करूँगा।'
+            : 'What would you like help with? Describe it in your own words and I’ll do my best to help.';
       }
     } else if (parsed.intent === 'create_study_plan' && plan) {
       status = 'plan_draft_ready';
