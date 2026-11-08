@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
 import { parseStudyPlannerRequest } from '../services/studyPlannerEngine.js';
 
 test('detects Hinglish, Hindi script, and English independently', () => {
