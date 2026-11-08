@@ -106,6 +106,18 @@ function containsPhrase(haystack: string, needle: string): boolean {
   return Boolean(phrase) && text.includes(' ' + phrase + ' ');
 }
 
+
+function getIndexEntryAliases(title: string): string[] {
+  const normalized = normalize(title);
+  const withoutLeadingArticle = normalized.replace(/^(?:the|a|an)\\s+/, '');
+  const withoutTrailingYear = withoutLeadingArticle.replace(/\\s+(?:18|19|20)\\d{2}$/, '').trim();
+  return Array.from(new Set([title, withoutLeadingArticle, withoutTrailingYear].filter(Boolean)));
+}
+
+function matchesIndexEntry(text: string, title: string): boolean {
+  return getIndexEntryAliases(title).some((alias) => containsPhrase(text, alias));
+}
+
 function foundationOrIntermediateIndex(course: 'CA_FOUNDATION' | 'CA_INTERMEDIATE', paperNumber: number) {
   return getPlannerSubjects(course).find((subject) => subject.paperNumber === paperNumber) || null;
 }
@@ -419,7 +431,7 @@ export function resolveParakhCoursePaperContext(input: {
     const matchedAliases = aliases.filter((alias) => containsPhrase(message, alias) || containsPhrase(suppliedSubjects, alias));
     const index = getPaperIndex(paper);
     const matchedEntries = index.entries.filter((entry) =>
-      containsPhrase(message, entry.title) || containsPhrase(suppliedSubjects, entry.title),
+      matchesIndexEntry(message, entry.title) || matchesIndexEntry(suppliedSubjects, entry.title),
     );
     const matchedSections = paper.sections.filter((section) => {
       const title = section.replace(/^Section [A-Z]:\\s*/i, '').trim();
