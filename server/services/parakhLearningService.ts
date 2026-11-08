@@ -1,5 +1,5 @@
 import { db } from '../db.js';
-import { getAllFirestoreDocs } from './firestoreDbService.js';
+import { getAllFirestoreDocs, getFirestoreDoc } from './firestoreDbService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export const PARAKH_LEARNING_CONSENT_VERSION = '1.0';
@@ -20,7 +20,7 @@ export interface ParakhLearningOptInInput {
 export interface ParakhLearningReviewInput {
   evaluationId: string;
   reviewerId: string;
-  reviewReason: string;
+  reviewAction: 'AFFIRMED_AS_IS' | 'AMENDED';
   totalMarks: number;
   maximumMarks: number;
   reviewedAt?: string;
@@ -52,7 +52,7 @@ function ensureParakhLearningSchema(): void {
       status TEXT NOT NULL DEFAULT 'AWAITING_ADMIN_REVIEW'
         CHECK (status IN ('AWAITING_ADMIN_REVIEW', 'VERIFIED_CANDIDATE', 'WITHDRAWN')),
       reviewer_id TEXT,
-      review_reason TEXT,
+      review_action TEXT,
       reviewed_total_marks REAL,
       reviewed_maximum_marks REAL,
       reviewed_at TEXT,
@@ -72,20 +72,21 @@ function ensureParakhLearningSchema(): void {
   schemaReady = true;
 }
 
-function mirrorRecord(record: Record<string, any>): void {
+async function mirrorRecord(record: Record<string, any>): Promise<void> {
   // Firestore is the shared source across app instances. A mirror failure must
   // never delay or fail a student's evaluation or an administrator's review.
-  void syncRecordToFirestore(PARAKH_COLLECTION, String(record.evaluation_id), record)
-    .catch((error: unknown) => {
-      console.warn('[PARAKH] Could not mirror learning consent record to Firestore:', error);
-    });
+  try {
+    await syncRecordToFirestore(PARAKH_COLLECTION, String(record.evaluation_id), record);
+  } catch (error) {
+    console.warn('[PARAKH] Could not mirror learning consent record to Firestore:', error);
+  }
 }
 
 /** Call only after the normal evaluation job has been accepted successfully. */
-export function recordParakhLearningOptIn(
+export async function recordParakhLearningOptIn(
   consented: boolean,
   input: ParakhLearningOptInInput,
-): boolean {
+): Promise<boolean> {
   if (consented !== true) return false;
 
   ensureParakhLearningSchema();
@@ -118,20 +119,65 @@ export function recordParakhLearningOptIn(
   ).get(input.evaluationId) as Record<string, any> | undefined;
 
   if (!record) return false;
-  mirrorRecord(record);
+  await mirrorRecord(record);
   return true;
 }
 
 /** Promote a consented record only after the admin review has been finalized. */
-export function markParakhEvaluationAdminReviewed(input: ParakhLearningReviewInput): boolean {
+export async function markParakhEvaluationAdminReviewed(input: ParakhLearningReviewInput): Promise<boolean> {
   ensureParakhLearningSchema();
   const reviewedAt = input.reviewedAt || new Date().toISOString();
+
+  // The evaluation finalization request can land on a different app instance
+  // from the upload. Hydrate its consent pointer from shared Firestore first.
+  let existing = db.prepare(
+    'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
+  ).get(input.evaluationId) as Record<string, any> | undefined;
+
+  if (!existing) {
+    try {
+      const cloudRecord = await getFirestoreDoc<Record<string, any>>(PARAKH_COLLECTION, input.evaluationId);
+      if (cloudRecord?.student_id && cloudRecord?.consent_version) {
+        db.prepare(`
+          INSERT OR IGNORE INTO parakh_learning_records (
+            evaluation_id, student_id, consent_version, consented_at,
+            level, subject_key, subject_name, material_type, paper, attempt,
+            checking_mode, status, reviewer_id, review_action,
+            reviewed_total_marks, reviewed_maximum_marks, reviewed_at,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          input.evaluationId,
+          cloudRecord.student_id,
+          cloudRecord.consent_version,
+          cloudRecord.consented_at || reviewedAt,
+          cloudRecord.level || 'UNKNOWN',
+          cloudRecord.subject_key || 'unknown',
+          cloudRecord.subject_name || 'Unknown subject',
+          cloudRecord.material_type || null,
+          cloudRecord.paper || null,
+          cloudRecord.attempt || null,
+          cloudRecord.checking_mode || 'standard',
+          cloudRecord.status || 'AWAITING_ADMIN_REVIEW',
+          cloudRecord.reviewer_id || null,
+          cloudRecord.review_action || null,
+          cloudRecord.reviewed_total_marks ?? null,
+          cloudRecord.reviewed_maximum_marks ?? null,
+          cloudRecord.reviewed_at || null,
+          cloudRecord.created_at || reviewedAt,
+          cloudRecord.updated_at || reviewedAt,
+        );
+      }
+    } catch (error) {
+      console.warn('[PARAKH] Could not hydrate consent record from Firestore:', error);
+    }
+  }
 
   const result = db.prepare(`
     UPDATE parakh_learning_records
     SET status = 'VERIFIED_CANDIDATE',
         reviewer_id = ?,
-        review_reason = ?,
+        review_action = ?,
         reviewed_total_marks = ?,
         reviewed_maximum_marks = ?,
         reviewed_at = ?,
@@ -140,7 +186,7 @@ export function markParakhEvaluationAdminReviewed(input: ParakhLearningReviewInp
       AND status = 'AWAITING_ADMIN_REVIEW'
   `).run(
     input.reviewerId,
-    String(input.reviewReason || '').trim().slice(0, 2000),
+    input.reviewAction,
     Number(input.totalMarks),
     Number(input.maximumMarks),
     reviewedAt,
@@ -154,7 +200,7 @@ export function markParakhEvaluationAdminReviewed(input: ParakhLearningReviewInp
     'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
   ).get(input.evaluationId) as Record<string, any> | undefined;
 
-  if (record) mirrorRecord(record);
+  if (record) await mirrorRecord(record);
   return Boolean(record);
 }
 
