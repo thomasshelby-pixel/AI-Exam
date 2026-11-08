@@ -528,23 +528,23 @@ export function buildCreditPolicyAnalysisReply(
   history: string[] = [],
 ): string | null {
   const currentMessage = String(message || '');
-  const uptakeOld = currentMessage.match(/\\b(?:old|current|present)(?:\\s+policy)?\\b[\\s:=,-]{0,25}(\\d+(?:\\.\\d+)?)\\s*%/i);
-  const uptakeNew = currentMessage.match(/\\b(?:new|proposed)(?:\\s+policy)?\\b[\\s:=,-]{0,25}(\\d+(?:\\.\\d+)?)\\s*%/i);
+  const uptakeOld = currentMessage.match(/\b(?:old|current|present)(?:\s+policy)?\b[\s:=,-]{0,25}(\d+(?:\.\d+)?)\s*%/i);
+  const uptakeNew = currentMessage.match(/\b(?:new|proposed)(?:\s+policy)?\b[\s:=,-]{0,25}(\d+(?:\.\d+)?)\s*%/i);
   const suppliedUptake = Boolean(uptakeOld && uptakeNew);
-  const problemText = /\\bcredit\\s+polic(?:y|ies)\\b/i.test(currentMessage)
+  const problemText = /\bcredit\s+polic(?:y|ies)\b/i.test(currentMessage)
     ? currentMessage
     : suppliedUptake
-      ? [...history].reverse().find((entry) => /\\bcredit\\s+polic(?:y|ies)\\b/i.test(entry)) || ''
+      ? [...history].reverse().find((entry) => /\bcredit\s+polic(?:y|ies)\b/i.test(entry)) || ''
       : '';
   if (!problemText) return null;
-  if (!/\\b(?:should|whether|change|accept|adopt|worthwhile)\\b/i.test(problemText)) return null;
+  if (!/\b(?:should|whether|change|accept|adopt|worthwhile)\b/i.test(problemText)) return null;
 
-  const salesMatch = problemText.match(/current\\s+credit\\s+sales[\\s\\S]{0,55}?([\\d,]+(?:\\.\\d+)?)/i);
-  const growthMatch = problemText.match(/increase\\s+in\\s+(?:the\\s+)?sales\\s+by\\s+(\\d+(?:\\.\\d+)?)\\s*%/i);
-  const badDebtMatch = problemText.match(/bad\\s+debts?[\\s\\S]{0,65}?(?:go\\s+up|increase|rise)\\s+to\\s*(\\d+(?:\\.\\d+)?)\\s*%[\\s\\S]{0,50}?\\bfrom\\s*(\\d+(?:\\.\\d+)?)\\s*%/i);
-  const contributionMatch = problemText.match(/contribution\\s+to\\s+sales\\s+ratio[\\s\\S]{0,35}?(\\d+(?:\\.\\d+)?)\\s*%/i);
-  const taxMatch = problemText.match(/tax\\s+rate[\\s\\S]{0,20}?(\\d+(?:\\.\\d+)?)\\s*%/i);
-  const returnMatch = problemText.match(/after[- ]tax\\s+return[\\s\\S]{0,25}?(\\d+(?:\\.\\d+)?)\\s*%/i);
+  const salesMatch = problemText.match(/current\s+credit\s+sales[\s\S]{0,55}?([\d,]+(?:\.\d+)?)/i);
+  const growthMatch = problemText.match(/increase\s+in\s+(?:the\s+)?sales\s+by\s+(\d+(?:\.\d+)?)\s*%/i);
+  const badDebtMatch = problemText.match(/bad\s+debts?[\s\S]{0,65}?(?:go\s+up|increase|rise)\s+to\s*(\d+(?:\.\d+)?)\s*%[\s\S]{0,50}?\bfrom\s*(\d+(?:\.\d+)?)\s*%/i);
+  const contributionMatch = problemText.match(/contribution\s+to\s+sales\s+ratio[\s\S]{0,35}?(\d+(?:\.\d+)?)\s*%/i);
+  const taxMatch = problemText.match(/tax\s+rate[\s\S]{0,20}?(\d+(?:\.\d+)?)\s*%/i);
+  const returnMatch = problemText.match(/after[- ]tax\s+return[\s\S]{0,25}?(\d+(?:\.\d+)?)\s*%/i);
   const oldTerms = problemText.match(/(?:present|current|existing)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
   const newTerms = problemText.match(/(?:new|proposed)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
 
@@ -600,7 +600,7 @@ export function buildCreditPolicyAnalysisReply(
         '',
         '**Final yes/no के लिए एक जानकारी missing है:** पुरानी policy में ' + oldDiscountRate + '% discount लेने वाले customers का % और नई policy में ' + newDiscountRate + '% discount लेने वाले customers का %। बाकी customers net-day पर भुगतान करेंगे।',
         'ये दो percentages बता दीजिए; मैं average collection period, discount cost और ' + percent(afterTaxReturn) + '% after-tax return के आधार पर final decision निकाल दूँगा।',
-      ].join('\\n')
+      ].join('\n')
     : language === 'hinglish'
       ? [
           '**Bhai, ye Financial Management ka credit-policy numerical hai.** Jo data diya hai usse:',
@@ -612,7 +612,7 @@ export function buildCreditPolicyAnalysisReply(
           '',
           '**Final yes/no ke liye ek detail missing hai:** current policy mein ' + oldDiscountRate + '% discount lene wale customers ka % aur proposed policy mein ' + newDiscountRate + '% discount lene wale customers ka %. Baaki customers net-day par pay karenge.',
           'Ye dono percentages bhej de; main average collection period, discount cost aur ' + percent(afterTaxReturn) + '% after-tax return laga ke final decision nikal dunga.',
-        ].join('\\n')
+        ].join('\n')
       : [
           '**This is a Financial Management credit-policy decision.** The supplied figures give:',
           '1. Current credit sales: ' + money(currentSales) + '.',
@@ -623,10 +623,10 @@ export function buildCreditPolicyAnalysisReply(
           '',
           '**A final accept/reject decision needs one missing assumption:** the percentage of customers taking the ' + oldDiscountRate + '% discount under the current policy and the percentage taking the ' + newDiscountRate + '% discount under the proposed policy. Assume the remaining customers pay on the net day.',
           'Please provide those two percentages. I can then calculate the average collection periods, incremental discount cost and receivables investment using the ' + percent(afterTaxReturn) + '% after-tax required return.',
-        ].join('\\n');
+        ].join('\n');
 
   if (!uptakeOld || !uptakeNew) {
-    return /\\bcredit\\s+polic(?:y|ies)\\b/i.test(currentMessage) ? initialReply : null;
+    return /\bcredit\s+polic(?:y|ies)\b/i.test(currentMessage) ? initialReply : null;
   }
 
   const oldUptake = Number(uptakeOld[1]);
