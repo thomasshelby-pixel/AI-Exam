@@ -147,4 +147,5 @@ test('recognises natural Hinglish help requests and difficulty statements', () =
   assert.equal(isGeneralStudyQuestion('FM me mujhe ratio wala chapter nahi aata hai'), true);
   assert.equal(isGeneralStudyQuestion('I am struggling with the ratio chapter'), true);
   assert.equal(isGeneralStudyQuestion('Mujhe ye concept samajh nahi aa raha'), true);
+  assert.equal(isGeneralStudyQuestion('Ye topic samajh nahi aata'), true);
 });
