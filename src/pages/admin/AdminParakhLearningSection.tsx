@@ -124,7 +124,7 @@ export const AdminParakhLearningSection: React.FC = () => {
     },
     {
       title: 'Sample-based quality review',
-      detail: 'Only selected samples are sent for human review; ordinary observations do not wait for admin review.',
+      detail: 'System-flagged or deliberately selected samples are reviewed; ordinary observations never wait for admin review.',
       status: 'ACTIVE',
       statusLabel: 'Active',
       icon: ClipboardCheck,
@@ -279,8 +279,9 @@ export const AdminParakhLearningSection: React.FC = () => {
                   <tr className="border-b border-slate-200 text-[10px] uppercase tracking-wide text-slate-400 dark:border-slate-800">
                     <th className="px-2 py-2 font-bold">Course</th>
                     <th className="px-2 py-2 font-bold">Subject</th>
-                    <th className="px-2 py-2 text-right font-bold">Opt-ins</th>
-                    <th className="px-2 py-2 text-right font-bold">Awaiting</th>
+                    <th className="px-2 py-2 text-right font-bold">Collected</th>
+                    <th className="px-2 py-2 text-right font-bold">Unreviewed</th>
+                    <th className="px-2 py-2 text-right font-bold">Selected QA</th>
                     <th className="px-2 py-2 text-right font-bold">Verified</th>
                   </tr>
                 </thead>
@@ -347,7 +348,7 @@ export const AdminParakhLearningSection: React.FC = () => {
             Latest activity: {formatDate(metrics?.latestActivityAt)}
           </p>
           <p className="mt-1 text-[10px] text-slate-400">
-            Metrics source: {metrics?.dataSource === 'FIRESTORE' ? 'Shared Firestore' : 'Local SQLite cache fallback'}
+            Metrics source: {metrics?.dataSource || 'Not available'}
           </p>
         </div>
       </section>
