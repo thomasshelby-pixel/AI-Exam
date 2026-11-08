@@ -272,7 +272,7 @@ test('works through a credit-policy numerical and asks for discount uptake inste
   assert.match(answer, /₹57,500/);
   assert.match(answer, /₹27,500/);
   assert.match(answer, /₹33,250/);
-  assert.match(answer, /percentage.*take the discount/i);
+  assert.match(answer, /percentage of customers taking the 1% discount/i);
   assert.match(answer, /12% after-tax required return/i);
   assert.doesNotMatch(answer, /firm should (?:accept|reject)/i);
   assert.match(answer, /Under the current policy/i);
