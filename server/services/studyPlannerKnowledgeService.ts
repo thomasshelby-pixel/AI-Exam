@@ -659,18 +659,18 @@ export function buildCreditPolicyAnalysisReply(
     'Average collection period: current ' + oldAverageCollectionDays.toFixed(2) + ' days; proposed ' + newAverageCollectionDays.toFixed(2) + ' days.',
     'Incremental cash-discount cost after tax: ' + money(incrementalDiscountCostAfterTax) + '.',
     'Incremental receivables investment (at variable cost): ' + money(incrementalReceivablesInvestment) + '.',
-    'Finance cost at ' + percent(afterTaxReturn) +% after-tax: ' + money(receivablesFinancingCost) + '.',
+    'Finance cost at ' + percent(afterTaxReturn) + '% after-tax: ' + money(receivablesFinancingCost) + '.',
     'Net annual benefit: ' + money(netAnnualBenefit) + '.',
     '**Decision: ' + decision + '** the proposed policy, on these assumptions.',
   ];
   if (language === 'hinglish') {
-    return '**Bhai, ab full calculation ho gayi.**\\n\\n' + finalLines.join('\\n')
-      + '\\n\\nAssumption: discount lene wale customers 15th day par aur baaki net credit day par pay karte hain; receivables investment variable-cost basis par, 365-day year ke saath nikala hai.';
+    return '**Bhai, ab full calculation ho gayi.**\n\n' + finalLines.join('\n')
+      + '\n\nAssumption: discount lene wale customers 15th day par aur baaki net credit day par pay karte hain; receivables investment variable-cost basis par, 365-day year ke saath nikala hai.';
   }
   if (language === 'hindi') {
-    return '**अब पूरी calculation हो गई है।**\\n\\n' + finalLines.join('\\n')
-      + '\\n\\nमान्यता: discount लेने वाले customers 15वें दिन और बाकी net credit day पर भुगतान करते हैं; receivables investment variable-cost basis पर 365-day year से निकाला है।';
+    return '**अब पूरी calculation हो गई है।**\n\n' + finalLines.join('\n')
+      + '\n\nमान्यता: discount लेने वाले customers 15वें दिन और बाकी net credit day पर भुगतान करते हैं; receivables investment variable-cost basis पर 365-day year से निकाला है।';
   }
-  return '**The calculation is complete.**\\n\\n' + finalLines.join('\\n')
-    + '\\n\\nAssumption: discount-taking customers pay on day 15 and the rest on the net credit day; receivables investment is measured at variable cost using a 365-day year.';
+  return '**The calculation is complete.**\n\n' + finalLines.join('\n')
+    + '\n\nAssumption: discount-taking customers pay on day 15 and the rest on the net credit day; receivables investment is measured at variable cost using a 365-day year.';
 }
