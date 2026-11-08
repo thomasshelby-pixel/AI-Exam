@@ -294,6 +294,7 @@ export type ParakhFoundationAccountingMatch = {
   topicTitle: string;
   course: 'CA_FOUNDATION';
   paperCode: 'FND-P1';
+  section: 'Accounting';
   chapterNumber: number;
   syllabusApplicability: string;
   contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED';
@@ -338,6 +339,7 @@ export function searchParakhFoundationAccountingKnowledge(input: {
     topicTitle: chapter.title,
     course: 'CA_FOUNDATION',
     paperCode: 'FND-P1',
+    section: 'Accounting',
     chapterNumber: chapter.chapterNumber,
     syllabusApplicability: PARAKH_FOUNDATION_ACCOUNTING_APPLICABILITY,
     contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
