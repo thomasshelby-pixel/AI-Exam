@@ -115,6 +115,18 @@ The five packs have original explanations in English, Hindi and Hinglish and fiv
 
 **Attempt boundary:** The official page is headed May 2027 Exam Onwards. The drafts must not be used to assert chapter applicability for a different attempt without checking that student's exact ICAI material, RTP, amendment and corrigendum. This authored content does not reproduce ICAI study-material text.
 
+## New rollout: CA Intermediate Paper 2: Corporate and Other Laws
+
+**Source of truth:** ICAI's official Paper 2 catalogue at https://www.icai.org/post/24331 is marked applicable for May 2027 examinations onwards. It lists 12 Company Law/LLP chapters and three Other Laws chapters (General Clauses Act, Interpretation of Statutes and FEMA).
+
+PARAKH now has 15 original chapter drafts, each in English, Hindi and Hinglish and with answer, example, simpler and quiz modes. Five benchmark prompts are defined per chapter (75 total). These are original concept notes, not ICAI material reproductions; no chapter or benchmark answer key has qualified human review. Company-law amendments, filing dates, statutory limits, penalties and attempt-specific legal positions must be checked against the exact ICAI edition and primary legal sources.
+
+## New rollout: CA Intermediate Paper 3: Taxation
+
+**Source of truth:** ICAI's official Paper 3 Section A Income-tax Law catalogue is at https://www.icai.org/post/24313; Section B Goods and Services Tax catalogue is at https://www.icai.org/post/24360. Both catalogues list applicability for May 2027, September 2027 and January 2028 examinations.
+
+PARAKH now has nine Income-tax chapter drafts (45 prompts) and 15 GST chapter drafts (75 prompts), each with original English, Hindi and Hinglish concept notes and answer, example, simpler and quiz modes. Current rates, thresholds, statutory limits, return dates, notifications, effective dates, amendments, exclusions and case-specific tax outcomes are not hard-coded as timeless answers; the freshness guard routes such questions away from evergreen drafts for current-source verification. These 24 chapters and 120 prompts remain author drafts and prompt scaffolding only, with zero qualified human review and zero answer-key-scored benchmark cases.
+
 ## Content and intellectual-property policy
 
 ICAI's website carries an intellectual-property notice reserving its material to ICAI. PARAKH therefore stores original explanations, original examples and links to the official source page; it does not copy ICAI chapter text, reproduce its illustrations, or mirror its PDFs.
@@ -179,6 +191,6 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 The paper-level catalogue covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
 
-All four Foundation papers and Intermediate Papers 1, 4, 5 and 6 now have original content. Foundation: Paper 1 Accounting (11 drafts/55 prompts), Paper 2 Business Laws (7/35), Paper 3 Quantitative Aptitude (18/90) and Paper 4 Business Economics (10/50); all four catalogues are relevant May 2027 onwards. Intermediate: Paper 1 Advanced Accounting (15/75; May 2027 onwards), Paper 4 Cost and Management Accounting (15/75; May 2027 onwards), Paper 5 Auditing and Ethics (11/55; May 2027 onwards), Paper 6A Financial Management (9/45; May 2026 catalogue edition) and Paper 6B Strategic Management (5/25; May 2027 onwards). The combined authored inventory is 101 chapter drafts and 505 prompts, with zero human-reviewed chapters and zero human-reviewed benchmark answer keys. Other Intermediate papers retain application indexes requiring exact-attempt verification; CA Final topic pointers remain provisional and SPOM remains mapped at module/paper level only.
+All four Foundation papers and all six Intermediate papers now have original author-draft content. Foundation totals 46 chapter drafts/230 prompts. Intermediate totals 94 chapter drafts/470 prompts: Paper 1 Advanced Accounting (15/75), Paper 2 Corporate and Other Laws (15/75), Paper 3 Section A Income-tax Law (9/45) and Section B GST (15/75), Paper 4 Cost and Management Accounting (15/75), Paper 5 Auditing and Ethics (11/55), Paper 6A Financial Management (9/45) and Paper 6B Strategic Management (5/25). Across Foundation and Intermediate there are 140 chapter drafts and 700 benchmark prompts. There are zero qualified human-reviewed chapters and zero human-reviewed benchmark answer keys. The prompts are not a held-out scored benchmark. Current statutory/tax positions, rates, limits, due dates, notifications, amendments, exclusions and attempt-specific applicability must be verified against the correct ICAI edition and primary sources. CA Final topic pointers remain provisional and SPOM remains mapped at module/paper level only; both are deferred from this release phase.
 
 Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, followed by separate benchmark answer keys and qualified review. Tax and law content needs attempt-aware statutory source controls and must not be promoted from evergreen explanations.
