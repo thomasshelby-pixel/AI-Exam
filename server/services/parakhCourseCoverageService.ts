@@ -474,8 +474,11 @@ export function resolveParakhCoursePaperContext(input: {
       }))
       .sort((a, b) => a.firstPosition - b.firstPosition || a.entry.number - b.entry.number)[0]?.entry;
     const matchedSections = paper.sections.filter((section) => {
-      const title = section.replace(/^Section [A-Z]:\\s*/i, '').trim();
-      return containsPhrase(message, title) || containsPhrase(suppliedSubjects, title);
+      const title = section.replace(/^Section [A-Z]:\s*/i, '').trim();
+      const sectionAliases = [title];
+      if (paper.code === 'INT-G1-P3' && /Income-tax Law/i.test(title)) sectionAliases.push('income tax', 'income-tax');
+      if (paper.code === 'INT-G1-P3' && /Goods and Services Tax/i.test(title)) sectionAliases.push('GST');
+      return sectionAliases.some((alias) => containsPhrase(message, alias) || containsPhrase(suppliedSubjects, alias));
     });
     if (!matchedAliases.length && !matchedEntries.length) continue;
     const longestAlias = matchedAliases.reduce((max, alias) => Math.max(max, normalize(alias).length), 0);
@@ -485,7 +488,9 @@ export function resolveParakhCoursePaperContext(input: {
     const matchedSection = matchedSections.length === 1
       ? paper.code === 'INT-G2-P6' && !/^Section [A-Z]:/i.test(matchedSections[0])
         ? (matchedSections[0] === 'Strategic Management' ? 'Section B: ' : 'Section A: ') + matchedSections[0]
-        : matchedSections[0]
+        : paper.code === 'INT-G1-P3' && !/^Section [A-Z]:/i.test(matchedSections[0])
+          ? (/Goods and Services Tax/i.test(matchedSections[0]) ? 'Section B: ' : 'Section A: ') + matchedSections[0]
+          : matchedSections[0]
       : null;
     candidates.push({
       paper,
