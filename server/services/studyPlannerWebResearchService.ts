@@ -20,8 +20,9 @@ const cache = new Map<string, { expiresAt: number; response: ParakhWebResearchRe
 export function shouldUseParakhWebResearch(message: string): boolean {
   // Keep evergreen study topics such as current ratio/current account out of web search,
   // but route attempt-sensitive tax thresholds, rates and numbered statutory provisions
-  // to primary-source research.
-  return /\b(latest|currently|today|yesterday|recent|newest|newly announced|updated?|amendment|notification|circular|announcement|press release|union budget|exam results?|admit card|exam date|registration date|last date|deadline|due date|cut[- ]?off|repo rate|policy rate|interest rate|tax rate|income[- ]tax slab|gst rate|registration threshold|deduction limit|tax threshold|gst threshold|section\s+\d+[A-Z]?|rule\s+\d+[A-Z]?|current (?:rate|threshold|limit|slab|tax|gst|income tax|due date|filing deadline|interest|penalty|policy|notification|rule|amendment|syllabus|exam date|version|status|information|update)|as of 20\d{2}|20\d{2}|browse|web search|search the internet|internet se|online source|latest update)\b/i.test(String(message || ''));
+  // to current primary-source research in English and Hindi.
+  return /\b(latest|currently|today|yesterday|recent|newest|newly announced|updated?|amendment|notification|circular|announcement|press release|union budget|exam results?|admit card|exam date|registration date|last date|deadline|due date|cut[- ]?off|repo rate|policy rate|interest rate|tax rate|tax slab|income[- ]tax slab|gst rate|registration threshold|deduction limit|tax threshold|gst threshold|section\s+\d+[A-Z]?|rule\s+\d+[A-Z]?|current (?:rate|threshold|limit|slab|tax|gst|income tax|due date|filing deadline|interest|penalty|policy|notification|rule|amendment|syllabus|exam date|version|status|information|update)|as of 20\d{2}|20\d{2}|browse|web search|search the internet|internet se|online source|latest update)\b/i.test(String(message || ''))
+    || /(?:वर्तमान|आज की|नवीनतम)\s*(?:जीएसटी|GST|आयकर|कर|दर|सीमा|स्लैब|ब्याज|अंतिम तारीख|संशोधन|अधिसूचना)|(?:जीएसटी|GST|आयकर)\s*(?:दर|स्लैब|सीमा|अंतिम तारीख)|धारा\s*\d+|नियम\s*\d+/u.test(String(message || ''));
 }
 
 export function sanitiseParakhSearchQuery(message: string): string {
