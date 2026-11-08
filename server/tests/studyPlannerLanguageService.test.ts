@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
 import { parseStudyPlannerRequest } from '../services/studyPlannerEngine.js';
 
 test('detects Hinglish, Hindi script, and English independently', () => {
@@ -134,8 +134,8 @@ test('a short subject-plus-me message is treated as Hinglish', () => {
 });
 
 test('bare subject clarification gives useful choices in the student language', () => {
-  assert.match(buildTopicIntentClarification('hinglish', 'FM'), /FM samajh gaya bhai/);
-  assert.match(buildTopicIntentClarification('english', 'FM'), /concept explanation/);
+  assert.match(buildTopicIntentClarification('hinglish', 'FM'), /apne words mein bata/);
+  assert.match(buildTopicIntentClarification('english', 'FM'), /paste a question|what is confusing/);
   assert.deepEqual(buildTopicIntentOptions('hinglish', 'FM'), ['FM ka concept samjhao', 'FM ki revision strategy batao', 'FM ka study plan banao']);
 });
 
