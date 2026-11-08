@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
+import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 
 test('explains when SM shorthand conflicts with a CA Final planner profile', () => {
   assert.equal(resolveBareTopicClarification('CA_FINAL', 'sm'), 'FINAL_SM_MISMATCH');
@@ -63,4 +63,40 @@ test('CA Final conversational help is not disabled by the planner-only availabil
   const message = getCourseUnderDevelopmentReply('CA_FINAL');
   assert.match(message || '', /Coming soon for CA Final/);
   // Route policy limits this gate to deterministic schedule generation; general chat is available.
+});
+
+
+test('assistant replies are excluded from student intent history', () => {
+  assert.deepEqual(extractStudentConversationHistory([
+    'Planner: I can explain concepts or suggest revision strategies.',
+    'Student: hello',
+    'Planner: Which subject do you need help with?',
+    'Student: FM me',
+  ]), ['hello', 'FM me']);
+});
+
+test('untagged legacy conversation history remains usable', () => {
+  assert.deepEqual(extractStudentConversationHistory(['GST', 'detailed revision']), ['GST', 'detailed revision']);
+});
+
+test('a bare subject mention asks what kind of help is needed before chapter assessment', () => {
+  assert.equal(shouldAskTopicIntentClarification({ message: 'FM me', hasTarget: true }), true);
+  assert.equal(shouldAskTopicIntentClarification({ message: 'FM', hasTarget: true }), true);
+  assert.equal(shouldAskTopicIntentClarification({ message: 'FM detailed revision', hasTarget: true }), false);
+  assert.equal(shouldAskTopicIntentClarification({ message: 'Explain FM', hasTarget: true }), false);
+  assert.equal(shouldAskTopicIntentClarification({ message: 'FM me', hasTarget: false }), false);
+});
+
+test('an assistant mention of revision cannot trigger a chapter assessment for a bare student subject message', () => {
+  const studentHistory = extractStudentConversationHistory([
+    'Planner: I can explain concepts, suggest revision strategies, or build a timetable.',
+    'Student: hello',
+  ]);
+  const conversationText = ['FM me', ...studentHistory].join(' ');
+  assert.equal(shouldPrioritizeChapterAssessment({
+    course: 'CA_INTERMEDIATE',
+    hasTarget: true,
+    conversationText,
+    priorScopeQuestion: false,
+  }), false);
 });

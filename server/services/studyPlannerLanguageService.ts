@@ -6,8 +6,45 @@ const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krn
 
 export function detectStudyReplyLanguage(text: string): StudyReplyLanguage {
   if (/[\u0900-\u097F]/.test(text)) return 'hindi';
+  if (/^(?:fm|sm|fm[-&/]sm|gst|tax|taxation|law|audit|costing|accounting)\s+me[?.!]*$/i.test(String(text || '').trim())) return 'hinglish';
   if (HINGLISH_MARKERS.test(text)) return 'hinglish';
   return 'english';
+}
+
+
+/** Recognise a standalone greeting or a nudge asking the assistant to greet back. */
+export function isSocialGreeting(text: string): boolean {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  const plainGreeting = /^(?:hi+|hello+|hey+|hlo+|namaste|namaskar|good\s+morning|good\s+afternoon|good\s+evening)(?:[\s,]+(?:bhai|parakh|there|friend))?[\s.!?]*$/i;
+  const greetingNudge = /\b(?:hello|hi|hey|hlo)\b.{0,55}\b(?:nahi|nahin|bolo|bologe|reply|greet|jawab)\b/i;
+  return plainGreeting.test(value) || greetingNudge.test(value);
+}
+
+export function buildSocialGreetingReply(language: StudyReplyLanguage): string {
+  if (language === 'hindi') {
+    return 'नमस्ते! 😊 बताइए, आज CA की पढ़ाई में किस चीज़ में मदद चाहिए? कोई doubt समझना है, revision strategy चाहिए या study plan बनाना है?';
+  }
+  if (language === 'hinglish') {
+    return 'Arre hello bhai! 😄 Haan, bolo—kaise ho? Aaj CA ki padhai mein kya help chahiye: koi doubt samjhein, revision strategy banayein ya study plan?';
+  }
+  return 'Hello! I’m PARAKH, your CA learning companion. What would you like to work on today—a concept, a revision strategy, or a study plan?';
+}
+
+export function buildTopicIntentClarification(language: StudyReplyLanguage, subject: string): string {
+  if (language === 'hindi') {
+    return subject + ' समझ गया। आपको किस तरह की मदद चाहिए—concept explanation, revision strategy या chapter-wise study plan?';
+  }
+  if (language === 'hinglish') {
+    return subject + ' samajh gaya bhai. Kya chahiye—kisi concept ki explanation, revision strategy, ya chapter-wise study plan?';
+  }
+  return 'I understand you mean ' + subject + '. What would help most: a concept explanation, a revision strategy, or a chapter-wise study plan?';
+}
+
+export function buildTopicIntentOptions(language: StudyReplyLanguage, subject: string): string[] {
+  if (language === 'hindi') return [subject + ' का concept समझाओ', subject + ' की revision strategy', subject + ' का study plan'];
+  if (language === 'hinglish') return [subject + ' concept samjhao', subject + ' revision strategy', subject + ' study plan'];
+  return ['Explain a ' + subject + ' concept', subject + ' revision strategy', subject + ' study plan'];
 }
 
 export function isGeneralStudyQuestion(text: string): boolean {

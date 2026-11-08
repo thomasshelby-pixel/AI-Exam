@@ -11,9 +11,9 @@ import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
-import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
+import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
@@ -607,6 +607,27 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
+    const requestedReplyLanguage = body.reply_language;
+    const replyLanguage = requestedReplyLanguage === 'english' || requestedReplyLanguage === 'hinglish' || requestedReplyLanguage === 'hindi'
+      ? requestedReplyLanguage
+      : detectStudyReplyLanguage(message);
+
+    // Greetings are ordinary conversation, not missing study-planner details.
+    if (isSocialGreeting(message)) {
+      return res.json({
+        success: true,
+        status: 'greeting_answered',
+        message: buildSocialGreetingReply(replyLanguage),
+        parsed: {
+          intent: 'general_guidance', course: null, subjects: [], duration_minutes: null, focus_text: '',
+          date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
+          missing_info: [], should_call_planner: false,
+        },
+        plan: null,
+        metadata: { version: 'parakh-social-chat-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
     // Course is authoritative from the authenticated student's saved profile.
     // Never trust a client-supplied course: this prevents students being routed to
     // a planner that is not available for their registered CA level.
@@ -641,15 +662,13 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const history = Array.isArray(body.conversation_history)
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
+    const studentHistory = extractStudentConversationHistory(history);
 
-    // Normalize common Hinglish concatenation before both intent and chapter matching.
+    // Only student turns decide intent. Assistant copy is context for scope prompts only,
+    // never evidence that the student asked for revision, a plan, or a chapter assessment.
     const normalizedMessage = message.replace(/\bmain(?=gst\b)/i, 'main ');
-    const conversationText = [normalizedMessage, ...history].join(' ');
-    const requestedReplyLanguage = body.reply_language;
-    const replyLanguage = requestedReplyLanguage === 'english' || requestedReplyLanguage === 'hinglish' || requestedReplyLanguage === 'hindi'
-      ? requestedReplyLanguage
-      : detectStudyReplyLanguage(message);
-    const parsedProbe = parseStudyPlannerConversationRequest(normalizedMessage, history, course);
+    const conversationText = [normalizedMessage, ...studentHistory].join(' ');
+    const parsedProbe = parseStudyPlannerConversationRequest(normalizedMessage, studentHistory, course);
 
     // Explain unsupported course abbreviations instead of implying the student never
     // supplied a subject. “SM” belongs to the CA Intermediate FM-SM context, not CA Final.
@@ -685,7 +704,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history)) && !isExplicitStudyPlanRequest(message)
+    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, studentHistory)) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
       const parsed = parsedProbe;
@@ -695,7 +714,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
-      const knowledge = searchStudyKnowledge({ message, course, history, language: replyLanguage });
+      const knowledge = searchStudyKnowledge({ message, course, history: studentHistory, language: replyLanguage });
       const guidance = buildGeneralStudyAnswer(message, parsed);
       const answer = knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer;
       return res.json({
@@ -722,7 +741,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     // Assess chapter-wise revision requests before asking about plan scope. Otherwise
     // “GST detailed revision” gets routed to the generic 1-day/7-day prompt and skips
     // the chapter-strength workflow entirely.
-    const assessmentTarget = resolveCourseAssessmentTarget(normalizedMessage, course as PlannerCourse | 'CA_FINAL')
+    const currentAssessmentTarget = resolveCourseAssessmentTarget(normalizedMessage, course as PlannerCourse | 'CA_FINAL');
+    const assessmentTarget = currentAssessmentTarget
       || (priorScopeQuestion ? resolveCourseAssessmentTarget(conversationText, course as PlannerCourse | 'CA_FINAL') : null);
     const assessmentRequest = shouldPrioritizeChapterAssessment({
       course,
@@ -730,6 +750,22 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       conversationText,
       priorScopeQuestion,
     });
+
+    // A subject mention such as "FM me" names the area, not the requested task.
+    // Ask before launching the more involved chapter-strength assessment.
+    if (currentAssessmentTarget && shouldAskTopicIntentClarification({ message: normalizedMessage, hasTarget: true })) {
+      const subject = currentAssessmentTarget.label;
+      return res.json({
+        success: true,
+        status: 'topic_intent_clarification',
+        message: buildTopicIntentClarification(replyLanguage, subject),
+        parsed: { ...parsedProbe, intent: 'clarify', subjects: parsedProbe.subjects.length ? parsedProbe.subjects : [subject], missing_info: ['type of help'], should_call_planner: false },
+        plan: null,
+        follow_up_options: buildTopicIntentOptions(replyLanguage, subject),
+        reply_language: replyLanguage,
+        metadata: { version: 'parakh-topic-intent-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
 
     const requestForPlan = explicitPlan || parsedProbe.intent === 'create_study_plan'
       || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
@@ -1029,7 +1065,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    const parsed = parseStudyPlannerConversationRequest(message, history, course);
+    const parsed = parseStudyPlannerConversationRequest(message, studentHistory, course);
     // A study question should receive an answer, not be forced through the timetable form.
     if (parsed.intent === 'clarify' && isGeneralStudyQuestion(message)) {
       parsed.intent = 'general_guidance';
