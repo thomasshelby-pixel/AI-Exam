@@ -219,7 +219,9 @@ export function getParakhCourseCoverageInventory(): {
       benchmarkStatus: entry.benchmarked ? 'PROMPTS_DEFINED_NOT_EVALUATED' as const : 'NOT_CREATED' as const,
     }));
     const authoredChapterCount = indexEntries.filter((entry) => entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length;
-    const benchmarkPromptCount = paper.code === 'INT-G2-P6' ? chapterInventory.benchmarkCaseCount : 0;
+    const benchmarkPromptCount = paper.code === 'INT-G2-P6'
+      ? chapterInventory.benchmarkCaseCount + getParakhStrategicManagementInventory().benchmarkCaseCount
+      : 0;
     return {
       course: paper.course,
       code: paper.code,
@@ -266,7 +268,7 @@ export function getParakhCourseCoverageInventory(): {
     courses,
     limitations: [
       'A paper map or application chapter index is not equivalent to a complete lesson bank.',
-      'Only CA Intermediate Paper 6A Section A has original authored chapter drafts in this release; none is human-reviewed.',
+      'Only CA Intermediate Paper 6 Section A (nine Financial Management chapters) and Section B (five Strategic Management chapters) have original authored chapter drafts in this release; none is human-reviewed.',
       'Foundation and Intermediate chapter labels are reused from the app curriculum and still need attempt-specific ICAI verification.',
       'CA Final entries are provisional topic pointers, not official chapter titles.',
       'SPOM papers are mapped at module level only; chapter/unit indexing is pending.',
