@@ -6,6 +6,18 @@ PARAKH is intended to become a reliable CA learning companion across Foundation,
 
 Quality is more important than answer volume. When a question needs current law, a statutory source, an unstated numerical assumption or a subject-specific explanation that is not in the verified knowledge bank, PARAKH must disclose the gap instead of inventing an answer.
 
+## Official curriculum map
+
+The implementation includes an ICAI New Scheme paper-title registry checked on 8 November 2026. It maps Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 listed modules/papers) to broad learning domains. The registry is a navigation and mapping layer only; it does not claim chapter-level content, attempt-specific amendments or answer benchmarks are verified.
+
+Official references:
+- Foundation: https://www.icai.org/post/foundation-nset
+- Intermediate: https://www.icai.org/post/intermediate-nset
+- Final: https://www.icai.org/post/final-nset
+- Self-Paced Online Modules: https://www.icai.org/post/19162
+
+The ICAI pages are authoritative for the paper catalogue. A student answer still needs the study material/RTP/MTP and amendments that apply to the student's exact examination attempt.
+
 ## Implemented foundation
 
 - A shared question classifier identifies the subject domain and whether the request is current-information, statutory application, numerical, conceptual, exam strategy or study planning.
