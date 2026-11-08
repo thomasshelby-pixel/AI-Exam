@@ -539,7 +539,7 @@ const StudentWorkspaceLayout: React.FC<{
   };
 
   return (
-    <div className="student-glass-workspace dark relative min-h-screen overflow-hidden text-slate-100">
+    <div className="student-glass-workspace student-premium-workspace relative min-h-screen overflow-hidden text-slate-900">
       <div className="student-glass-ambient student-glass-ambient-one" aria-hidden="true" />
       <div className="student-glass-ambient student-glass-ambient-two" aria-hidden="true" />
 
