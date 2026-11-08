@@ -40,6 +40,7 @@ interface PlannerResponse {
   success: boolean;
   status: string;
   message: string;
+  sources?: Array<{ title: string; url: string; snippet: string; publishedAt: string | null }>;
   parsed: ParsedRequest;
   plan: StudyPlanDraft | null;
   metadata?: { version: string; modelUsed: boolean; persistentStorage: boolean };
@@ -602,6 +603,23 @@ export const StudyPlannerPage: React.FC = () => {
                       : 'rounded-bl-md border border-slate-200 bg-white text-slate-800 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100')}>
                       {message.text}
                     </div>
+
+                    {message.result?.sources && message.result.sources.length > 0 && (
+                      <div className="mt-2 rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                        <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">Web sources</p>
+                        <ul className="space-y-2">
+                          {message.result.sources.slice(0, 5).map((source) => (
+                            <li key={source.url} className="min-w-0">
+                              <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-indigo-700 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-900 dark:text-indigo-300 dark:hover:text-indigo-200">
+                                {source.title}
+                              </a>
+                              <p className="mt-0.5 text-xs leading-5 text-slate-600 dark:text-slate-400">{source.snippet}</p>
+                              {source.publishedAt && <p className="mt-0.5 text-[10px] text-slate-400">{source.publishedAt}</p>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
                     {message.result && message.result.plan && (
                       <div className="mt-2 rounded-xl border border-indigo-200 bg-white p-3 text-left shadow-sm dark:border-indigo-900 dark:bg-slate-950">
