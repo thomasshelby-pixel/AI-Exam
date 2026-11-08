@@ -35,7 +35,7 @@ const TOPIC_PATTERNS: Array<[string, RegExp]> = [
   ['law', /\b(corporate law|company law|business law|companies act|llp act|interpretation of statutes|general clauses act)\b/i],
   ['quantitative_aptitude', /\b(quantitative aptitude|business mathematics|statistics|logical reasoning)\b/i],
   ['economics', /\b(business economics|economics|demand and supply|elasticity|market structure)\b/i],
-  ['exam_strategy', /\b(mock test|past paper|previous year|time management|answer presentation|exam strategy|paper attempt)\b/i],
+  ['exam_strategy', /\b(mock tests?|past papers?|previous years?|time management|answer presentation|exam strategy|paper attempts?)\b/i],
   ['study_planning', /\b(study plan|timetable|schedule|revision plan|roadmap|daily routine)\b/i],
 ];
 
