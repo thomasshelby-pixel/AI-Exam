@@ -122,7 +122,7 @@ test('resolves a paper using the authenticated course context, without cross-cou
   assert.equal(foundationQa?.matchedIndexEntry, 'Probability');
   assert.equal(foundationQa?.authoredChapterCount, 18);
   assert.equal(foundationQa?.benchmarkPromptCount, 90);
-  assert.equal(foundationQa?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p3-may2027');
+  assert.equal(foundationQa?.sourceUrl, 'https://www.icai.org/post/24402');
   const foundationEconomics = resolveParakhCoursePaperContext({
     course: 'CA_FOUNDATION',
     message: 'Explain demand and supply elasticity',
