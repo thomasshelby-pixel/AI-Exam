@@ -53,11 +53,11 @@ test('retrieves all five official catalogue chapters for CA Intermediate only', 
 
 test('returns English, Hindi and Hinglish lesson content with all four modes', () => {
   const examples = [
-    { message: 'Explain PESTEL', language: 'english' as const },
-    { message: 'PESTEL ko simple language mein samjhao', language: 'hinglish' as const },
-    { message: 'SWOT analysis का उदाहरण दीजिए', language: 'hindi' as const },
-    { message: 'Quiz me on balanced scorecard', language: 'english' as const },
-    { message: 'Ansoff matrix ka example', language: 'hinglish' as const },
+    { message: 'Explain PESTEL', language: 'english' as const, mode: 'answer' as const, minimumLength: 180 },
+    { message: 'PESTEL ko simple language mein samjhao', language: 'hinglish' as const, mode: 'simpler' as const, minimumLength: 50 },
+    { message: 'SWOT analysis का उदाहरण दीजिए', language: 'hindi' as const, mode: 'example' as const, minimumLength: 60 },
+    { message: 'Quiz me on balanced scorecard', language: 'english' as const, mode: 'quiz' as const, minimumLength: 50 },
+    { message: 'Ansoff matrix ka example', language: 'hinglish' as const, mode: 'example' as const, minimumLength: 60 },
   ];
   for (const item of examples) {
     const result = searchParakhStrategicManagementKnowledge({
@@ -66,7 +66,8 @@ test('returns English, Hindi and Hinglish lesson content with all four modes', (
       language: item.language,
     });
     assert.ok(result);
-    assert.ok(result.answer.length > 180);
+    assert.equal(result.mode, item.mode, item.message);
+    assert.ok(result.answer.length > item.minimumLength, item.message);
   }
   assert.equal(searchParakhStrategicManagementKnowledge({
     message: 'PESTEL quiz me',
