@@ -5,6 +5,14 @@ import { syncRecordToFirestore } from './firestoreSyncService.js';
 export const PARAKH_LEARNING_CONSENT_VERSION = '1.0';
 const PARAKH_COLLECTION = 'parakh_learning_records';
 
+type ParakhRecordStatus =
+  | 'PROCESSING'
+  | 'COLLECTED_UNVERIFIED'
+  | 'SELECTED_FOR_REVIEW'
+  | 'VERIFIED_SAMPLE'
+  | 'FAILED'
+  | 'WITHDRAWN';
+
 export interface ParakhLearningOptInInput {
   evaluationId: string;
   studentId: string;
@@ -15,6 +23,11 @@ export interface ParakhLearningOptInInput {
   paper: string;
   attempt: string;
   checkingMode: string;
+}
+
+export interface ParakhLearningCompletionInput {
+  evaluationId: string;
+  evaluationStatus: 'COMPLETED' | 'NEEDS_REVIEW';
 }
 
 export interface ParakhLearningReviewInput {
@@ -28,11 +41,6 @@ export interface ParakhLearningReviewInput {
 
 let schemaReady = false;
 
-/**
- * Stores only a consented pointer to an evaluation. The source answer sheet,
- * checked copy and report remain in the existing protected evaluation storage.
- * No training data is exported and no model is trained by this service.
- */
 function ensureParakhLearningSchema(): void {
   if (schemaReady) return;
 
@@ -49,8 +57,11 @@ function ensureParakhLearningSchema(): void {
       paper TEXT,
       attempt TEXT,
       checking_mode TEXT,
-      status TEXT NOT NULL DEFAULT 'AWAITING_ADMIN_REVIEW'
-        CHECK (status IN ('AWAITING_ADMIN_REVIEW', 'VERIFIED_CANDIDATE', 'WITHDRAWN')),
+      status TEXT NOT NULL DEFAULT 'PROCESSING'
+        CHECK (status IN (
+          'PROCESSING', 'COLLECTED_UNVERIFIED', 'SELECTED_FOR_REVIEW',
+          'VERIFIED_SAMPLE', 'FAILED', 'WITHDRAWN'
+        )),
       reviewer_id TEXT,
       review_action TEXT,
       reviewed_total_marks REAL,
@@ -72,17 +83,28 @@ function ensureParakhLearningSchema(): void {
   schemaReady = true;
 }
 
+/** Best-effort shared mirror; it must never interrupt evaluation or review. */
 async function mirrorRecord(record: Record<string, any>): Promise<void> {
-  // Firestore is the shared source across app instances. A mirror failure must
-  // never fail a student's evaluation or an administrator's review.
   try {
     await syncRecordToFirestore(PARAKH_COLLECTION, String(record.evaluation_id), record);
   } catch (error) {
-    console.warn('[PARAKH] Could not mirror learning consent record to Firestore:', error);
+    console.warn('[PARAKH] Could not mirror learning record to Firestore:', error);
   }
 }
 
-/** Call only after the normal evaluation job has been accepted successfully. */
+function getLocalRecord(evaluationId: string): Record<string, any> | undefined {
+  return db.prepare(
+    'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
+  ).get(evaluationId) as Record<string, any> | undefined;
+}
+
+/**
+ * Stores a consented pointer to the existing protected evaluation. It does not
+ * duplicate student files or create a training dataset.
+ *
+ * The evaluation can finish very quickly (or on another worker) before this
+ * write occurs, so its current status is checked to avoid a stuck PROCESSING row.
+ */
 export async function recordParakhLearningOptIn(
   consented: boolean,
   input: ParakhLearningOptInInput,
@@ -91,13 +113,26 @@ export async function recordParakhLearningOptIn(
 
   ensureParakhLearningSchema();
   const now = new Date().toISOString();
+  const evaluation = db.prepare(
+    'SELECT status FROM evaluations WHERE id = ?'
+  ).get(input.evaluationId) as { status?: string } | undefined;
+  const evaluationStatus = String(evaluation?.status || '').toUpperCase();
+
+  const initialStatus: ParakhRecordStatus =
+    evaluationStatus === 'COMPLETED'
+      ? 'COLLECTED_UNVERIFIED'
+      : evaluationStatus === 'NEEDS_REVIEW'
+        ? 'SELECTED_FOR_REVIEW'
+        : ['FAILED', 'REJECTED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(evaluationStatus)
+          ? 'FAILED'
+          : 'PROCESSING';
 
   db.prepare(`
     INSERT OR IGNORE INTO parakh_learning_records (
       evaluation_id, student_id, consent_version, consented_at,
       level, subject_key, subject_name, material_type, paper, attempt,
       checking_mode, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AWAITING_ADMIN_REVIEW', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     input.evaluationId,
     input.studentId,
@@ -110,30 +145,68 @@ export async function recordParakhLearningOptIn(
     input.paper || null,
     input.attempt || null,
     input.checkingMode || 'standard',
+    initialStatus,
     now,
     now,
   );
 
-  const record = db.prepare(
-    'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
-  ).get(input.evaluationId) as Record<string, any> | undefined;
-
+  const record = getLocalRecord(input.evaluationId);
   if (!record) return false;
   await mirrorRecord(record);
   return true;
 }
 
-/** Promote a consented record only after the admin review has been finalized. */
-export async function markParakhEvaluationAdminReviewed(input: ParakhLearningReviewInput): Promise<boolean> {
+/**
+ * Called by the existing evaluator after a result has been durably finalized.
+ * Normal completed evaluations become observations; integrity-flagged cases
+ * are prioritized for the existing human review queue, not treated as labels.
+ */
+export async function markParakhEvaluationCompleted(
+  input: ParakhLearningCompletionInput,
+): Promise<boolean> {
+  ensureParakhLearningSchema();
+  const nextStatus: ParakhRecordStatus =
+    input.evaluationStatus === 'NEEDS_REVIEW' ? 'SELECTED_FOR_REVIEW' : 'COLLECTED_UNVERIFIED';
+  const now = new Date().toISOString();
+
+  const result = db.prepare(`
+    UPDATE parakh_learning_records
+    SET status = ?, updated_at = ?
+    WHERE evaluation_id = ? AND status = 'PROCESSING'
+  `).run(nextStatus, now, input.evaluationId);
+
+  if (Number(result.changes || 0) < 1) return false;
+  const record = getLocalRecord(input.evaluationId);
+  if (record) await mirrorRecord(record);
+  return Boolean(record);
+}
+
+/** Failed/rejected submissions are not counted as completed learning observations. */
+export async function markParakhEvaluationFailed(evaluationId: string): Promise<boolean> {
+  ensureParakhLearningSchema();
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    UPDATE parakh_learning_records
+    SET status = 'FAILED', updated_at = ?
+    WHERE evaluation_id = ? AND status = 'PROCESSING'
+  `).run(now, evaluationId);
+
+  if (Number(result.changes || 0) < 1) return false;
+  const record = getLocalRecord(evaluationId);
+  if (record) await mirrorRecord(record);
+  return Boolean(record);
+}
+
+/** Promote only a selected/actually reviewed sample to a human-verified label. */
+export async function markParakhEvaluationAdminReviewed(
+  input: ParakhLearningReviewInput,
+): Promise<boolean> {
   ensureParakhLearningSchema();
   const reviewedAt = input.reviewedAt || new Date().toISOString();
 
-  // The evaluation finalization request can land on a different app instance
-  // from the upload. Hydrate its consent pointer from shared Firestore first.
-  let existing = db.prepare(
-    'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
-  ).get(input.evaluationId) as Record<string, any> | undefined;
-
+  // Finalization may run on another application instance; recover the consent
+  // pointer from shared Firestore before applying the reviewer label.
+  let existing = getLocalRecord(input.evaluationId);
   if (!existing) {
     try {
       const cloudRecord = await getFirestoreDoc<Record<string, any>>(PARAKH_COLLECTION, input.evaluationId);
@@ -158,7 +231,7 @@ export async function markParakhEvaluationAdminReviewed(input: ParakhLearningRev
           cloudRecord.paper || null,
           cloudRecord.attempt || null,
           cloudRecord.checking_mode || 'standard',
-          cloudRecord.status || 'AWAITING_ADMIN_REVIEW',
+          cloudRecord.status || 'COLLECTED_UNVERIFIED',
           cloudRecord.reviewer_id || null,
           cloudRecord.review_action || null,
           cloudRecord.reviewed_total_marks ?? null,
@@ -175,7 +248,7 @@ export async function markParakhEvaluationAdminReviewed(input: ParakhLearningRev
 
   const result = db.prepare(`
     UPDATE parakh_learning_records
-    SET status = 'VERIFIED_CANDIDATE',
+    SET status = 'VERIFIED_SAMPLE',
         reviewer_id = ?,
         review_action = ?,
         reviewed_total_marks = ?,
@@ -183,7 +256,7 @@ export async function markParakhEvaluationAdminReviewed(input: ParakhLearningRev
         reviewed_at = ?,
         updated_at = ?
     WHERE evaluation_id = ?
-      AND status = 'AWAITING_ADMIN_REVIEW'
+      AND status IN ('COLLECTED_UNVERIFIED', 'SELECTED_FOR_REVIEW')
   `).run(
     input.reviewerId,
     input.reviewAction,
@@ -195,19 +268,12 @@ export async function markParakhEvaluationAdminReviewed(input: ParakhLearningRev
   );
 
   if (Number(result.changes || 0) < 1) return false;
-
-  const record = db.prepare(
-    'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
-  ).get(input.evaluationId) as Record<string, any> | undefined;
-
+  const record = getLocalRecord(input.evaluationId);
   if (record) await mirrorRecord(record);
   return Boolean(record);
 }
 
-/**
- * Withdraws a student's earlier PARAKH opt-ins. Existing evaluation history is
- * untouched; withdrawn references are excluded from future candidate selection.
- */
+/** Withdraws all previous opt-ins without touching evaluation history, marks or credits. */
 export async function withdrawParakhLearningConsent(studentId: string): Promise<number> {
   ensureParakhLearningSchema();
   const normalizedStudentId = String(studentId || '').trim();
@@ -237,19 +303,17 @@ export async function withdrawParakhLearningConsent(studentId: string): Promise<
   let withdrawnCount = 0;
   for (const [evaluationId, record] of candidates) {
     if (!evaluationId) continue;
-
-    const updatedAt = now;
     db.prepare(`
       UPDATE parakh_learning_records
       SET status = 'WITHDRAWN', updated_at = ?
       WHERE evaluation_id = ? AND student_id = ?
-    `).run(updatedAt, evaluationId, normalizedStudentId);
+    `).run(now, evaluationId, normalizedStudentId);
 
     const updatedRecord = {
       ...record,
       evaluation_id: evaluationId,
       status: 'WITHDRAWN',
-      updated_at: updatedAt,
+      updated_at: now,
     };
 
     let mirrored = false;
@@ -261,9 +325,7 @@ export async function withdrawParakhLearningConsent(studentId: string): Promise<
       }
     }
     if (!mirrored) {
-      const localRecord = db.prepare(
-        'SELECT * FROM parakh_learning_records WHERE evaluation_id = ?'
-      ).get(evaluationId) as Record<string, any> | undefined;
+      const localRecord = getLocalRecord(evaluationId);
       if (localRecord) await mirrorRecord(localRecord);
     }
     withdrawnCount += 1;
@@ -280,25 +342,38 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
   ).all() as Array<Record<string, any>>;
 
   let records = localRecords;
-  let dataSource: 'FIRESTORE' | 'SQLITE_CACHE_FALLBACK' = 'SQLITE_CACHE_FALLBACK';
+  let dataSource = 'SQLITE_CACHE_FALLBACK';
 
   try {
     const cloudRecords = await getAllFirestoreDocs<Record<string, any>>(
       PARAKH_COLLECTION,
       { failOnError: true },
     );
-    // A just-created local record may still be waiting for its asynchronous
-    // mirror. Prefer that cache until Firestore catches up.
-    if (cloudRecords.length > 0 || localRecords.length === 0) {
-      records = cloudRecords;
-      dataSource = 'FIRESTORE';
+    const merged = new Map<string, Record<string, any>>();
+    for (const record of cloudRecords) {
+      merged.set(String(record.evaluation_id || record.id), record);
     }
+    for (const record of localRecords) {
+      const id = String(record.evaluation_id || record.id);
+      if (!id) continue;
+      const existing = merged.get(id);
+      const existingTime = new Date(existing?.updated_at || existing?._updatedAt || 0).getTime();
+      const localTime = new Date(record.updated_at || 0).getTime();
+      if (!existing || localTime > existingTime) merged.set(id, record);
+    }
+    records = Array.from(merged.values());
+    dataSource = 'FIRESTORE + LOCAL CACHE';
   } catch (error) {
     console.warn('[PARAKH] Firestore metrics unavailable; showing local cache:', error);
   }
 
-  const countStatus = (status: string) => records.filter(
+  const countStatus = (status: ParakhRecordStatus) => records.filter(
     (record) => String(record.status || '').toUpperCase() === status,
+  ).length;
+
+  const collectedStatuses = ['COLLECTED_UNVERIFIED', 'SELECTED_FOR_REVIEW', 'VERIFIED_SAMPLE'];
+  const totalCollected = records.filter(
+    (record) => collectedStatuses.includes(String(record.status || '').toUpperCase()),
   ).length;
 
   const subjectMap = new Map<string, {
@@ -306,8 +381,10 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
     subjectKey: string;
     subjectName: string;
     optedIn: number;
+    collected: number;
+    unreviewed: number;
+    selectedForReview: number;
     verified: number;
-    awaitingReview: number;
   }>();
 
   for (const record of records) {
@@ -320,13 +397,17 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
       subjectKey,
       subjectName,
       optedIn: 0,
+      collected: 0,
+      unreviewed: 0,
+      selectedForReview: 0,
       verified: 0,
-      awaitingReview: 0,
     };
     existing.optedIn += 1;
     const status = String(record.status || '').toUpperCase();
-    if (status === 'VERIFIED_CANDIDATE') existing.verified += 1;
-    if (status === 'AWAITING_ADMIN_REVIEW') existing.awaitingReview += 1;
+    if (collectedStatuses.includes(status)) existing.collected += 1;
+    if (status === 'COLLECTED_UNVERIFIED') existing.unreviewed += 1;
+    if (status === 'SELECTED_FOR_REVIEW') existing.selectedForReview += 1;
+    if (status === 'VERIFIED_SAMPLE') existing.verified += 1;
     subjectMap.set(key, existing);
   }
 
@@ -342,8 +423,12 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
     supervisorEnabled: false,
     productionEvaluationImpact: false,
     totalOptIns: records.length,
-    awaitingAdminReview: countStatus('AWAITING_ADMIN_REVIEW'),
-    verifiedCandidates: countStatus('VERIFIED_CANDIDATE'),
+    totalCollected,
+    processing: countStatus('PROCESSING'),
+    unreviewedObservations: countStatus('COLLECTED_UNVERIFIED'),
+    selectedForReview: countStatus('SELECTED_FOR_REVIEW'),
+    verifiedSamples: countStatus('VERIFIED_SAMPLE'),
+    failed: countStatus('FAILED'),
     withdrawn: countStatus('WITHDRAWN'),
     benchmarkRuns: 0,
     trainingRuns: 0,
