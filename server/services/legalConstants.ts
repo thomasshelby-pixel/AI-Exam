@@ -14,6 +14,20 @@ We use these signals to investigate suspected duplicate-account activity, attemp
 
 We limit access to investigation and audit records to authorized personnel and retain them for as long as reasonably necessary for security, review, dispute handling, legal compliance and legitimate operational needs, subject to applicable law. If an account is closed or deleted, some transaction, security and audit records may be retained for the legally permitted or required retention period.`;
 
+
+export const LEGAL_PRIVACY_MODEL_IMPROVEMENT_ADDENDUM = `17. AI EVALUATION QUALITY, RESEARCH AND SYSTEM IMPROVEMENT
+
+We may use submitted answer sheets, question papers and reference materials, extracted answer content, question and sub-question mappings, evaluation outputs, awarded marks, checking results, review corrections, feedback and relevant course, subject and technical metadata to assess, test, validate, develop and improve the Platform's AI-assisted evaluation systems and related tools. This may include improving question identification and mapping, marking consistency, answer interpretation, checked-copy generation, report quality, error detection and evaluation models.
+
+Where appropriate safeguards are implemented and verified for a particular quality-analysis activity, we may apply data minimisation and separate direct account identifiers from evaluation content. We may use pseudonymised or de-identified information where appropriate. Pseudonymised information may still be personal information and will be protected as such. These statements do not mean that every existing evaluation record has already been anonymised or pseudonymised. Until a separate, reviewed data-preparation process is implemented, source evaluations remain in the existing protected evaluation storage and are not exported into a model-training dataset. Access to any material used for quality analysis is limited to authorised personnel and service providers who need it for the disclosed purposes and are subject to appropriate confidentiality and data-protection obligations.
+
+We do not sell answer sheets or evaluation content as a standalone commercial product, and we do not use submitted educational content for third-party advertising. Relevant information may be processed by our contracted cloud, storage and AI service providers solely to support the Platform and the purposes described in this Policy.
+
+We retain information only for as long as reasonably necessary for the disclosed purposes, service integrity, quality review, dispute handling and legal obligations. Applicable rights, including correction, deletion or withdrawal where available, may be exercised through the privacy contact stated in this Policy.
+
+This processing is subject to applicable law and the legal basis applicable to the relevant use. Where applicable law requires consent for a particular processing activity, we will obtain that consent separately before carrying out that activity. This Policy update describes the purpose; acknowledgement of the notice is not itself a substitute for consent where consent is legally required.`;
+
+
 export const DEFAULT_TERMS_OF_SERVICE = `CA EXAM CHECKER AI — TERMS OF SERVICE
 
 Effective Date: 27 October 2026
@@ -156,8 +170,8 @@ ${LEGAL_TERMS_ADDENDUM}
 
 export const DEFAULT_PRIVACY_POLICY = `CA EXAM CHECKER AI — PRIVACY POLICY
 
-Effective Date: 27 October 2026
-Last Updated: 27 October 2026
+Effective Date: 08 November 2026
+Last Updated: 08 November 2026
 
 This Privacy Policy explains how CA Exam Checker AI collects, uses, stores and protects information when you use the Platform.
 
@@ -287,6 +301,8 @@ Instagram:
 Official CA Exam Checker AI Instagram
 
 ${LEGAL_PRIVACY_ADDENDUM}
+
+${LEGAL_PRIVACY_MODEL_IMPROVEMENT_ADDENDUM}
 `;
 
 export const DEFAULT_REFUND_POLICY = `CA EXAM CHECKER AI — REFUND & CANCELLATION POLICY
