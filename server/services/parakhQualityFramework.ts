@@ -1,3 +1,5 @@
+import { getParakhCurriculumPapers } from './parakhCurriculumRegistry.js';
+
 export type ParakhCourseLevel = 'CA_FOUNDATION' | 'CA_INTERMEDIATE' | 'CA_FINAL';
 
 export type ParakhSubjectDomain =
@@ -10,6 +12,7 @@ export type ParakhSubjectDomain =
   | 'strategic_management'
   | 'quantitative_aptitude'
   | 'economics'
+  | 'integrated_business_solutions'
   | 'general_ca';
 
 export type ParakhQuestionKind =
@@ -132,6 +135,13 @@ const SUBJECT_DOMAINS: Array<{
     aliases: ['business economics', 'economics', 'demand and supply', 'elasticity', 'market structure'],
     mappedCourses: ['CA_FOUNDATION'],
     seededSubjects: ['Business Economics'],
+  },
+  {
+    key: 'integrated_business_solutions',
+    label: 'Integrated Business Solutions',
+    aliases: ['integrated business solutions', 'multidisciplinary case study'],
+    mappedCourses: ['CA_FINAL'],
+    seededSubjects: [],
   },
   {
     key: 'general_ca',
@@ -378,7 +388,8 @@ export interface ParakhSubjectCoverageRow {
   guidanceStatus: 'PARTIAL_GUIDANCE_SEEDED' | 'KNOWLEDGE_GAP' | 'GENERAL_GUIDANCE_ONLY';
   benchmarkFamiliesRequired: string[];
   completeVerifiedCoverage: false;
-  caFinalCurriculumMapping: 'NOT_MAPPED_IN_CURRENT_REGISTRY';
+  mappedCourses: ParakhCourseLevel[];
+  caFinalCurriculumMapping: 'MAPPED_NOT_BENCHMARKED' | 'NOT_IN_FINAL_PAPER_MAP';
 }
 
 
@@ -402,6 +413,9 @@ export function buildParakhSubjectCoverageReport(
   subjectDomains: ParakhSubjectCoverageRow[];
 } {
   const normalizedSubjects = knowledgeSubjects.map(normalizeText);
+  const finalPaperDomains = new Set(
+    getParakhCurriculumPapers('CA_FINAL').flatMap((paper) => paper.domainKeys),
+  );
   const subjectDomains = SUBJECT_DOMAINS
     .filter((domain) => domain.key !== 'general_ca')
     .map((domain): ParakhSubjectCoverageRow => {
@@ -417,7 +431,10 @@ export function buildParakhSubjectCoverageReport(
           : 'KNOWLEDGE_GAP',
         benchmarkFamiliesRequired: [...REQUIRED_BENCHMARK_FAMILIES],
         completeVerifiedCoverage: false,
-        caFinalCurriculumMapping: 'NOT_MAPPED_IN_CURRENT_REGISTRY',
+        mappedCourses: domain.mappedCourses,
+        caFinalCurriculumMapping: finalPaperDomains.has(domain.key)
+          ? 'MAPPED_NOT_BENCHMARKED'
+          : 'NOT_IN_FINAL_PAPER_MAP',
       };
     });
 
