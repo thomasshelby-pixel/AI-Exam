@@ -87,6 +87,7 @@ import { generateDetailedReportPdf, isEvaluationPendingReview } from '../service
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } from '../services/parakhLearningService.js';
+import { getParakhConversationLearningMetrics } from '../services/parakhConversationLearningService.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { findAuthoritativeMaterialWithFallback, findEvaluationMaterialByExactIdForRecovery, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
@@ -512,6 +513,17 @@ router.get('/parakh-learning/metrics', async (_req: AuthRequest, res: Response) 
   } catch (error) {
     console.error('[PARAKH] Failed to load learning dashboard metrics:', error);
     return res.status(500).json({ error: 'Failed to load PARAKH learning metrics.' });
+  }
+});
+
+// Aggregate conversation-learning signals only; no student ids or raw chat text are exposed.
+router.get('/parakh-learning/conversation-insights', (_req: AuthRequest, res: Response) => {
+  try {
+    const metrics = getParakhConversationLearningMetrics(30);
+    return res.json({ success: true, metrics });
+  } catch (error) {
+    console.error('[PARAKH] Failed to load conversation-learning insights:', error);
+    return res.status(500).json({ error: 'Failed to load PARAKH conversation insights.' });
   }
 });
 

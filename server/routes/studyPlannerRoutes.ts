@@ -11,10 +11,12 @@ import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildTopicIntentClarification, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
+import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -581,7 +583,7 @@ router.get('/course', authenticateToken, (req: AuthRequest, res: Response) => {
   return res.json({ success: true, course, label: labels[course], supportsChapterPlanner: isSupportedPlannerCourse(course) });
 });
 
-router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
       return res.status(403).json({
@@ -608,23 +610,24 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     const requestedReplyLanguage = body.reply_language;
-    const replyLanguage = requestedReplyLanguage === 'english' || requestedReplyLanguage === 'hinglish' || requestedReplyLanguage === 'hindi'
+    let replyLanguage = requestedReplyLanguage === 'english' || requestedReplyLanguage === 'hinglish' || requestedReplyLanguage === 'hindi'
       ? requestedReplyLanguage
       : detectStudyReplyLanguage(message);
 
-    // Greetings are ordinary conversation, not missing study-planner details.
-    if (isSocialGreeting(message)) {
+    // Social conversation should work even if the student has not selected a planner course.
+    const socialReply = buildSocialConversationReply(message, replyLanguage);
+    if (socialReply) {
       return res.json({
         success: true,
-        status: 'greeting_answered',
-        message: buildSocialGreetingReply(replyLanguage),
+        status: 'social_conversation_answered',
+        message: socialReply,
         parsed: {
           intent: 'general_guidance', course: null, subjects: [], duration_minutes: null, focus_text: '',
           date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
           missing_info: [], should_call_planner: false,
         },
         plan: null,
-        metadata: { version: 'parakh-social-chat-v1', modelUsed: false, persistentStorage: false },
+        metadata: { version: 'parakh-open-conversation-v1', modelUsed: false, persistentStorage: false },
       });
     }
 
@@ -641,34 +644,33 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    // CA Final chat is intentionally unavailable for now: answer consistently before
-    // subject parsing or clarification, so it never asks Final students for missing details.
-    const courseUnderDevelopmentReply = getCourseUnderDevelopmentReply(course);
-    if (courseUnderDevelopmentReply) {
-      return res.json({
-        success: true,
-        status: 'course_under_development',
-        message: courseUnderDevelopmentReply,
-        parsed: {
-          intent: 'out_of_scope', course, subjects: [], duration_minutes: null, focus_text: '',
-          date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
-          missing_info: [], should_call_planner: false,
-        },
-        plan: null,
-        metadata: { version: 'planner-course-availability-v1', modelUsed: false, persistentStorage: false },
-      });
-    }
-
     const history = Array.isArray(body.conversation_history)
       ? body.conversation_history.filter((item: unknown): item is string => typeof item === 'string').slice(-6)
       : [];
     const studentHistory = extractStudentConversationHistory(history);
+    if (!requestedReplyLanguage) replyLanguage = detectStudyReplyLanguage(message, studentHistory);
 
     // Only student turns decide intent. Assistant copy is context for scope prompts only,
     // never evidence that the student asked for revision, a plan, or a chapter assessment.
     const normalizedMessage = message.replace(/\bmain(?=gst\b)/i, 'main ');
     const conversationText = [normalizedMessage, ...studentHistory].join(' ');
     const parsedProbe = parseStudyPlannerConversationRequest(normalizedMessage, studentHistory, course);
+
+    // Aggregate-only conversation learning is opt-in and stores no transcript or user identity.
+    if (process.env.PARAKH_CONVERSATION_LEARNING_ENABLED === 'true') {
+      try {
+        recordParakhConversationLearningSignal({
+          message,
+          course,
+          subjects: parsedProbe.subjects,
+          intent: parsedProbe.intent,
+          language: replyLanguage,
+        });
+      } catch (learningError) {
+        console.warn('[PARAKH] Could not record aggregate conversation signal:', learningError);
+      }
+    }
+
 
     // Explain unsupported course abbreviations instead of implying the student never
     // supplied a subject. “SM” belongs to the CA Intermediate FM-SM context, not CA Final.
@@ -698,13 +700,13 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         message: buildIntermediateSMClarification(replyLanguage),
         parsed: parsedProbe,
         plan: null,
-        follow_up_options: ['SM effective revision strategy', 'Explain an SM concept', 'SM study plan'],
         metadata: { version: 'planner-topic-clarification-v1', modelUsed: false, persistentStorage: false },
       });
     }
 
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, studentHistory)) && !isExplicitStudyPlanRequest(message)
+    const requestsWebResearch = shouldUseParakhWebResearch(message);
+    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history) || requestsWebResearch) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
       const parsed = parsedProbe;
@@ -714,19 +716,36 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
-      const knowledge = searchStudyKnowledge({ message, course, history: studentHistory, language: replyLanguage });
+      const knowledge = searchStudyKnowledge({ message, course, history, language: replyLanguage });
+      const webResearch = requestsWebResearch ? await searchParakhWebResearch(message) : null;
+      const webSources = webResearch?.results || [];
+      const webMessage = webSources.length
+        ? buildParakhWebResearchMessage(replyLanguage, webSources.length)
+        : null;
+      const currentInfoUnavailableNote = requestsWebResearch && !webSources.length
+        ? (replyLanguage === 'hinglish'
+          ? '\n\nBhai, abhi live web search se reliable result nahi mil paya. Main latest information guess nahi karunga; thodi der baad dobara try kar ya official source directly check kar.'
+          : replyLanguage === 'hindi'
+            ? '\n\nअभी live web search से reliable result नहीं मिल पाया। मैं latest जानकारी का अनुमान नहीं लगाऊँगा; कुछ देर बाद दोबारा कोशिश करें या official source सीधे देखें।'
+            : '\n\nLive web search did not return a reliable result just now. I will not guess at current information; please retry later or check the official source directly.')
+        : '';
+
       const guidance = buildGeneralStudyAnswer(message, parsed);
-      const answer = knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer;
+      const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer) + currentInfoUnavailableNote;
       return res.json({
         success: true,
-        status: knowledge ? 'knowledge_answered' : 'general_guidance_answered',
+        status: webSources.length ? 'web_research_answered' : knowledge ? 'knowledge_answered' : 'general_guidance_answered',
+        sources: webSources,
         message: answer,
         parsed,
         plan: null,
         metadata: {
-          version: knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
+          version: webSources.length ? 'parakh-web-research-v1' : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
           modelUsed: false,
           knowledgeMatched: Boolean(knowledge),
+          webResearchRequested: requestsWebResearch,
+          webResearchAvailable: Boolean(webSources.length),
+          searchProvider: webResearch?.provider || null,
           persistentStorage: false,
         },
       });
@@ -734,6 +753,27 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
 
     const explicitPlan = isExplicitStudyPlanRequest(message)
       || /\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
+
+    // CA Final is gated only for structured plan creation; ordinary conversation and study guidance remain open.
+    const courseUnderDevelopmentReply = getCourseUnderDevelopmentReply(course);
+    const requestsStructuredPlan = explicitPlan
+      || parsedProbe.intent === 'create_study_plan'
+      || /\b(?:study plan|timetable|schedule|roadmap|daily routine)\b/i.test(message);
+    if (courseUnderDevelopmentReply && requestsStructuredPlan) {
+      return res.json({
+        success: true,
+        status: 'course_under_development',
+        message: courseUnderDevelopmentReply,
+        parsed: {
+          intent: 'out_of_scope', course, subjects: [], duration_minutes: null, focus_text: '',
+          date_text: null, schedule_mode: 'none', class_time_text: null, performance_data: [],
+          missing_info: [], should_call_planner: false,
+        },
+        plan: null,
+        metadata: { version: 'planner-course-availability-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
     const priorScopeQuestion = history.some((item) => /choose.*(?:one day|daily|weekly)|what type of plan|which plan would you like|one-day revision plan|exam roadmap.*weekly timetable|sirf ek din|daily\/weekly/i.test(item));
     const oneDayChoice = isOneDayPlanChoice(message);
     const multiDayChoice = isMultiDayPlanChoice(message);
@@ -761,7 +801,6 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         message: buildTopicIntentClarification(replyLanguage, subject),
         parsed: { ...parsedProbe, intent: 'clarify', subjects: parsedProbe.subjects.length ? parsedProbe.subjects : [subject], missing_info: ['type of help'], should_call_planner: false },
         plan: null,
-        follow_up_options: buildTopicIntentOptions(replyLanguage, subject),
         reply_language: replyLanguage,
         metadata: { version: 'parakh-topic-intent-v1', modelUsed: false, persistentStorage: false },
       });
@@ -1081,10 +1120,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     if (parsed.intent === 'out_of_scope') {
       status = 'out_of_scope';
       responseMessage = replyLanguage === 'hinglish'
-        ? 'Bhai, main CA study-related topics mein help karta hoon. CA level/subject clear karke question dobara bhej de.'
+        ? 'Bhai, main general baat bhi kar sakta hoon, lekin is topic par agar latest ya exact details chahiye toh verify kiye bina guess nahi karunga. CA studies se related angle ho toh woh bhi saath mein samjha dunga.'
         : replyLanguage === 'hindi'
-          ? 'मैं CA की पढ़ाई से जुड़े topics में मदद करता हूँ। CA level या subject स्पष्ट करके question दोबारा भेजें।'
-          : 'I focus on CA study-related questions. Please clarify the CA level or subject and try again.';
+          ? 'मैं सामान्य बातचीत भी कर सकता हूँ। इस topic की exact या latest जानकारी बिना verify किए नहीं बताऊँगा, लेकिन CA studies से जुड़ा पहलू हो तो उसे भी समझा सकता हूँ।'
+          : 'I can keep the conversation open, but I will not guess at exact or up-to-date details I cannot verify. If there is a CA-learning angle, I can help connect it.';
     } else if (parsed.intent === 'clarify') {
       status = 'needs_clarification';
       if (parsed.missing_info.includes('available study time') && parsed.subjects.length > 0) {
@@ -1095,10 +1134,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
             : 'How much time can you study each day for ' + parsed.subjects.join(' and ') + '? I’ll build the plan around that.';
       } else if (parsed.missing_info.includes('subject or study goal')) {
         responseMessage = replyLanguage === 'hinglish'
-          ? 'Bhai, kis subject ya topic par help chahiye? Main explanation, revision strategy ya timetable mein help kar sakta hoon.'
+          ? 'Bhai, bata kya chal raha hai? CA study ka doubt ho toh topic ya question seedha bhej de; aur agar bas baat karni hai toh woh bhi bilkul theek hai.'
           : replyLanguage === 'hindi'
-            ? 'किस subject या topic पर मदद चाहिए? मैं concept समझाने, revision strategy या timetable में मदद कर सकता हूँ।'
-            : 'Which subject or topic do you need help with? I can explain concepts, suggest revision strategies, or build a timetable.';
+            ? 'बताइए, क्या चल रहा है? CA की पढ़ाई का doubt हो तो topic या सवाल भेजिए; और अगर बस बातचीत करनी है तो वह भी ठीक है।'
+            : 'Tell me what is on your mind. You can ask about CA studies in your own words, or simply continue the conversation.';
       } else if (parsed.missing_info.length > 0) {
         responseMessage = replyLanguage === 'hinglish'
           ? 'Bhai, bas ye detail bata de: ' + parsed.missing_info.join(', ') + '.'
@@ -1107,10 +1146,10 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
             : 'Please provide this detail: ' + parsed.missing_info.join(', ') + '.';
       } else {
         responseMessage = replyLanguage === 'hinglish'
-          ? 'Bhai, apna subject/topic bata de, main help karta hoon.'
+          ? 'Haan bhai, bol—kis baat mein help chahiye? Apne words mein bata, main samajhne ki koshish karta hoon.'
           : replyLanguage === 'hindi'
-            ? 'अपना subject/topic बताइए, मैं मदद करता हूँ।'
-            : 'Please share your subject or topic so I can help.';
+            ? 'बताइए, किस बात में मदद चाहिए? अपने शब्दों में बताइए, मैं समझने की कोशिश करूँगा।'
+            : 'What would you like help with? Describe it in your own words and I’ll do my best to help.';
       }
     } else if (parsed.intent === 'create_study_plan' && plan) {
       status = 'plan_draft_ready';

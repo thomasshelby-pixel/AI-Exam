@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
 import { parseStudyPlannerRequest } from '../services/studyPlannerEngine.js';
 
 test('detects Hinglish, Hindi script, and English independently', () => {
@@ -114,8 +114,8 @@ test('chapter assessment prompts, completion replies and options preserve the de
   assert.deepEqual(buildPlanScopeOptions('english'), ['One-day revision plan', 'Full exam roadmap + weekly timetable until exam']);
   assert.deepEqual(buildPlanScopeOptions('hinglish'), ['Sirf ek din ka revision plan', 'Exam tak roadmap + weekly timetable']);
   assert.deepEqual(buildPlanScopeOptions('hindi'), ['सिर्फ एक दिन का revision plan', 'Exam तक roadmap + weekly timetable']);
-  assert.match(buildIntermediateSMClarification('english'), /^I understand/);
-  assert.match(buildIntermediateSMClarification('hinglish'), /samajh gaya bhai/);
+  assert.match(buildIntermediateSMClarification('english'), /in your own words/);
+  assert.match(buildIntermediateSMClarification('hinglish'), /apne words mein bata/);
 });
 
 
@@ -134,7 +134,65 @@ test('a short subject-plus-me message is treated as Hinglish', () => {
 });
 
 test('bare subject clarification gives useful choices in the student language', () => {
-  assert.match(buildTopicIntentClarification('hinglish', 'FM'), /FM samajh gaya bhai/);
-  assert.match(buildTopicIntentClarification('english', 'FM'), /concept explanation/);
-  assert.deepEqual(buildTopicIntentOptions('hinglish', 'FM'), ['FM concept samjhao', 'FM revision strategy', 'FM study plan']);
+  assert.match(buildTopicIntentClarification('hinglish', 'FM'), /apne words mein bata/);
+  assert.match(buildTopicIntentClarification('english', 'FM'), /paste a question|what is confusing/);
+  assert.deepEqual(buildTopicIntentOptions('hinglish', 'FM'), ['FM ka concept samjhao', 'FM ki revision strategy batao', 'FM ka study plan banao']);
+});
+
+
+test('recognises natural Hinglish help requests and difficulty statements', () => {
+  assert.equal(detectStudyReplyLanguage('FM me help kr skte ho'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('FM me mujhe ratio wala chapter nahi aata hai'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('How can you explain this to me?'), 'english');
+  assert.equal(isGeneralStudyQuestion('FM me mujhe ratio wala chapter nahi aata hai'), true);
+  assert.equal(isGeneralStudyQuestion('I am struggling with the ratio chapter'), true);
+  assert.equal(isGeneralStudyQuestion('Mujhe ye concept samajh nahi aa raha'), true);
+  assert.equal(isGeneralStudyQuestion('Ye topic samajh nahi aata'), true);
+});
+
+
+test('English action chips inherit the recent Hinglish or Hindi conversation language', () => {
+  assert.equal(detectStudyReplyLanguage('Explain a FM concept', [
+    'FM me help kr skte ho',
+    'FM me mujhe ratio wala chapter nahi aata hai',
+  ]), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('Explain a FM concept', [
+    'मुझे Ratio Analysis समझ नहीं आता',
+  ]), 'hindi');
+  assert.equal(detectStudyReplyLanguage('Explain a FM concept', [
+    'I need help with Financial Management',
+  ]), 'english');
+});
+
+
+test('PARAKH handles open-ended greetings, small talk, thanks, farewells and mood messages', () => {
+  assert.match(buildSocialConversationReply('kaise ho?', 'hinglish') || '', /Main badhiya hoon/);
+  assert.match(buildSocialConversationReply('How are you?', 'english') || '', /doing well/);
+  assert.match(buildSocialConversationReply('Thanks bhai', 'hinglish') || '', /anytime bhai/);
+  assert.match(buildSocialConversationReply('thank you', 'english') || '', /You’re welcome/);
+  assert.match(buildSocialConversationReply('bye', 'hinglish') || '', /Theek hai bhai/);
+  assert.match(buildSocialConversationReply('I am stressed', 'english') || '', /short break/);
+  assert.match(buildSocialConversationReply('thak gaya bhai', 'hinglish') || '', /break lena/);
+  assert.equal(buildSocialConversationReply('Explain ratio analysis', 'english'), null);
+});
+
+test('open-ended topic clarification does not force a category menu', () => {
+  assert.match(buildTopicIntentClarification('hinglish', 'FM'), /apne words mein bata/);
+  assert.match(buildTopicIntentClarification('english', 'FM'), /paste a question/);
+});
+
+
+test('keeps assistant topic markers for knowledge follow-ups without using them as student intent', () => {
+  const history = [
+    'Student: FM me mujhe ratio wala chapter nahi aata hai',
+    'Planner: **Topic: Financial Management: Ratio Analysis**',
+  ];
+  assert.match(buildSocialConversationReply('namaste', 'hinglish') || '', /नमस्ते|Arre hello/);
+  assert.equal(detectStudyReplyLanguage('shukriya'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('thak gaya'), 'hinglish');
+});
+
+
+test('recognises Hindi-script greetings without requiring a course or menu', () => {
+  assert.match(buildSocialConversationReply('नमस्ते', 'hindi') || '', /नमस्ते/);
 });

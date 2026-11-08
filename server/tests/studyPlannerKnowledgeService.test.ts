@@ -224,3 +224,40 @@ test('retrieves subject-specific Foundation and Intermediate study strategies', 
     language: 'english',
   }), null);
 });
+
+
+test('teaches Ratio Analysis from zero for an Intermediate FM difficulty statement', () => {
+  const result = searchStudyKnowledge({
+    message: 'FM me mujhe ratio wala chapter nahi aata hai',
+    course: 'CA_INTERMEDIATE',
+    language: 'hinglish',
+  });
+  assert.equal(result?.topicId, 'intermediate-fm-ratio-analysis');
+  assert.equal(result?.mode, 'simpler');
+  assert.match(buildKnowledgeChatReply(result!, 'hinglish'), /ratio ko do numbers ke beech ka relationship/i);
+  assert.match(buildKnowledgeChatReply(result!, 'hinglish'), /Current Ratio/);
+});
+
+test('a generic Explain an FM concept action continues from the ratio topic in recent student turns', () => {
+  const result = searchStudyKnowledge({
+    message: 'Explain a FM concept',
+    course: 'CA_INTERMEDIATE',
+    language: 'hinglish',
+    history: [
+      'Student: FM me help kr skte ho',
+      'Student: FM me mujhe ratio wala chapter nahi aata hai',
+    ],
+  });
+  assert.equal(result?.topicId, 'intermediate-fm-ratio-analysis');
+  assert.equal(result?.mode, 'answer');
+  assert.match(buildKnowledgeChatReply(result!, 'hinglish'), /Liquidity/);
+});
+
+test('Ratio Analysis is not returned for a course where the FM-SM subject is unavailable', () => {
+  const result = searchStudyKnowledge({
+    message: 'FM me mujhe ratio wala chapter nahi aata hai',
+    course: 'CA_FOUNDATION',
+    language: 'hinglish',
+  });
+  assert.equal(result, null);
+});
