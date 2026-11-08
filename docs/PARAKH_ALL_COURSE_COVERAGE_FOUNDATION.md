@@ -33,17 +33,18 @@ For CA Final, existing subject metadata is represented as a provisional topic in
 
 ## What this release authors
 
-Original teaching drafts currently cover all four Foundation papers and Intermediate Papers 4, 5 and 6:
+Original teaching drafts currently cover all four Foundation papers and Intermediate Papers 1, 4, 5 and 6:
 
 - Foundation Paper 1 Accounting: 11 chapter packs and 55 benchmark prompts.
 - Foundation Paper 2 Business Laws: 7 chapter packs and 35 benchmark prompts.
 - Foundation Paper 3 Quantitative Aptitude: 18 chapter packs and 90 benchmark prompts.
 - Foundation Paper 4 Business Economics: 10 chapter packs and 50 benchmark prompts.
+- Intermediate Paper 1 Advanced Accounting: 15 chapter packs and 75 benchmark prompts.
 - Intermediate Paper 4 Cost and Management Accounting: 15 chapter packs and 75 benchmark prompts.
 - Intermediate Paper 5 Auditing and Ethics: 11 chapter packs and 55 benchmark prompts.
 - Intermediate Paper 6 Section A Financial Management: 9 chapter packs and 45 benchmark prompts.
 - Intermediate Paper 6 Section B Strategic Management: 5 chapter packs and 25 benchmark prompts.
-- Across Foundation Papers 1–4 and Intermediate Papers 4–6: **86 original chapter drafts and 430 benchmark prompts**.
+- Across Foundation Papers 1–4 and Intermediate Papers 1, 4–6: **101 original chapter drafts and 505 benchmark prompts**.
 - 0 human-reviewed chapter packs and 0 human-reviewed benchmark sets.
 
 The remaining mapped subjects are not silently promoted to authored content. The student response path may identify the matching paper and explain the coverage gap. Current/statutory questions continue to require live primary-source support.

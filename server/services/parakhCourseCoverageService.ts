@@ -9,6 +9,7 @@ import { getParakhFoundationAccountingInventory } from './parakhFoundationAccoun
 import { getParakhFoundationBusinessLawInventory } from './parakhFoundationBusinessLawKnowledgeService.js';
 import { getParakhFoundationQuantitativeAptitudeInventory } from './parakhFoundationQuantitativeAptitudeKnowledgeService.js';
 import { getParakhFoundationBusinessEconomicsInventory } from './parakhFoundationBusinessEconomicsKnowledgeService.js';
+import { getParakhAdvancedAccountingInventory } from './parakhAdvancedAccountingKnowledgeService.js';
 
 export type ParakhCoverageLanguage = 'english' | 'hindi' | 'hinglish';
 
@@ -115,6 +116,21 @@ function getPaperIndex(paper: ReturnType<typeof getParakhCurriculumPapers>[numbe
   entries: Array<{ number: number; title: string; section: string | null; authored: boolean; benchmarked: boolean }>;
   note: string;
 } {
+  if (paper.course === 'CA_INTERMEDIATE' && paper.code === 'INT-G1-P1') {
+    const advancedAccounting = getParakhAdvancedAccountingInventory();
+    return {
+      indexKind: 'chapter',
+      mappingStatus: 'OFFICIAL_CHAPTER_CATALOGUE_LINKED',
+      entries: advancedAccounting.chapters.map((chapter) => ({
+        number: chapter.chapterNumber,
+        title: chapter.title,
+        section: chapter.module,
+        authored: chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+        benchmarked: chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED',
+      })),
+      note: 'The 15 chapters are linked to the official ICAI Intermediate Paper 1 catalogue headed Applicable for May 2027 Exam Onwards. Original English/Hindi/Hinglish drafts and benchmark prompts exist for all 15, but none has human-reviewed content or answer keys. Verify exact AS applicability and exclusions for the student attempt.',
+    };
+  }
   if (paper.course === 'CA_FOUNDATION' && paper.code === 'FND-P3') {
     const qa = getParakhFoundationQuantitativeAptitudeInventory();
     return {
@@ -443,6 +459,7 @@ export function resolveParakhCoursePaperContext(input: {
   const foundationBusinessLawPaper = winner.paper.code === 'FND-P2';
   const foundationQuantitativePaper = winner.paper.code === 'FND-P3';
   const foundationEconomicsPaper = winner.paper.code === 'FND-P4';
+  const intermediateAdvancedAccountingPaper = winner.paper.code === 'INT-G1-P1';
   return {
     course: winner.paper.course,
     paperCode: winner.paper.code,
@@ -452,7 +469,8 @@ export function resolveParakhCoursePaperContext(input: {
     matchedIndexEntry: winner.matchedIndexEntry,
     mappingStatus: index.mappingStatus,
     indexKind: index.indexKind,
-    sourceUrl: foundationEconomicsPaper ? getParakhFoundationBusinessEconomicsInventory().sourceUrl
+    sourceUrl: intermediateAdvancedAccountingPaper ? getParakhAdvancedAccountingInventory().sourceUrl
+      : foundationEconomicsPaper ? getParakhFoundationBusinessEconomicsInventory().sourceUrl
       : foundationQuantitativePaper ? getParakhFoundationQuantitativeAptitudeInventory().sourceUrl
         : foundationBusinessLawPaper ? getParakhFoundationBusinessLawInventory().sourceUrl
           : foundationAccountingPaper ? getParakhFoundationAccountingInventory().sourceUrl
@@ -462,7 +480,8 @@ export function resolveParakhCoursePaperContext(input: {
         : paper6SectionA ? getParakhChapterKnowledgeInventory().sourceUrl : winner.paper.sourceUrl,
     authoredChapterCount: index.entries.filter((entry) => entry.authored).length,
     humanReviewedChapterCount: 0,
-    benchmarkPromptCount: winner.paper.code === 'FND-P2' ? getParakhFoundationBusinessLawInventory().benchmarkCaseCount
+    benchmarkPromptCount: winner.paper.code === 'INT-G1-P1' ? getParakhAdvancedAccountingInventory().benchmarkCaseCount
+      : winner.paper.code === 'FND-P2' ? getParakhFoundationBusinessLawInventory().benchmarkCaseCount
       : winner.paper.code === 'FND-P3' ? getParakhFoundationQuantitativeAptitudeInventory().benchmarkCaseCount
         : winner.paper.code === 'FND-P4' ? getParakhFoundationBusinessEconomicsInventory().benchmarkCaseCount
           : winner.paper.code === 'FND-P1' ? getParakhFoundationAccountingInventory().benchmarkCaseCount

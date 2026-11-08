@@ -23,7 +23,15 @@ test('maps every ICAI New Scheme course track and all 32 paper/module entries', 
 
 test('keeps original FM chapter drafts distinct from mapped-only subjects and unreviewed benchmarks', () => {
   const inventory = getParakhCourseCoverageInventory();
-  const fm = inventory.courses.find((course) => course.course === 'CA_INTERMEDIATE')!
+  const intermediate = inventory.courses.find((course) => course.course === 'CA_INTERMEDIATE')!;
+  assert.equal(intermediate.authoredChapterCount, 55);
+  assert.equal(intermediate.benchmarkPromptCount, 275);
+  const advancedAccounting = intermediate.papers.find((paper) => paper.code === 'INT-G1-P1')!;
+  assert.equal(advancedAccounting.mappingStatus, 'OFFICIAL_CHAPTER_CATALOGUE_LINKED');
+  assert.equal(advancedAccounting.indexEntries.length, 15);
+  assert.equal(advancedAccounting.authoredChapterCount, 15);
+  assert.equal(advancedAccounting.benchmarkPromptCount, 75);
+  const fm = intermediate
     .papers.find((paper) => paper.code === 'INT-G2-P6')!;
   const foundation = inventory.courses.find((course) => course.course === 'CA_FOUNDATION')!;
   const foundationAccounting = foundation.papers.find((paper) => paper.code === 'FND-P1')!;
@@ -49,9 +57,9 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   const final = inventory.courses.find((course) => course.course === 'CA_FINAL')!;
   const spom = inventory.courses.find((course) => course.course === 'SPOM')!;
 
-  assert.equal(inventory.authoredChapterCount, 86);
+  assert.equal(inventory.authoredChapterCount, 101);
   assert.equal(inventory.humanReviewedChapterCount, 0);
-  assert.equal(inventory.benchmarkPromptCount, 430);
+  assert.equal(inventory.benchmarkPromptCount, 505);
   assert.equal(foundation.authoredChapterCount, 46);
   assert.equal(foundation.benchmarkPromptCount, 230);
   assert.equal(inventory.humanReviewedBenchmarkCount, 0);
@@ -134,6 +142,16 @@ test('resolves a paper using the authenticated course context, without cross-cou
   assert.equal(foundationEconomics?.authoredChapterCount, 10);
   assert.equal(foundationEconomics?.benchmarkPromptCount, 50);
   assert.equal(foundationEconomics?.sourceUrl, 'https://www.icai.org/post/24403');
+
+  const advancedAccounting = resolveParakhCoursePaperContext({
+    course: 'CA_INTERMEDIATE',
+    message: 'Explain amalgamation of companies',
+  });
+  assert.equal(advancedAccounting?.paperCode, 'INT-G1-P1');
+  assert.equal(advancedAccounting?.matchedIndexEntry, 'Amalgamation of Companies');
+  assert.equal(advancedAccounting?.authoredChapterCount, 15);
+  assert.equal(advancedAccounting?.benchmarkPromptCount, 75);
+  assert.equal(advancedAccounting?.sourceUrl, 'https://www.icai.org/post/24303');
 
   assert.equal(resolveParakhCoursePaperContext({
     course: 'CA_INTERMEDIATE',
