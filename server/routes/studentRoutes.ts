@@ -31,7 +31,7 @@ import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
-import { recordParakhLearningOptIn } from '../services/parakhLearningService.js';
+import { recordParakhLearningOptIn, withdrawParakhLearningConsent } from '../services/parakhLearningService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
@@ -5435,5 +5435,30 @@ router.get(
     });
   }
 );
+
+
+/**
+ * Withdraw all previous optional PARAKH learning consents for the signed-in student.
+ * This only withdraws learning eligibility; evaluation history, marks and credits
+ * are not modified.
+ */
+router.post('/parakh-learning/consent/withdraw', async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = String(req.user?.id || '').trim();
+    if (!studentId) {
+      return res.status(401).json({ error: 'Student authentication is required.' });
+    }
+
+    const withdrawnCount = await withdrawParakhLearningConsent(studentId);
+    return res.json({
+      success: true,
+      withdrawnCount,
+      message: 'Your previous PARAKH learning consents have been withdrawn. Your evaluations remain unchanged.',
+    });
+  } catch (error) {
+    console.error('[PARAKH] Student consent withdrawal failed:', error);
+    return res.status(500).json({ error: 'Could not withdraw PARAKH learning consent. Please try again.' });
+  }
+});
 
 export default router;
