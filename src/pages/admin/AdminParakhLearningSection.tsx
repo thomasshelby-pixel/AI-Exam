@@ -34,6 +34,22 @@ interface ParakhConversationMetrics {
   automaticModelTraining: boolean;
 }
 
+interface ParakhQualityReadiness {
+  frameworkVersion: string;
+  overallStatus: string;
+  automaticModelTraining: boolean;
+  humanReviewRequiredForKnowledgeChanges: boolean;
+  subjectDomains: Array<{
+    domain: string;
+    label: string;
+    seededSubjects: string[];
+    guidanceStatus: 'PARTIAL_GUIDANCE_SEEDED' | 'KNOWLEDGE_GAP' | 'GENERAL_GUIDANCE_ONLY';
+    benchmarkFamiliesRequired: string[];
+    completeVerifiedCoverage: false;
+    caFinalCurriculumMapping: 'NOT_MAPPED_IN_CURRENT_REGISTRY';
+  }>;
+}
+
 interface ParakhMetrics {
   engineName: string;
   trainingEnabled: boolean;
@@ -67,6 +83,7 @@ function formatDate(value?: string | null): string {
 export const AdminParakhLearningSection: React.FC = () => {
   const [metrics, setMetrics] = useState<ParakhMetrics | null>(null);
   const [conversationMetrics, setConversationMetrics] = useState<ParakhConversationMetrics | null>(null);
+  const [qualityReadiness, setQualityReadiness] = useState<ParakhQualityReadiness | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -77,12 +94,14 @@ export const AdminParakhLearningSection: React.FC = () => {
     setError('');
 
     try {
-      const [response, conversationResponse] = await Promise.all([
+      const [response, conversationResponse, qualityResponse] = await Promise.all([
         apiRequest<{ success: boolean; metrics: ParakhMetrics }>('/api/admin/parakh-learning/metrics'),
         apiRequest<{ success: boolean; metrics: ParakhConversationMetrics }>('/api/admin/parakh-learning/conversation-insights'),
+        apiRequest<{ success: boolean; report: ParakhQualityReadiness }>('/api/admin/parakh-learning/quality-readiness'),
       ]);
       setMetrics(response.metrics);
       setConversationMetrics(conversationResponse.metrics);
+      setQualityReadiness(qualityResponse.report);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : 'Could not load PARAKH learning metrics.');
     } finally {
@@ -271,6 +290,63 @@ export const AdminParakhLearningSection: React.FC = () => {
           <p className="mt-3 rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
             {conversationMetrics?.enabled ? 'No aggregate chat-learning signals have been recorded yet.' : 'Conversation learning is OFF until its privacy notice and applicable consent/legal basis are reviewed.'}
           </p>
+        )}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
+              <BookOpen className="h-4 w-4 text-indigo-500" />
+              Subject-wise answer quality readiness
+            </h2>
+            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+              Authored guidance is only a starting point. Complete subject coverage requires verified sources and held-out benchmarks.
+            </p>
+          </div>
+          <span className="inline-flex w-fit rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+            {qualityReadiness?.overallStatus?.replace(/_/g, ' ') || 'READINESS UNAVAILABLE'}
+          </span>
+        </div>
+        {qualityReadiness ? (
+          <>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[620px] text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-[10px] uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                    <th className="px-2 py-2 font-bold">Subject domain</th>
+                    <th className="px-2 py-2 font-bold">Existing guidance</th>
+                    <th className="px-2 py-2 font-bold">Benchmark families required</th>
+                    <th className="px-2 py-2 font-bold">Verified coverage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {qualityReadiness.subjectDomains.map((item) => (
+                    <tr key={item.domain} className="border-b border-slate-100 last:border-0 dark:border-slate-800/70">
+                      <td className="px-2 py-3 font-semibold text-slate-900 dark:text-white">{item.label}</td>
+                      <td className="px-2 py-3 text-slate-600 dark:text-slate-300">
+                        {item.seededSubjects.length ? item.seededSubjects.join(', ') : 'Knowledge gap'}
+                        <span className="mt-1 block text-[9px] text-slate-400">{item.guidanceStatus.replace(/_/g, ' ')}</span>
+                      </td>
+                      <td className="px-2 py-3 text-slate-600 dark:text-slate-300">
+                        {item.benchmarkFamiliesRequired.length} required
+                      </td>
+                      <td className="px-2 py-3">
+                        <span className="rounded-full bg-amber-100 px-2 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                          Not yet verified
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              CA Final subject-to-curriculum mapping is deliberately marked as pending in the current registry. No domain is labelled complete merely because a few guidance templates exist. Knowledge changes require human review; chat insights do not automatically train or update a model.
+            </p>
+          </>
+        ) : (
+          <p className="mt-4 text-xs text-slate-400">Quality readiness data is not available right now.</p>
         )}
       </section>
 
