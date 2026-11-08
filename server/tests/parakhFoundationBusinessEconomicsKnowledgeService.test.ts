@@ -56,15 +56,16 @@ test('retrieves all ten chapters for Foundation Paper 4 only',()=>{
 
 test('supports multilingual explanation and four teaching modes',()=>{
   const cases=[
-    {message:'Explain opportunity cost',language:'english' as const},
-    {message:'Demand elasticity ko simple language mein samjhao',language:'hinglish' as const},
-    {message:'अंतरराष्ट्रीय व्यापार का उदाहरण दीजिए',language:'hindi' as const},
-    {message:'Quiz me on public finance',language:'english' as const},
+    {message:'Explain opportunity cost',language:'english' as const,mode:'answer' as const,minimumLength:160},
+    {message:'Demand elasticity ko simple language mein samjhao',language:'hinglish' as const,mode:'simpler' as const,minimumLength:40},
+    {message:'अंतरराष्ट्रीय व्यापार का उदाहरण दीजिए',language:'hindi' as const,mode:'example' as const,minimumLength:50},
+    {message:'Quiz me on public finance',language:'english' as const,mode:'quiz' as const,minimumLength:40},
   ];
   for(const item of cases){
     const result=searchParakhFoundationBusinessEconomicsKnowledge({message:item.message,course:'CA_FOUNDATION',language:item.language});
     assert.ok(result);
-    assert.ok(result.answer.length>160);
+    assert.equal(result.mode,item.mode,item.message);
+    assert.ok(result.answer.length>item.minimumLength,item.message);
   }
   assert.equal(searchParakhFoundationBusinessEconomicsKnowledge({
     message:'Explain business cycles example',course:'CA_FOUNDATION',language:'english'
