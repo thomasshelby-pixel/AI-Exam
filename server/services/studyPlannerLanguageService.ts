@@ -50,6 +50,7 @@ export function buildTopicIntentOptions(language: StudyReplyLanguage, subject: s
 export function isGeneralStudyQuestion(text: string): boolean {
   const learningDifficulty = /\b(?:mujhe|mujhko|mujhse|i)\b.{0,80}\b(?:nahi|nahin|nhi|don't|do not|cannot|can't|cant|unable|struggling)\b.{0,80}\b(?:aata|ata|samajh|understand|chapter|topic|ratio|formula|concept)\b/i.test(text)
     || /\b(?:nahi|nahin|nhi)\s+(?:aata|ata|samajh(?:h)?\s+(?:aa\s+)?(?:raha|rahi)|samajh)\b/i.test(text)
+    || /\bsamajh\s+(?:nahi|nahin|nhi)\s+(?:aa\s+)?(?:raha|rahi|aata|ata)\b/i.test(text)
     || /\b(?:hard|difficult|struggling)\s+(?:with|in|to understand)\b/i.test(text);
   if (learningDifficulty) return true;
   if (/[\u0900-\u097F]/.test(text) && /(कैसे|क्या|पढ़|revision|समझ|बताइ|करूँ|करें|मदद|सवाल|डाउट|उलझ|समस्या)/i.test(text)) return true;
@@ -61,7 +62,7 @@ export function buildGeneralStudyAnswer(
 ): { language: StudyReplyLanguage; answer: string } {
   const language = detectStudyReplyLanguage(message);
   const subject = parsed.subjects[0] || '';
-  const isLearningDifficulty = /\b(?:mujhe|mujhko|mujhse)\b.{0,80}\b(?:nahi|nahin|nhi)\b.{0,40}\b(?:aata|ata|samajh|chapter|topic)\b|\b(?:i don['’]?t know|i can['’]?t understand|not getting|struggling with|hard to understand)\b/i.test(message);
+  const isLearningDifficulty = /\b(?:mujhe|mujhko|mujhse)\b.{0,80}\b(?:nahi|nahin|nhi)\b.{0,40}\b(?:aata|ata|samajh|chapter|topic)\b|\bsamajh\s+(?:nahi|nahin|nhi)\s+(?:aa\s+)?(?:raha|rahi|aata|ata)\b|\b(?:i don['’]?t know|i can['’]?t understand|not getting|struggling with|hard to understand)\b/i.test(message);
   const isRevision = /revision|revise|repeat|recall|yaad|padhai|study|prepare|preparation|exam/i.test(message);
   const isMemoryQuestion = /remember|memorize|memory|retention|forget|yaad|bhool|retain/i.test(message);
   const isExamStrategyQuestion = /mock|paper|attempt|marks?|score|time management|exam hall|exam strategy|answer presentation|paper solving/i.test(message);
