@@ -74,7 +74,7 @@ function ensureParakhLearningSchema(): void {
 
 async function mirrorRecord(record: Record<string, any>): Promise<void> {
   // Firestore is the shared source across app instances. A mirror failure must
-  // never delay or fail a student's evaluation or an administrator's review.
+  // never fail a student's evaluation or an administrator's review.
   try {
     await syncRecordToFirestore(PARAKH_COLLECTION, String(record.evaluation_id), record);
   } catch (error) {
