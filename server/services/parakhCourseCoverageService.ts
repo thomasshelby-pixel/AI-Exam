@@ -288,7 +288,7 @@ export function resolveParakhCoursePaperContext(input: {
   const course = input.course as ParakhCurriculumTrack;
   if (!message || !['CA_FOUNDATION', 'CA_INTERMEDIATE', 'CA_FINAL', 'SPOM'].includes(course)) return null;
 
-  const requestsSpomModule = course === 'CA_FINAL' && /\\bspom\\b/i.test(message);
+  const requestsSpomModule = course === 'CA_FINAL' && /\bspom\b/i.test(message);
   const curriculum = requestsSpomModule
     ? [...getParakhCurriculumPapers('CA_FINAL'), ...getParakhCurriculumPapers('SPOM')]
     : getParakhCurriculumPapers(course);
