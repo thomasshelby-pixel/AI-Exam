@@ -305,12 +305,11 @@ export const PARAKH_SM_BENCHMARKS = PACKS.flatMap((pack) => {
 });
 
 function replyMode(message: string): ParakhSmMode {
-  if (/\b(quiz|test me|ask me|practice question|question for me|प्रश्नोत्तरी|टेस्ट लो|सवाल पूछो)\b/i.test(message)) return 'quiz';
-  if (/\b(example|illustrate|numerical example|case study|for example|उदाहरण|मिसाल)\b/i.test(message)) return 'example';
-  if (/\b(simple|simpler|easy language|basic words|in simple words|आसान भाषा|सरल भाषा)\b/i.test(message)) return 'simpler';
+  if (/\b(quiz|test me|ask me|practice question|question for me)\b|प्रश्नोत्तरी|टेस्ट लो|सवाल पूछो/i.test(message)) return 'quiz';
+  if (/\b(example|illustrate|numerical example|case study|for example)\b|उदाहरण|मिसाल/i.test(message)) return 'example';
+  if (/\b(simple|simpler|easy language|basic words|in simple words)\b|आसान भाषा|सरल भाषा/i.test(message)) return 'simpler';
   return 'answer';
 }
-
 function normalize(value: string): string {
   return String(value || '').toLowerCase().normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
