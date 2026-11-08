@@ -5491,10 +5491,10 @@ router.post('/evaluations/:id/review/finalize', async (req: AuthRequest, res: Re
     // Promote only an explicitly consented submission, and only after the
     // administrator has finalized the evaluation review (V2).
     try {
-      markParakhEvaluationAdminReviewed({
+      await markParakhEvaluationAdminReviewed({
         evaluationId,
         reviewerId: req.user!.id,
-        reviewReason: overallReason.trim(),
+        reviewAction: affirmAsIs ? 'AFFIRMED_AS_IS' : 'AMENDED',
         totalMarks: newTotalMarks,
         maximumMarks: maxPaperMarks,
         reviewedAt: nowIso,
