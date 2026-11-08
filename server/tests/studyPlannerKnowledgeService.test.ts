@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, getStudyKnowledgeSubjectInventory, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import {
   assessParakhResponseQuality,
+  buildParakhQualityNotice,
   buildParakhSubjectCoverageReport,
   classifyParakhQuestion,
   evaluateParakhQualityBenchmark,
@@ -389,4 +390,31 @@ test('authored subject inventory is reported as guidance seed data, not complete
   assert.ok(subjects.includes('Taxation'));
   assert.ok(subjects.includes('Financial Management and Strategic Management'));
   assert.ok(subjects.includes('Auditing and Ethics'));
+});
+
+
+test('student-facing quality notices disclose primary-source, coverage and incomplete-answer limitations', () => {
+  const base = {
+    frameworkVersion: '1.0' as const,
+    structuralScore: 20,
+    questionKind: 'statutory_application' as const,
+    subjectDomain: 'taxation' as const,
+    requiresPrimarySource: true,
+    primarySources: [],
+    checks: {
+      substantiveAnswer: true,
+      structuredExplanation: false,
+      topicKnowledgeMatched: false,
+      numericalWorkings: true,
+      conclusionOrNextStep: false,
+      assumptionsDisclosed: true,
+      primarySourcePresent: false,
+    },
+    limitations: [],
+    factualAccuracyCertified: false as const,
+  };
+  assert.match(buildParakhQualityNotice({ ...base, status: 'NEEDS_PRIMARY_SOURCE' }, 'hinglish'), /verified official primary source/i);
+  assert.match(buildParakhQualityNotice({ ...base, status: 'NEEDS_HUMAN_REVIEW' }, 'english'), /verified subject-specific reference/i);
+  assert.match(buildParakhQualityNotice({ ...base, status: 'INCOMPLETE' }, 'hindi'), /complete worked answer/i);
+  assert.equal(buildParakhQualityNotice({ ...base, status: 'STRUCTURE_READY' }, 'english'), '');
 });
