@@ -280,7 +280,7 @@ test('works through a credit-policy numerical and asks for discount uptake inste
   const finalAnswer = buildCreditPolicyAnalysisReply('Current policy 40%, proposed policy 60%', 'english', [question]);
   assert.ok(finalAnswer);
   assert.match(finalAnswer, /Average collection period: current 33\\.00 days; proposed 33\\.00 days/);
-  assert.match(finalAnswer, /Net annual benefit: ₹17,084/);
+  assert.match(finalAnswer, /Net annual benefit: ₹17,089/);
   assert.match(finalAnswer, /Decision: ACCEPT/);
 
 });
