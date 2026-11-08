@@ -148,7 +148,7 @@ test('links ICAI Foundation Paper 1 and clearly discloses draft status', () => {
     course: 'CA_FOUNDATION',
     language: 'hinglish',
   })!;
-  assert.equal(result.source.url, 'https://www.icai.org/post/sm-foundation-p1-may2027');
+  assert.equal(result.source.url, 'https://www.icai.org/post/24417');
   assert.match(result.syllabusApplicability, /Relevant for May 2027 and Onwards/);
   const reply = buildParakhFoundationAccountingReply(result, 'hinglish');
   assert.match(reply, /original PARAKH author draft/i);
