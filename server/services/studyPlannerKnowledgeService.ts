@@ -554,13 +554,13 @@ export function buildCreditPolicyAnalysisReply(
   if (!/\b(?:should|whether|change|accept|adopt|worthwhile)\b/i.test(problemText)) return null;
 
   const salesMatch = problemText.match(/current\s+credit\s+sales[\s\S]{0,55}?([\d,]+(?:\.\d+)?)/i);
-  const growthMatch = problemText.match(/increase\s+in\s+(?:the\s+)?sales\s+by\s+(\d+(?:\.\d+)?)\s*%/i);
+  const growthMatch = problemText.match(/(?:increase\s+in\s+(?:the\s+)?sales|sales\s+(?:are\s+)?expected\s+to\s+increase|sales\s+increase)\s+by\s+(\d+(?:\.\d+)?)\s*%/i);
   const badDebtMatch = problemText.match(/bad\s+debts?[\s\S]{0,65}?(?:go\s+up|increase|rise)\s+to\s*(\d+(?:\.\d+)?)\s*%[\s\S]{0,50}?\bfrom\s*(\d+(?:\.\d+)?)\s*%/i);
   const contributionMatch = problemText.match(/contribution\s+to\s+sales\s+ratio[\s\S]{0,35}?(\d+(?:\.\d+)?)\s*%/i);
-  const taxMatch = problemText.match(/tax\s+rate[\s\S]{0,20}?(\d+(?:\.\d+)?)\s*%/i);
+  const taxMatch = problemText.match(/(?:tax\s+rate|tax|rate of tax)[\s\S]{0,20}?(?:is\s+|of\s+)?(\d+(?:\.\d+)?)\s*%/i);
   const returnMatch = problemText.match(/after[- ]tax\s+return[\s\S]{0,25}?(\d+(?:\.\d+)?)\s*%/i);
-  const oldTerms = problemText.match(/(?:present|current|existing)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
-  const newTerms = problemText.match(/(?:new|proposed)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
+  const labelledOldTerms = problemText.match(/(?:present|current|existing)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
+  const oldTerms = labelledOldTerms || problemText.match(/\b(?:against|versus|vs\.?|compared with|as compared to)\s+(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
 
   if (!salesMatch || !growthMatch || !badDebtMatch || !contributionMatch
     || !taxMatch || !returnMatch || !oldTerms || !newTerms) return null;
@@ -688,3 +688,4 @@ export function buildCreditPolicyAnalysisReply(
   return '**The calculation is complete.**\n\n' + finalLines.join('\n')
     + '\n\nAssumption: discount-taking customers pay on day 15 and the rest on the net credit day; receivables investment is measured at variable cost using a 365-day year.';
 }
+  const newTerms = problemText.match(/(?:new|proposed)\s+(?:credit\s+)?polic(?:y|ies)[\s\S]{0,55}?(\d+(?:\.\d+)?)\s*\/\s*(\d+)\s*net\s*(\d+)/i);
