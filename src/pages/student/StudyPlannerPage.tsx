@@ -545,7 +545,7 @@ export const StudyPlannerPage: React.FC = () => {
           <div>
             <p className="text-sm font-bold">AI Planner · Testing Phase</p>
             <p className="mt-1 text-xs leading-5 text-amber-900/80 dark:text-amber-200/80">
-              We’re testing and improving the AI Planner. Please review generated study schedules before relying on them, and share feedback so we can make the experience more useful.
+              We’re testing and improving the AI Planner. Please review generated study schedules before relying on them. Your feedback will help us make the experience more useful.
             </p>
           </div>
         </div>
