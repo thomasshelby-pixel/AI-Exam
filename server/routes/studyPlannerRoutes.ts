@@ -15,6 +15,7 @@ import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, build
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildParakhChapterKnowledgeReply, searchParakhChapterKnowledge } from '../services/parakhChapterKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
@@ -755,34 +756,52 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
-      const knowledge = searchStudyKnowledge({ message, course, history, language: replyLanguage });
+      const chapterKnowledge = searchParakhChapterKnowledge({ message, course, language: replyLanguage });
+      const knowledge = chapterKnowledge
+        ? null
+        : searchStudyKnowledge({ message, course, history, language: replyLanguage });
       const webResearch = requestsWebResearch ? await searchParakhWebResearch(message) : null;
       const webSources = webResearch?.results || [];
       const webMessage = webSources.length
         ? buildParakhWebResearchMessage(replyLanguage, webSources.length)
         : null;
+      const answerSources = webSources.length
+        ? webSources
+        : chapterKnowledge ? [chapterKnowledge.source] : [];
       const guidance = buildGeneralStudyAnswer(message, parsed);
-      const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
+      const answer = webMessage || (chapterKnowledge
+        ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
+        : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
+      const knowledgeMatched = Boolean(chapterKnowledge || knowledge);
       const qualityGate = assessParakhResponseQuality({
         question: message,
         answer,
         course,
         subjects: parsed.subjects,
-        sources: webSources,
-        knowledgeMatched: Boolean(knowledge),
+        sources: answerSources,
+        knowledgeMatched,
       });
       const finalAnswer = answer + buildParakhQualityNotice(qualityGate, replyLanguage);
       return res.json({
         success: true,
-        status: webSources.length ? 'web_research_answered' : knowledge ? 'knowledge_answered' : 'general_guidance_answered',
-        sources: webSources,
+        status: webSources.length ? 'web_research_answered' : knowledgeMatched ? 'knowledge_answered' : 'general_guidance_answered',
+        sources: answerSources,
         message: finalAnswer,
         parsed,
         plan: null,
         metadata: {
-          version: webSources.length ? 'parakh-web-research-v1' : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
+          version: webSources.length ? 'parakh-web-research-v1' : chapterKnowledge ? 'parakh-chapter-knowledge-v1' : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
           modelUsed: false,
-          knowledgeMatched: Boolean(knowledge),
+          knowledgeMatched,
+          knowledgeReviewStatus: chapterKnowledge?.contentReviewStatus || null,
+          benchmarkStatus: chapterKnowledge?.benchmarkStatus || null,
+          chapter: chapterKnowledge ? {
+            course: chapterKnowledge.course,
+            paperCode: chapterKnowledge.paperCode,
+            section: chapterKnowledge.section,
+            chapterNumber: chapterKnowledge.chapterNumber,
+            syllabusApplicability: chapterKnowledge.syllabusApplicability,
+          } : null,
           webResearchRequested: requestsWebResearch,
           webResearchAvailable: Boolean(webSources.length),
           searchProvider: webResearch?.provider || null,
