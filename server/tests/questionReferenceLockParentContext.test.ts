@@ -68,6 +68,29 @@ assert.equal(lockedStandaloneQ4.found, true, 'A standalone numeric QP heading li
 assert.match(lockedStandaloneQ4.snippet, /standalone objective answer/i);
 assert.doesNotMatch(lockedStandaloneQ4.snippet, /Descriptive question follows/i);
 
+const q5Parent = extractLockedQuestionSlice(suggestedAnswers, '5', undefined, 'SA');
+assert.equal(q5Parent.found, true, 'Advanced Accounting Q5 must not be routed to the Taxation Section B matcher.');
+assert.match(q5Parent.snippet, /Consolidated Balance Sheet/i);
+assert.doesNotMatch(q5Parent.snippet, /^5\.\s*\(b\)/m);
+
+const q6Parent = extractLockedQuestionSlice(suggestedAnswers, '6', undefined, 'SA');
+assert.equal(q6Parent.found, true, 'Advanced Accounting Q6 must lock inside Division B.');
+assert.match(q6Parent.snippet, /Qualitative characteristics/i);
+assert.doesNotMatch(q6Parent.snippet, /^5\.\s*\(b\)/m);
+
+// Taxation still treats Q5-Q8 as Section B (GST); the special source anchors remain active.
+const taxationAnswers = [
+  'SUGGESTED ANSWERS — CA INTERMEDIATE TAXATION',
+  'Division A (MCQ)',
+  '1. (a)',
+  'Division B — GST',
+  '5. (a) Computation of net GST payable in cash for the registered person.',
+  '6. (a) Determine output tax liability under GST.',
+].join('\n');
+const taxationQ5 = extractLockedQuestionSlice(taxationAnswers, '5', 'a', 'SA');
+assert.equal(taxationQ5.found, true, 'Taxation Section B Q5 must retain its GST-specific reference anchor.');
+assert.match(taxationQ5.snippet, /net GST payable/i);
+
 const falseQ6d = extractLockedQuestionSlice(suggestedAnswers, '6', 'd', 'SA');
 assert.equal(falseQ6d.found, false, 'Q6(d) must not borrow the unrelated Q2(d) short-term provision line');
 assert.equal(falseQ6d.snippet, '');
