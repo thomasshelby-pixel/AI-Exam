@@ -16,6 +16,7 @@ import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterA
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhChapterKnowledgeReply, searchParakhChapterKnowledge } from '../services/parakhChapterKnowledgeService.js';
+import { buildParakhStrategicManagementReply, searchParakhStrategicManagementKnowledge } from '../services/parakhStrategicManagementKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
@@ -758,7 +759,11 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         parsed.subjects = ['GST'];
       }
       const chapterKnowledge = searchParakhChapterKnowledge({ message, course, language: replyLanguage });
-      const knowledge = chapterKnowledge
+      const strategicManagementKnowledge = !chapterKnowledge
+        ? searchParakhStrategicManagementKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const authoredChapterKnowledge = chapterKnowledge || strategicManagementKnowledge;
+      const knowledge = authoredChapterKnowledge
         ? null
         : searchStudyKnowledge({ message, course, history, language: replyLanguage });
       const coursePaperContext = resolveParakhCoursePaperContext({
@@ -773,16 +778,18 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         : null;
       const answerSources = webSources.length
         ? webSources
-        : chapterKnowledge ? [chapterKnowledge.source]
+        : authoredChapterKnowledge ? [authoredChapterKnowledge.source]
           : coursePaperContext ? [{ title: 'ICAI official course and paper catalogue', url: coursePaperContext.sourceUrl }] : [];
       const guidance = buildGeneralStudyAnswer(message, parsed);
       const answer = webMessage || (chapterKnowledge
         ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
-        : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
-      const courseCoverageNotice = !chapterKnowledge && !webSources.length && coursePaperContext
+        : strategicManagementKnowledge
+          ? buildParakhStrategicManagementReply(strategicManagementKnowledge, replyLanguage)
+          : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
+      const courseCoverageNotice = !authoredChapterKnowledge && !webSources.length && coursePaperContext
         ? buildParakhCourseCoverageNotice(coursePaperContext, replyLanguage)
         : '';
-      const knowledgeMatched = Boolean(chapterKnowledge || knowledge);
+      const knowledgeMatched = Boolean(authoredChapterKnowledge || knowledge);
       const qualityGate = assessParakhResponseQuality({
         question: message,
         answer,
@@ -800,17 +807,20 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         parsed,
         plan: null,
         metadata: {
-          version: webSources.length ? 'parakh-web-research-v1' : chapterKnowledge ? 'parakh-chapter-knowledge-v1' : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
+          version: webSources.length ? 'parakh-web-research-v1'
+            : chapterKnowledge ? 'parakh-chapter-knowledge-v1'
+              : strategicManagementKnowledge ? 'parakh-strategic-management-knowledge-v1'
+                : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
           modelUsed: false,
           knowledgeMatched,
-          knowledgeReviewStatus: chapterKnowledge?.contentReviewStatus || null,
-          benchmarkStatus: chapterKnowledge?.benchmarkStatus || null,
-          chapter: chapterKnowledge ? {
-            course: chapterKnowledge.course,
-            paperCode: chapterKnowledge.paperCode,
-            section: chapterKnowledge.section,
-            chapterNumber: chapterKnowledge.chapterNumber,
-            syllabusApplicability: chapterKnowledge.syllabusApplicability,
+          knowledgeReviewStatus: authoredChapterKnowledge?.contentReviewStatus || null,
+          benchmarkStatus: authoredChapterKnowledge?.benchmarkStatus || null,
+          chapter: authoredChapterKnowledge ? {
+            course: authoredChapterKnowledge.course,
+            paperCode: authoredChapterKnowledge.paperCode,
+            section: authoredChapterKnowledge.section,
+            chapterNumber: authoredChapterKnowledge.chapterNumber,
+            syllabusApplicability: authoredChapterKnowledge.syllabusApplicability,
           } : null,
           coursePaperContext: coursePaperContext ? {
             course: coursePaperContext.course,
