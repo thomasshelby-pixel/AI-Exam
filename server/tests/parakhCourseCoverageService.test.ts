@@ -52,6 +52,8 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   assert.equal(inventory.authoredChapterCount, 86);
   assert.equal(inventory.humanReviewedChapterCount, 0);
   assert.equal(inventory.benchmarkPromptCount, 430);
+  assert.equal(foundation.authoredChapterCount, 46);
+  assert.equal(foundation.benchmarkPromptCount, 230);
   assert.equal(inventory.humanReviewedBenchmarkCount, 0);
   assert.equal(fm.indexKind, 'chapter');
   assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section A: Financial Management' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 9);
@@ -131,7 +133,7 @@ test('resolves a paper using the authenticated course context, without cross-cou
   assert.equal(foundationEconomics?.matchedIndexEntry, 'Theory of Demand and Supply');
   assert.equal(foundationEconomics?.authoredChapterCount, 10);
   assert.equal(foundationEconomics?.benchmarkPromptCount, 50);
-  assert.equal(foundationEconomics?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p4-may2027');
+  assert.equal(foundationEconomics?.sourceUrl, 'https://www.icai.org/post/24403');
 
   assert.equal(resolveParakhCoursePaperContext({
     course: 'CA_INTERMEDIATE',

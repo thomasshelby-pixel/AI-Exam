@@ -317,9 +317,8 @@ export function getParakhCourseCoverageInventory(): {
       benchmarkStatus: entry.benchmarked ? 'PROMPTS_DEFINED_NOT_EVALUATED' as const : 'NOT_CREATED' as const,
     }));
     const authoredChapterCount = indexEntries.filter((entry) => entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length;
-    const benchmarkPromptCount = paper.code === 'INT-G2-P6'
-      ? chapterInventory.benchmarkCaseCount + getParakhStrategicManagementInventory().benchmarkCaseCount
-      : 0;
+    // Every authored chapter currently has five distinct benchmark prompts.
+    const benchmarkPromptCount = index.entries.filter((entry) => entry.benchmarked).length * 5;
     return {
       course: paper.course,
       code: paper.code,

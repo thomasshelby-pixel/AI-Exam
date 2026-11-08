@@ -33,14 +33,17 @@ For CA Final, existing subject metadata is represented as a provisional topic in
 
 ## What this release authors
 
-Original teaching drafts currently cover Foundation Paper 1 Accounting and Intermediate Papers 4, 5 and 6:
+Original teaching drafts currently cover all four Foundation papers and Intermediate Papers 4, 5 and 6:
 
-- Foundation Paper 1 Accounting: 11 chapter packs and 55 benchmark prompts, relevant for May 2027 and onwards.
+- Foundation Paper 1 Accounting: 11 chapter packs and 55 benchmark prompts.
+- Foundation Paper 2 Business Laws: 7 chapter packs and 35 benchmark prompts.
+- Foundation Paper 3 Quantitative Aptitude: 18 chapter packs and 90 benchmark prompts.
+- Foundation Paper 4 Business Economics: 10 chapter packs and 50 benchmark prompts.
 - Intermediate Paper 4 Cost and Management Accounting: 15 chapter packs and 75 benchmark prompts.
 - Intermediate Paper 5 Auditing and Ethics: 11 chapter packs and 55 benchmark prompts.
 - Intermediate Paper 6 Section A Financial Management: 9 chapter packs and 45 benchmark prompts.
 - Intermediate Paper 6 Section B Strategic Management: 5 chapter packs and 25 benchmark prompts.
-- Across Foundation Paper 1 and Intermediate Papers 4, 5 and 6: 51 original chapter drafts and 255 benchmark prompts.
+- Across Foundation Papers 1–4 and Intermediate Papers 4–6: **86 original chapter drafts and 430 benchmark prompts**.
 - 0 human-reviewed chapter packs and 0 human-reviewed benchmark sets.
 
 The remaining mapped subjects are not silently promoted to authored content. The student response path may identify the matching paper and explain the coverage gap. Current/statutory questions continue to require live primary-source support.
@@ -69,12 +72,13 @@ No coverage status in this release represents human verification.
 The protected study-planner suite checks:
 
 1. All four course tracks and the 32-paper/module count.
-2. The 9 authored FM chapter drafts and their 45 prompts remain isolated from mapped-only subjects.
-3. CA Final topic pointers are not misrepresented as official chapters.
-4. SPOM mapping does not imply chapter/unit coverage.
-5. Course-aware routing for Foundation, Intermediate, Final and SPOM.
-6. Intermediate FM/SM section resolution and the English/Hindi/Hinglish coverage notices.
-7. Zero human-reviewed content and benchmark status remains explicit.
+2. Foundation Papers 1–4 and Intermediate Papers 4–6 resolve to source-linked chapter catalogues with distinct authorship and benchmark counts.
+3. Five benchmark prompts per authored chapter remain separate from mapped-only subjects.
+4. CA Final topic pointers are not misrepresented as official chapters.
+5. SPOM mapping does not imply chapter/unit coverage.
+6. Course-aware routing for Foundation, Intermediate, Final and SPOM.
+7. Intermediate FM/SM section resolution and English/Hindi/Hinglish coverage notices.
+8. Zero human-reviewed content and benchmark status remains explicit.
 
 ## Safety, cost and copyright
 
@@ -82,7 +86,7 @@ This release adds no paid model, model-provider call, model fine-tuning, model-w
 
 ## Remaining work before claiming full-syllabus quality
 
-- Verify Foundation and Intermediate chapter indexes against the correct attempt editions.
+- Verify authored Foundation and Intermediate chapter catalogues against each student's exact attempt edition.
 - Import official chapter/unit trees for all Foundation, Intermediate, Final and SPOM paper/module entries.
 - Author original chapter lessons, worked examples and multilingual explanations for each chapter.
 - Create separate unseen benchmark questions and independently checked answer keys.

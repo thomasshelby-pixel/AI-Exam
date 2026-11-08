@@ -14,6 +14,7 @@ test('provides all 18 official Paper 3 chapters across three parts', () => {
   assert.equal(inventory.humanReviewedContentCount,0);
   assert.equal(inventory.benchmarkCaseCount,90);
   assert.equal(inventory.humanReviewedBenchmarkCount,0);
+  assert.deepEqual(inventory.chapters.find((chapter) => chapter.chapterNumber === 13)?.units, ['Unit II: Sampling']);
   assert.equal(inventory.chapters.filter(x=>x.module==='Business Mathematics').length,8);
   assert.equal(inventory.chapters.filter(x=>x.module==='Logical Reasoning').length,4);
   assert.equal(inventory.chapters.filter(x=>x.module==='Statistics').length,6);

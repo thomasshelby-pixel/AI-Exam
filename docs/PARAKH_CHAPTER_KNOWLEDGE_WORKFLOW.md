@@ -34,6 +34,24 @@ All 11 chapters have original English, Hindi and Hinglish drafts with answer/exa
 
 **Attempt boundary:** this material is marked relevant for May 2027 and onwards. Earlier attempt editions and corrigenda may differ. Current accounting standards and company-account statutory/procedural details must be checked against the exact ICAI material and primary sources.
 
+## Sixth rollout: CA Foundation Paper 2: Business Laws
+
+**Source of truth:** ICAI's official Paper 2 chapter catalogue at https://www.icai.org/post/24381 is marked “Relevant for May, 2027 and Onwards Examination” and lists seven chapters: Indian Regulatory Framework; The Indian Contract Act, 1872; The Sale of Goods Act, 1930; The Indian Partnership Act, 1932; The Limited Liability Partnership Act, 2008; The Companies Act, 2013; and The Negotiable Instruments Act, 1881.
+
+All seven chapters have original English, Hindi and Hinglish conceptual drafts with answer/example/simpler/quiz modes and 35 separate benchmark prompts. None has human-reviewed content or approved benchmark answer keys. Section numbers, amendments, limitation periods, penalties and deadlines require current bare Acts/official sources and the exact attempt.
+
+## Seventh rollout: CA Foundation Paper 3: Quantitative Aptitude
+
+**Source of truth:** ICAI's official Paper 3 catalogue at https://www.icai.org/post/24402 is marked “Relevant for May, 2027 and Onwards Examination” and lists 18 chapters across Business Mathematics, Logical Reasoning and Statistics. Chapter 13 includes Statistical Description of Data and Sampling units; Chapter 14 includes Measures of Central Tendency and Dispersion units.
+
+All 18 chapters have original English, Hindi and Hinglish drafts with answer/example/simpler/quiz modes and 90 separate benchmark prompts. None has human-reviewed content or approved benchmark answer keys. Numerical content remains an author draft pending independent mathematics/statistics review.
+
+## Eighth rollout: CA Foundation Paper 4: Business Economics
+
+**Source of truth:** ICAI's official Paper 4 catalogue at https://www.icai.org/post/24403 is marked “Relevant for May, 2027 and Onwards Examination” and lists 10 chapters.
+
+All 10 chapters have original English, Hindi and Hinglish drafts with answer/example/simpler/quiz modes and 50 separate benchmark prompts. None has human-reviewed content or approved benchmark answer keys. Current GDP, inflation, unemployment, fiscal, exchange-rate and RBI policy figures are not hard-coded; those questions must be answered from dated official sources.
+
 ## Fourth rollout: CA Intermediate Paper 5: Auditing and Ethics
 
 **Source of truth:** ICAI's official Paper 5 study material page at https://www.icai.org/post/sm-inter-p5-may2027 is headed “Applicable for May 2027 Exam Onwards” and lists 11 chapters.
@@ -155,6 +173,6 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 The paper-level catalogue covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
 
-Foundation Paper 1 Accounting and Intermediate Papers 4, 5 and 6 now have original content: Foundation Accounting (11 drafts, 55 prompts; relevant May 2027 onwards), Paper 4 Cost and Management Accounting (15 drafts, 75 prompts; May 2027 onwards), Paper 5 Auditing and Ethics (11 drafts, 55 prompts; May 2027 onwards), Paper 6 Section A Financial Management (9 drafts, 45 prompts; May 2026 catalogue edition) and Paper 6 Section B Strategic Management (5 drafts, 25 prompts; May 2027 onwards). Across these papers there are 51 authored chapter drafts and 255 prompts, but zero human-reviewed chapters and zero human-reviewed benchmark sets. Foundation and other Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are provisional topic pointers, not official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper in this release has dedicated authored chapter lessons.
+All four Foundation papers and Intermediate Papers 4, 5 and 6 now have original content. Foundation: Paper 1 Accounting (11 drafts/55 prompts), Paper 2 Business Laws (7/35), Paper 3 Quantitative Aptitude (18/90) and Paper 4 Business Economics (10/50); all four catalogues are relevant May 2027 onwards. Intermediate: Paper 4 Cost and Management Accounting (15/75; May 2027 onwards), Paper 5 Auditing and Ethics (11/55; May 2027 onwards), Paper 6A Financial Management (9/45; May 2026 catalogue edition) and Paper 6B Strategic Management (5/25; May 2027 onwards). The combined authored inventory is 86 chapter drafts and 430 prompts, with zero human-reviewed chapters and zero human-reviewed benchmark answer keys. Other Intermediate papers retain application indexes requiring exact-attempt verification; CA Final topic pointers remain provisional and SPOM remains mapped at module/paper level only.
 
 Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, followed by separate benchmark answer keys and qualified review. Tax and law content needs attempt-aware statutory source controls and must not be promoted from evergreen explanations.

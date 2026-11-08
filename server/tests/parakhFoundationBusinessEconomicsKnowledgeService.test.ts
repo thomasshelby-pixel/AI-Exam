@@ -95,7 +95,7 @@ test('links the ICAI source and states unreviewed content boundary',()=>{
   const result=searchParakhFoundationBusinessEconomicsKnowledge({
     message:'Explain business cycles',course:'CA_FOUNDATION',language:'hinglish'
   })!;
-  assert.equal(result.source.url,'https://www.icai.org/post/sm-foundation-p4-may2027');
+  assert.equal(result.source.url,'https://www.icai.org/post/24403');
   assert.match(result.syllabusApplicability,/Relevant for May 2027 and Onwards/);
   const reply=buildParakhFoundationBusinessEconomicsReply(result,'hinglish');
   assert.match(reply,/original PARAKH author draft/i);

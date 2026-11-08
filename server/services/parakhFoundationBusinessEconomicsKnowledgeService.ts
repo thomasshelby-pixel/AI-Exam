@@ -3,7 +3,7 @@ export type ParakhFoundationEconomicsMode='answer'|'example'|'simpler'|'quiz';
 type Localised=Record<ParakhFoundationEconomicsLanguage,string>;
 type EconChapter={chapterNumber:number;title:string;aliases:string[];answer:Localised;example:Localised;simpler:Localised;quiz:Localised};
 
-export const PARAKH_FOUNDATION_ECONOMICS_SOURCE_URL='https://www.icai.org/post/sm-foundation-p4-may2027';
+export const PARAKH_FOUNDATION_ECONOMICS_SOURCE_URL='https://www.icai.org/post/24403';
 export const PARAKH_FOUNDATION_ECONOMICS_APPLICABILITY='ICAI official Foundation Paper 4 page marks this material Relevant for May 2027 and Onwards Examination. Check the exact attempt edition, corrigenda and current official data before relying on syllabus or economic-statistics statements.';
 
 const CHAPTERS:EconChapter[]=[
