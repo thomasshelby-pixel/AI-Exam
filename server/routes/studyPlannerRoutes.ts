@@ -15,6 +15,8 @@ import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, build
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
+import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -581,7 +583,7 @@ router.get('/course', authenticateToken, (req: AuthRequest, res: Response) => {
   return res.json({ success: true, course, label: labels[course], supportsChapterPlanner: isSupportedPlannerCourse(course) });
 });
 
-router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
+router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
       return res.status(403).json({
@@ -654,6 +656,22 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     const conversationText = [normalizedMessage, ...studentHistory].join(' ');
     const parsedProbe = parseStudyPlannerConversationRequest(normalizedMessage, studentHistory, course);
 
+    // Aggregate-only conversation learning is opt-in and stores no transcript or user identity.
+    if (process.env.PARAKH_CONVERSATION_LEARNING_ENABLED === 'true') {
+      try {
+        recordParakhConversationLearningSignal({
+          message,
+          course,
+          subjects: parsedProbe.subjects,
+          intent: parsedProbe.intent,
+          language: replyLanguage,
+        });
+      } catch (learningError) {
+        console.warn('[PARAKH] Could not record aggregate conversation signal:', learningError);
+      }
+    }
+
+
     // Explain unsupported course abbreviations instead of implying the student never
     // supplied a subject. “SM” belongs to the CA Intermediate FM-SM context, not CA Final.
     const topicClarification = resolveBareTopicClarification(course, normalizedMessage);
@@ -687,7 +705,8 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history)) && !isExplicitStudyPlanRequest(message)
+    const requestsWebResearch = shouldUseParakhWebResearch(message);
+    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history) || requestsWebResearch) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
       const parsed = parsedProbe;
@@ -698,18 +717,35 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         parsed.subjects = ['GST'];
       }
       const knowledge = searchStudyKnowledge({ message, course, history, language: replyLanguage });
+      const webResearch = requestsWebResearch ? await searchParakhWebResearch(message) : null;
+      const webSources = webResearch?.results || [];
+      const webMessage = webSources.length
+        ? buildParakhWebResearchMessage(replyLanguage, webSources.length)
+        : null;
+      const currentInfoUnavailableNote = requestsWebResearch && !webSources.length
+        ? (replyLanguage === 'hinglish'
+          ? '\n\nBhai, abhi live web search se reliable result nahi mil paya. Main latest information guess nahi karunga; thodi der baad dobara try kar ya official source directly check kar.'
+          : replyLanguage === 'hindi'
+            ? '\n\nअभी live web search से reliable result नहीं मिल पाया। मैं latest जानकारी का अनुमान नहीं लगाऊँगा; कुछ देर बाद दोबारा कोशिश करें या official source सीधे देखें।'
+            : '\n\nLive web search did not return a reliable result just now. I will not guess at current information; please retry later or check the official source directly.')
+        : '';
+
       const guidance = buildGeneralStudyAnswer(message, parsed);
-      const answer = knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer;
+      const answer = webMessage || (knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer) + currentInfoUnavailableNote;
       return res.json({
         success: true,
-        status: knowledge ? 'knowledge_answered' : 'general_guidance_answered',
+        status: webSources.length ? 'web_research_answered' : knowledge ? 'knowledge_answered' : 'general_guidance_answered',
+        sources: webSources,
         message: answer,
         parsed,
         plan: null,
         metadata: {
-          version: knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
+          version: webSources.length ? 'parakh-web-research-v1' : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
           modelUsed: false,
           knowledgeMatched: Boolean(knowledge),
+          webResearchRequested: requestsWebResearch,
+          webResearchAvailable: Boolean(webSources.length),
+          searchProvider: webResearch?.provider || null,
           persistentStorage: false,
         },
       });
