@@ -103,7 +103,7 @@ function getLocalRecord(evaluationId: string): Record<string, any> | undefined {
   ).get(evaluationId) as Record<string, any> | undefined;
 }
 
-/** Recover an opt-in pointer when upload and evaluation workers use different instances. */
+/** Recover a policy-covered observation pointer when upload and evaluation workers use different instances. */
 async function hydrateParakhRecordFromFirestore(evaluationId: string): Promise<Record<string, any> | undefined> {
   const local = getLocalRecord(evaluationId);
   if (local) return local;
@@ -169,7 +169,10 @@ export async function recordParakhLearningObservation(
       return false;
     }
   } catch (error) {
-    console.warn('[PARAKH] Could not check shared exclusion preference:', error);
+    // Fail closed: do not collect a new observation when a cross-instance exclusion
+    // preference cannot be checked against the shared record.
+    console.warn('[PARAKH] Could not verify shared exclusion preference; skipping observation:', error);
+    return false;
   }
   const now = new Date().toISOString();
   const evaluation = db.prepare(
@@ -274,8 +277,8 @@ export async function markParakhEvaluationAdminReviewed(
   ensureParakhLearningSchema();
   const reviewedAt = input.reviewedAt || new Date().toISOString();
 
-  // Finalization may run on another application instance; recover the consent
-  // pointer from shared Firestore before applying the reviewer label.
+  // Finalization may run on another application instance; recover the policy-covered
+  // observation pointer from shared Firestore before applying the reviewer label.
   let existing = await hydrateParakhRecordFromFirestore(input.evaluationId);
   if (existing && String(existing.status || '').toUpperCase() === 'PROCESSING') {
     const evaluation = db.prepare('SELECT status FROM evaluations WHERE id = ?').get(input.evaluationId) as { status?: string } | undefined;
@@ -319,7 +322,7 @@ export async function markParakhEvaluationAdminReviewed(
   return Boolean(record);
 }
 
-/** Withdraws all previous opt-ins without touching evaluation history, marks or credits. */
+/** Excludes all previous observations and pauses future collection without touching evaluation history, marks or credits. */
 export async function excludeParakhLearningForStudent(studentId: string): Promise<number> {
   ensureParakhLearningSchema();
   const normalizedStudentId = String(studentId || '').trim();
@@ -344,7 +347,7 @@ export async function excludeParakhLearningForStudent(studentId: string): Promis
     cloudRecords = await getAllFirestoreDocs<Record<string, any>>(PARAKH_COLLECTION, { failOnError: true });
     cloudAvailable = true;
   } catch (error) {
-    console.warn('[PARAKH] Could not load shared learning records during withdrawal:', error);
+    console.warn('[PARAKH] Could not load shared learning records during exclusion:', error);
   }
 
   const candidates = new Map<string, Record<string, any>>();
@@ -354,7 +357,7 @@ export async function excludeParakhLearningForStudent(studentId: string): Promis
     candidates.set(String(record.evaluation_id || record.id || ''), record);
   }
 
-  let withdrawnCount = 0;
+  let excludedCount = 0;
   for (const [evaluationId, record] of candidates) {
     if (!evaluationId) continue;
     db.prepare(`
@@ -382,10 +385,10 @@ export async function excludeParakhLearningForStudent(studentId: string): Promis
       const localRecord = getLocalRecord(evaluationId);
       if (localRecord) await mirrorRecord(localRecord);
     }
-    withdrawnCount += 1;
+    excludedCount += 1;
   }
 
-  return withdrawnCount;
+  return excludedCount;
 }
 
 export async function getParakhLearningDashboardMetrics(): Promise<Record<string, any>> {
@@ -483,7 +486,7 @@ export async function getParakhLearningDashboardMetrics(): Promise<Record<string
     selectedForReview: countStatus('SELECTED_FOR_REVIEW'),
     verifiedSamples: countStatus('VERIFIED_SAMPLE'),
     failed: countStatus('FAILED'),
-    withdrawn: countStatus('EXCLUDED'),
+    excluded: countStatus('EXCLUDED'),
     benchmarkRuns: 0,
     trainingRuns: 0,
     latestActivityAt,
