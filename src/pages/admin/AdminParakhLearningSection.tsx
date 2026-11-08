@@ -168,7 +168,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                 PARAKH <span className="text-indigo-300">Learning Engine</span>
               </h1>
               <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-300 sm:text-sm">
-                A consent-based learning pipeline that collects every completed opted-in evaluation as an observation and uses selected samples for human quality checks.
+                A policy-disclosed learning pipeline that records successfully completed evaluations as observations unless a student has requested exclusion; selected samples receive human quality checks.
               </p>
             </div>
           </div>
