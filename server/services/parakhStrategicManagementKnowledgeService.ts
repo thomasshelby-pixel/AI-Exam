@@ -21,7 +21,7 @@ const PACKS: SmPack[] = [
     chapterNumber: 1,
     title: 'Introduction to Strategic Management',
     keywords: [
-      'introduction to strategic management', 'meaning of strategy', 'strategic management meaning',
+      'strategic management', 'introduction to strategic management', 'meaning of strategy', 'strategic management meaning',
       'vision mission goals objectives values', 'strategic intent', 'levels of strategy',
       'corporate level business level functional level', 'strategic management process',
       'रणनीतिक प्रबंधन का परिचय', 'रणनीति का अर्थ', 'दृष्टि मिशन लक्ष्य',
@@ -73,7 +73,7 @@ const PACKS: SmPack[] = [
     title: 'Strategic Analysis: External Environment',
     keywords: [
       'strategic analysis external environment', 'external environment analysis', 'pestel', 'pestle',
-      'micro environment macro environment', 'porters five forces', 'five forces model',
+      'micro environment macro environment', 'porter five forces', 'porters five forces', 'five forces model',
       'industry analysis', 'competitive forces', 'key success factors', 'business environment',
       'बाहरी वातावरण', 'पेस्टल', 'पाँच शक्तियाँ',
     ],
