@@ -734,21 +734,21 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     if (!confirmed) return;
 
     try {
-      setParakhWithdrawalLoading(true);
-      setParakhWithdrawalMessage('');
+      setParakhExclusionLoading(true);
+      setParakhExclusionMessage('');
       const response = await apiRequest<{ success: boolean; excludedCount: number; message: string }>(
         '/api/student/parakh-learning/exclude-previous',
         { method: 'POST', body: JSON.stringify({}) },
       );
-      setParakhWithdrawalMessage(
+      setParakhExclusionMessage(
         response.message || `Excluded ${response.excludedCount || 0} previous PARAKH observation(s). Future observations are also paused for this account.`
       );
     } catch (exclusionError: unknown) {
-      setParakhWithdrawalMessage(
-        withdrawError instanceof Error ? withdrawError.message : 'Could not save the PARAKH exclusion request. Please try again.'
+      setParakhExclusionMessage(
+        exclusionError instanceof Error ? exclusionError.message : 'Could not save the PARAKH exclusion request. Please try again.'
       );
     } finally {
-      setParakhWithdrawalLoading(false);
+      setParakhExclusionLoading(false);
     }
   };
 
