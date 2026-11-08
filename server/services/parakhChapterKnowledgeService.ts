@@ -426,22 +426,111 @@ const OTHER_FM_CHAPTERS: OtherChapterPack[] = [
   },
 ];
 
-const OTHER_FM_BENCHMARKS = OTHER_FM_CHAPTERS.flatMap((chapter) => {
-  const purposeByFamily = [
-    ['core_concept', 'Checks understanding of the chapter’s central concept and terminology.'],
-    ['unseen_numerical_or_application', 'Checks transfer to a fresh numerical or practical situation.'],
-    ['exam_style_question', 'Checks orderly workings, assumptions and exam-oriented presentation.'],
-    ['edge_case_and_common_mistake', 'Checks an important limitation, assumption or common error.'],
-    ['source_sensitive_or_amendment_check', 'Checks that attempt-specific treatment is not guessed from evergreen content.'],
-  ] as const;
-  return purposeByFamily.map(([family, purpose], index) => ({
-    id: 'fm-ch' + chapter.chapterNumber + '-benchmark-' + (index + 1),
-    chapterNumber: chapter.chapterNumber,
-    family,
-    question: chapter.quizzes.english,
-    purpose,
-  }));
-});
+const FM_BENCHMARK_FAMILIES: Array<{ family: ParakhFmRatioBenchmarkFamily; purpose: string }> = [
+  { family: 'core_concept', purpose: 'Checks understanding of the chapter’s central concept and terminology.' },
+  { family: 'unseen_numerical_or_application', purpose: 'Checks transfer to a fresh numerical or practical situation.' },
+  { family: 'exam_style_question', purpose: 'Checks orderly workings, assumptions and exam-oriented presentation.' },
+  { family: 'edge_case_and_common_mistake', purpose: 'Checks an important limitation, assumption or common error.' },
+  { family: 'source_sensitive_or_amendment_check', purpose: 'Checks that attempt-specific treatment is not guessed from evergreen content.' },
+];
+
+const OTHER_FM_BENCHMARK_QUESTIONS: Array<{ chapterNumber: number; questions: string[] }> = [
+  {
+    chapterNumber: 1,
+    questions: [
+      'Explain why long-term wealth maximisation is a broader objective than maximising one year’s accounting profit.',
+      'A project costs ₹2,00,000 today and produces uncertain cash flows over four years. Identify the information needed before recommending it.',
+      'A business must choose between a quick-profit project and a lower but more predictable return. Present a structured financial-management decision approach.',
+      'Explain why a company can report a profit but still face a liquidity crisis.',
+      'For the exact current attempt, identify which official ICAI material and updates must be checked before relying on a chapter treatment.',
+    ],
+  },
+  {
+    chapterNumber: 2,
+    questions: [
+      'Distinguish owners’ funds from borrowed funds using control, repayment and risk as comparison points.',
+      'A retailer needs seasonal inventory finance for 60 days while also buying machinery for five years. Suggest broad financing tenors and justify the match.',
+      'Compare a term loan and equity issue for funding a long-lived asset, including cost, control and repayment implications.',
+      'Why is it unsafe to select a financing source only because its quoted interest rate appears lower?',
+      'What attempt-specific source checks are necessary before applying current financing rules, market instrument eligibility or regulatory limits?',
+    ],
+  },
+  {
+    chapterNumber: 4,
+    questions: [
+      'Explain why the cost of capital is a required-return benchmark and not simply the coupon rate on debt.',
+      'Equity is 70% of capital at 12%; debt is 30% at a pre-tax 8%; tax is 25% and interest is deductible. Calculate after-tax debt cost and WACC.',
+      'Present the weighted-average cost of capital working, clearly identifying the capital weights and tax adjustment.',
+      'Explain two errors that can occur when book-value weights, market-value weights or the tax shield are used without checking the question.',
+      'A student asks whether the same cost-of-capital inputs and tax treatment apply to a later attempt. Explain what must be verified rather than assumed.',
+    ],
+  },
+  {
+    chapterNumber: 5,
+    questions: [
+      'Compare the Net Income and Net Operating Income approaches to capital structure at a conceptual level.',
+      'A company has ₹10,00,000 debt at 10% interest. Calculate the fixed annual interest and explain how it affects equity risk.',
+      'Compare two financing plans under more than one EBIT level and explain why an indifference-point analysis is relevant.',
+      'Why can a debt-heavy plan show higher EPS at one EBIT but still be riskier or less suitable overall?',
+      'Which assumptions must be confirmed before applying a particular capital-structure theory or statutory financing constraint to an attempt question?',
+    ],
+  },
+  {
+    chapterNumber: 6,
+    questions: [
+      'Distinguish operating leverage, financial leverage and combined leverage by the fixed costs that create them.',
+      'Sales are ₹8,00,000, variable costs ₹4,80,000, fixed operating costs ₹2,40,000 and interest ₹40,000. With no preference dividend, calculate DOL, DFL and DCL.',
+      'Show full leverage workings from sales through contribution, EBIT and EBT, stating the assumptions used.',
+      'Explain why a leverage ratio should be treated cautiously when EBIT or EBT is zero, negative or very small.',
+      'A problem includes preference dividends and debt interest. Explain why a simplified debt-only DFL formula may not be appropriate.',
+    ],
+  },
+  {
+    chapterNumber: 7,
+    questions: [
+      'Define NPV, IRR, profitability index and payback period, and state what each method is designed to measure.',
+      'An investment of ₹1,00,000 produces ₹60,000 at each of the next two year-ends. At 10%, calculate PV of inflows and NPV.',
+      'Prepare an NPV answer with the initial outlay, discounted annual inflows, total present value and decision.',
+      'Explain why simple payback can give a misleading ranking when later cash flows or project scale differ.',
+      'A project contains a tax rule or incentive that may have changed for the examination attempt. What official source and applicability checks are required?',
+    ],
+  },
+  {
+    chapterNumber: 8,
+    questions: [
+      'Explain the difference between dividend payout and retention and how each can affect future financing needs.',
+      'EPS is ₹50 and dividend per share is ₹15. Calculate payout and retention ratios.',
+      'Present a dividend-policy answer considering investment opportunities, liquidity, earnings stability and shareholder expectations.',
+      'Why does accounting profit alone not establish that the same amount is available for distribution as dividend?',
+      'Before using a current legal or regulatory dividend restriction in an answer, what official source and effective-date checks should be made?',
+    ],
+  },
+  {
+    chapterNumber: 9,
+    questions: [
+      'Distinguish gross working capital from net working capital and explain the role of the operating cycle.',
+      'Inventory holding is 35 days, WIP 8 days, finished goods 12 days, receivables 45 days and supplier credit 30 days. Calculate the simplified operating cycle.',
+      'A firm is reviewing cash, inventory, receivables and payables policies. Present a structured working-capital management approach.',
+      'Explain the trade-off between extending customer credit and tightening credit policy to reduce receivables risk.',
+      'A student asks whether a financing limit, bank norm or regulatory requirement is current for an upcoming attempt. What must be checked before answering?',
+    ],
+  },
+];
+
+const OTHER_FM_BENCHMARKS = OTHER_FM_BENCHMARK_QUESTIONS.flatMap(({ chapterNumber, questions }) =>
+  questions.map((question, index) => ({
+    id: 'fm-ch' + chapterNumber + '-benchmark-' + (index + 1),
+    chapterNumber,
+    family: FM_BENCHMARK_FAMILIES[index].family,
+    question,
+    purpose: FM_BENCHMARK_FAMILIES[index].purpose,
+  })),
+);
+
+export const PARAKH_FM_CHAPTER_BENCHMARKS = [
+  ...PARAKH_FM_RATIO_BENCHMARKS.map((benchmark) => ({ ...benchmark, chapterNumber: 3 })),
+  ...OTHER_FM_BENCHMARKS,
+];
 
 function normalize(value: string): string {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
