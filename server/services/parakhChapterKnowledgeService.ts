@@ -14,14 +14,14 @@ type FmChapter = {
 };
 
 const FM_CHAPTERS: FmChapter[] = [
-  { chapterNumber: 1, title: 'Scope and Objectives of Financial Management', module: 'MODULE 1', units: [], contentStatus: 'MAPPED_ONLY', benchmarkStatus: 'NOT_CREATED' },
-  { chapterNumber: 2, title: 'Types of Financing', module: 'MODULE 1', units: [], contentStatus: 'MAPPED_ONLY', benchmarkStatus: 'NOT_CREATED' },
+  { chapterNumber: 1, title: 'Scope and Objectives of Financial Management', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
+  { chapterNumber: 2, title: 'Types of Financing', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
   { chapterNumber: 3, title: 'Financial Analysis and Planning – Ratio Analysis', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
-  { chapterNumber: 4, title: 'Cost of Capital', module: 'MODULE 1', units: [], contentStatus: 'MAPPED_ONLY', benchmarkStatus: 'NOT_CREATED' },
-  { chapterNumber: 5, title: 'Financing Decisions – Capital Structure', module: 'MODULE 1', units: [], contentStatus: 'MAPPED_ONLY', benchmarkStatus: 'NOT_CREATED' },
-  { chapterNumber: 6, title: 'Financing Decisions – Leverages', module: 'MODULE 1', units: [], contentStatus: 'MAPPED_ONLY', benchmarkStatus: 'NOT_CREATED' },
-  { chapterNumber: 7, title: 'Investment Decisions', module: 'MODULE 2', units: [], contentStatus: 'MAPPED_ONLY', benchmarkStatus: 'NOT_CREATED' },
-  { chapterNumber: 8, title: 'Dividend Decision', module: 'MODULE 2', units: [], contentStatus: 'MAPPED_ONLY', benchmarkStatus: 'NOT_CREATED' },
+  { chapterNumber: 4, title: 'Cost of Capital', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
+  { chapterNumber: 5, title: 'Financing Decisions – Capital Structure', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
+  { chapterNumber: 6, title: 'Financing Decisions – Leverages', module: 'MODULE 1', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
+  { chapterNumber: 7, title: 'Investment Decisions', module: 'MODULE 2', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
+  { chapterNumber: 8, title: 'Dividend Decision', module: 'MODULE 2', units: [], contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED', benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED' },
   {
     chapterNumber: 9,
     title: 'Management of Working Capital',
@@ -34,8 +34,8 @@ const FM_CHAPTERS: FmChapter[] = [
       'Management of Payables (Creditors)',
       'Financing of Working Capital',
     ],
-    contentStatus: 'MAPPED_ONLY',
-    benchmarkStatus: 'NOT_CREATED',
+    contentStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+    benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED',
   },
 ];
 
@@ -469,7 +469,7 @@ export interface ParakhChapterKnowledgeMatch {
   paperCode: 'INT-G2-P6';
   section: 'Section A: Financial Management';
   chapterNumber: number;
-  syllabusApplicability: 'May 2026 examination onwards';
+  syllabusApplicability: string;
   contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED';
   benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED';
   mode: ParakhChapterReplyMode;
@@ -495,12 +495,41 @@ export function searchParakhChapterKnowledge(input: {
   const normalized = normalize(message);
   const matched = RATIO_ALIASES.some((alias) => {
     const needle = normalize(alias);
-    return normalized.includes(needle);
+    return (' ' + normalized + ' ').includes(' ' + needle + ' ');
   }) || (/\bratio(s)?\b/i.test(message) && /\b(fm|financial management|liquidity|solvency|profitability)\b/i.test(message));
-  if (!matched) return null;
+  const otherChapter = OTHER_FM_CHAPTERS.find((chapter) => chapter.keywords.some((keyword) => {
+    const needle = normalize(keyword);
+    return needle && (' ' + normalized + ' ').includes(' ' + needle + ' ');
+  }));
+  if (!matched && !otherChapter) return null;
 
   const mode = getReplyMode(message);
   const language = input.language;
+  if (!matched && otherChapter) {
+    return {
+      topicId: otherChapter.id,
+      topicTitle: otherChapter.title,
+      course: 'CA_INTERMEDIATE',
+      paperCode: 'INT-G2-P6',
+      section: 'Section A: Financial Management',
+      chapterNumber: otherChapter.chapterNumber,
+      syllabusApplicability: 'Official ICAI catalogue page headed Applicable for May 2026 Exam; later-attempt applicability must be rechecked',
+      contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+      benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED',
+      mode,
+      answer: mode === 'example' ? otherChapter.examples[language]
+        : mode === 'simpler' ? otherChapter.simpler[language]
+          : mode === 'quiz' ? otherChapter.quizzes[language]
+            : otherChapter.answers[language],
+      source: {
+        title: 'ICAI Intermediate Paper 6A — Financial Management, Chapter ' + otherChapter.chapterNumber + ' (official chapter catalogue)',
+        url: ICAI_FM_SOURCE_URL,
+        publisher: 'Institute of Chartered Accountants of India',
+        sourceType: 'OFFICIAL_CHAPTER_CATALOGUE',
+        note: 'Official chapter catalogue only. The explanation and numerical illustrations in PARAKH are original; ICAI study-material text is not reproduced here. Verify your exact attempt’s applicable material and RTP.',
+      },
+    };
+  }
   return {
     topicId: RATIO_ANALYSIS.id,
     topicTitle: RATIO_ANALYSIS.title,
@@ -508,7 +537,7 @@ export function searchParakhChapterKnowledge(input: {
     paperCode: 'INT-G2-P6',
     section: 'Section A: Financial Management',
     chapterNumber: 3,
-    syllabusApplicability: 'May 2026 examination onwards',
+    syllabusApplicability: 'Official ICAI catalogue page headed Applicable for May 2026 Exam; later-attempt applicability must be rechecked',
     contentReviewStatus: 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
     benchmarkStatus: 'SELF_CHECKED_NOT_HUMAN_VERIFIED',
     mode,
@@ -578,7 +607,7 @@ export function getParakhChapterKnowledgeInventory(): {
     chapterCount: FM_CHAPTERS.length,
     authoredContentCount: FM_CHAPTERS.filter((chapter) => chapter.contentStatus !== 'MAPPED_ONLY').length,
     humanReviewedContentCount: 0,
-    benchmarkCaseCount: PARAKH_FM_RATIO_BENCHMARKS.length,
+    benchmarkCaseCount: PARAKH_FM_RATIO_BENCHMARKS.length + OTHER_FM_BENCHMARKS.length,
     humanReviewedBenchmarkCount: 0,
     chapters: FM_CHAPTERS.map((chapter) => ({
       ...chapter,
@@ -586,7 +615,7 @@ export function getParakhChapterKnowledgeInventory(): {
     })),
     limitations: [
       'The map covers CA Intermediate Paper 6A only; it is not a complete CA Foundation, Intermediate, Final or SPOM knowledge bank.',
-      'Only Chapter 3 has an original authored content draft in this rollout. The other eight chapters are mapped, not taught by this pack.',
+      'This rollout contains original draft content for all nine mapped Financial Management chapters, but none has been human-reviewed.',
       'No chapter content or benchmark has been marked human-reviewed. Deterministic tests do not certify full academic correctness.',
       'Attempt-sensitive changes and statutory updates must be checked against the exact ICAI material, RTP and updates for the student’s attempt.',
     ],
