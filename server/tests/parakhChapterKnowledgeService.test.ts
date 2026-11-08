@@ -151,6 +151,16 @@ test('provides language-specific simpler explanations and quizzes for chapter pa
   assert.match(buildParakhChapterKnowledgeReply(quiz!, 'hinglish'), /independently verify nahi kiya/i);
 });
 
+test('recognizes Hindi-script example, simpler and quiz requests', () => {
+  const example = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'चालू अनुपात का उदाहरण दीजिए' });
+  const simpler = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'पूंजी की लागत सरल भाषा में समझाओ' });
+  const quiz = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'लाभांश पर प्रश्नोत्तरी लो' });
+  assert.equal(example?.mode, 'example');
+  assert.match(example?.answer || '', /उदाहरण/);
+  assert.equal(simpler?.mode, 'simpler');
+  assert.equal(quiz?.mode, 'quiz');
+});
+
 test('matches Hindi-script and Hinglish aliases for core FM topics', () => {
   const hindiRatio = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'चालू अनुपात समझाइए' });
   const hindiCapitalCost = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'पूंजी की लागत समझाओ' });
