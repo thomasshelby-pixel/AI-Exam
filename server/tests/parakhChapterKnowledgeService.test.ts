@@ -149,6 +149,17 @@ test('provides language-specific simpler explanations and quizzes for chapter pa
   assert.match(buildParakhChapterKnowledgeReply(quiz!, 'hinglish'), /original learning explanation/i);
 });
 
+test('matches Hindi-script and Hinglish aliases for core FM topics', () => {
+  const hindiRatio = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'चालू अनुपात समझाइए' });
+  const hindiCapitalCost = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'पूंजी की लागत समझाओ' });
+  const hindiDividend = searchParakhChapterKnowledge({ ...base, language: 'hindi', message: 'लाभांश नीति क्या है' });
+  const hinglishWorkingCapital = searchParakhChapterKnowledge({ ...base, message: 'working capital kya hai bhai' });
+  assert.equal(hindiRatio?.chapterNumber, 3);
+  assert.equal(hindiCapitalCost?.chapterNumber, 4);
+  assert.equal(hindiDividend?.chapterNumber, 8);
+  assert.equal(hinglishWorkingCapital?.chapterNumber, 9);
+});
+
 test('current ratio is not confused with current statutory or amendment information', () => {
   const result = searchParakhChapterKnowledge({ ...base, message: 'What is the current ratio?' });
   assert.ok(result);
