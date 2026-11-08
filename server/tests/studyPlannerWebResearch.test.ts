@@ -18,6 +18,9 @@ test('detects current-information and explicit web-search requests', () => {
   assert.equal(shouldUseParakhWebResearch('What is the current income-tax slab?'), true);
   assert.equal(shouldUseParakhWebResearch('Explain Section 16 under GST'), true);
   assert.equal(shouldUseParakhWebResearch('Explain FEMA current account transaction'), false);
+  assert.equal(shouldUseParakhWebResearch('वर्तमान जीएसटी दर क्या है?'), true);
+  assert.equal(shouldUseParakhWebResearch('वर्तमान अनुपात समझाइए'), false);
+  assert.equal(shouldUseParakhWebResearch('Income-tax की धारा 80C क्या है?'), true);
 });
 
 test('removes identifiers and contact details before producing a search query', () => {
