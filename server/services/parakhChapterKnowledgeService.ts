@@ -201,6 +201,9 @@ const RATIO_ALIASES = [
   'operating ratio',
   'return on capital employed',
   'roce',
+  'अनुपात विश्लेषण',
+  'चालू अनुपात',
+  'त्वरित अनुपात',
 ];
 
 
