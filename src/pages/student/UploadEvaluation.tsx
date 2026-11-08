@@ -169,8 +169,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
   );
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
-  const [parakhExclusionLoading, setParakhWithdrawalLoading] = useState<boolean>(false);
-  const [parakhExclusionMessage, setParakhWithdrawalMessage] = useState<string>('');
+  const [parakhExclusionLoading, setParakhExclusionLoading] = useState<boolean>(false);
+  const [parakhExclusionMessage, setParakhExclusionMessage] = useState<string>('');
 
   // File upload states
   const [file, setFile] = useState<File | null>(null);
@@ -743,7 +743,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       setParakhWithdrawalMessage(
         response.message || `Excluded ${response.excludedCount || 0} previous PARAKH observation(s). Future observations are also paused for this account.`
       );
-    } catch (withdrawError: unknown) {
+    } catch (exclusionError: unknown) {
       setParakhWithdrawalMessage(
         withdrawError instanceof Error ? withdrawError.message : 'Could not save the PARAKH exclusion request. Please try again.'
       );
