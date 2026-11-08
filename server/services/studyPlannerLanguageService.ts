@@ -26,7 +26,7 @@ export function detectStudyReplyLanguage(text: string, history: string[] = []): 
 export function isSocialGreeting(text: string): boolean {
   const value = String(text || '').trim();
   if (!value) return false;
-  const plainGreeting = /^(?:hi+|hello+|hey+|hlo+|namaste|namaskar|good\s+morning|good\s+afternoon|good\s+evening)(?:[\s,]+(?:bhai|parakh|there|friend))?[\s.!?]*$/i;
+  const plainGreeting = /^(?:hi+|hello+|hey+|hlo+|namaste|namaskar|नमस्ते|नमस्कार|good\s+morning|good\s+afternoon|good\s+evening)(?:[\s,]+(?:bhai|parakh|there|friend))?[\s.!?]*$/i;
   const greetingNudge = /\b(?:hello|hi|hey|hlo)\b.{0,55}\b(?:nahi|nahin|bolo|bologe|reply|greet|jawab)\b/i;
   return plainGreeting.test(value) || greetingNudge.test(value);
 }
@@ -198,12 +198,12 @@ export function buildChapterAssessmentReadyMessage(language: StudyReplyLanguage,
 
 export function buildIntermediateSMClarification(language: StudyReplyLanguage): string {
   if (language === 'hindi') {
-    return 'SM / FM-SM समझ गया। आपको क्या चाहिए: (1) concept explanation, (2) effective revision strategy, या (3) study plan? Study plan के लिए अपना available time बताएं या planner settings में daily study hours चुनें।';
+    return 'SM / FM-SM समझ गया। किस हिस्से में दिक्कत आ रही है? कोई concept, framework या exam answer—अपने शब्दों में बताइए या सवाल भेजिए, वहीं से शुरू करेंगे।';
   }
   if (language === 'hinglish') {
-    return 'SM / FM-SM samajh gaya bhai. Kya chahiye: (1) concept explanation, (2) effective revision strategy, ya (3) study plan? Study plan ke liye time bata de, ya planner settings mein apne daily study hours use kar.';
+    return 'SM / FM-SM samajh gaya bhai. Kis part mein dikkat aa rahi hai? Concept, framework ya exam answer—apne words mein bata ya question bhej de, wahi se shuru karte hain.';
   }
-  return 'I understand you mean Strategic Management (SM) / FM-SM. What do you need: (1) a concept explanation, (2) an effective revision strategy, or (3) a study plan? For a study plan, share your available time or use your daily study-hours setting.';
+  return 'I understand you mean Strategic Management (SM) / FM-SM. Which part is giving you trouble? Describe the concept, framework or exam question in your own words and we’ll start there.';
 }
 
 export function buildPlanScopeOptions(language: StudyReplyLanguage): string[] {
