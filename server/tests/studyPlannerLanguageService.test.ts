@@ -138,3 +138,13 @@ test('bare subject clarification gives useful choices in the student language', 
   assert.match(buildTopicIntentClarification('english', 'FM'), /concept explanation/);
   assert.deepEqual(buildTopicIntentOptions('hinglish', 'FM'), ['FM concept samjhao', 'FM revision strategy', 'FM study plan']);
 });
+
+
+test('recognises natural Hinglish help requests and difficulty statements', () => {
+  assert.equal(detectStudyReplyLanguage('FM me help kr skte ho'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('FM me mujhe ratio wala chapter nahi aata hai'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('How can you explain this to me?'), 'english');
+  assert.equal(isGeneralStudyQuestion('FM me mujhe ratio wala chapter nahi aata hai'), true);
+  assert.equal(isGeneralStudyQuestion('I am struggling with the ratio chapter'), true);
+  assert.equal(isGeneralStudyQuestion('Mujhe ye concept samajh nahi aa raha'), true);
+});
