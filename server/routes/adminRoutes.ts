@@ -86,6 +86,7 @@ import { enqueueEvaluation, isEvaluationJobActive } from '../services/asyncEvalu
 import { generateDetailedReportPdf, isEvaluationPendingReview } from '../services/detailedReportPdfService.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
+import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } from '../services/parakhLearningService.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { findAuthoritativeMaterialWithFallback, findEvaluationMaterialByExactIdForRecovery, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
@@ -501,6 +502,18 @@ router.use((req: AuthRequest, res: Response, next: NextFunction) => {
   next();
 });
 router.use(requireRole('SUPER_ADMIN'));
+
+// PARAKH Learning Engine — consented learning readiness and review metrics.
+// No training, model routing, or production evaluation controls are exposed here.
+router.get('/parakh-learning/metrics', async (_req: AuthRequest, res: Response) => {
+  try {
+    const metrics = await getParakhLearningDashboardMetrics();
+    return res.json({ success: true, metrics });
+  } catch (error) {
+    console.error('[PARAKH] Failed to load learning dashboard metrics:', error);
+    return res.status(500).json({ error: 'Failed to load PARAKH learning metrics.' });
+  }
+});
 
 // Faculty-wise free mock evaluation catalogue. Only Super Admin can manage these records.
 router.get('/faculty-mocks/faculties', async (_req: AuthRequest, res: Response) => {
@@ -5474,6 +5487,21 @@ router.post('/evaluations/:id/review/finalize', async (req: AuthRequest, res: Re
       }),
       nowIso
     );
+
+    // Promote only an explicitly consented submission, and only after the
+    // administrator has finalized the evaluation review (V2).
+    try {
+      await markParakhEvaluationAdminReviewed({
+        evaluationId,
+        reviewerId: req.user!.id,
+        reviewAction: affirmAsIs ? 'AFFIRMED_AS_IS' : 'AMENDED',
+        totalMarks: newTotalMarks,
+        maximumMarks: maxPaperMarks,
+        reviewedAt: nowIso,
+      });
+    } catch (parakhError) {
+      console.warn('[PARAKH] Could not mark reviewed evaluation as a learning candidate:', parakhError);
+    }
 
     return res.json({
       success: true,
