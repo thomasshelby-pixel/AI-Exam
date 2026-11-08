@@ -98,6 +98,48 @@ interface ParakhQualityReadiness {
     }>;
     limitations: string[];
   };
+  courseCoverage: {
+    checkedAt: string;
+    status: string;
+    courseCount: number;
+    paperCount: number;
+    chapterIndexCount: number;
+    provisionalTopicIndexCount: number;
+    authoredChapterCount: number;
+    humanReviewedChapterCount: number;
+    benchmarkPromptCount: number;
+    humanReviewedBenchmarkCount: number;
+    courses: Array<{
+      course: string;
+      title: string;
+      paperCount: number;
+      chapterIndexCount: number;
+      authoredChapterCount: number;
+      benchmarkPromptCount: number;
+      papers: Array<{
+        code: string;
+        title: string;
+        group: string | null;
+        sections: string[];
+        sourceUrl: string;
+        mappingStatus: string;
+        indexKind: 'chapter' | 'topic' | 'none';
+        indexEntries: Array<{
+          number: number;
+          title: string;
+          section: string | null;
+          contentStatus: string;
+          benchmarkStatus: string;
+        }>;
+        authoredChapterCount: number;
+        humanReviewedChapterCount: number;
+        benchmarkPromptCount: number;
+        humanReviewedBenchmarkCount: number;
+        note: string;
+      }>;
+    }>;
+    limitations: string[];
+  };
 }
 
 interface ParakhMetrics {
@@ -503,6 +545,80 @@ export const AdminParakhLearningSection: React.FC = () => {
                     <a href={course.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[10px] font-bold text-indigo-600 underline dark:text-indigo-300">Open ICAI source</a>
                   </div>
                 ))}
+              </div>
+              <div className="mt-4 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900 dark:text-white">All-course coverage inventory</h3>
+                    <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                      Checked {qualityReadiness.courseCoverage.checkedAt} · paper maps and content status across Foundation, Intermediate, Final and SPOM.
+                    </p>
+                  </div>
+                  <span className="w-fit rounded-full bg-amber-100 px-2.5 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                    {qualityReadiness.courseCoverage.status.replace(/_/g, ' ')}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {[
+                    ['Papers/modules mapped', qualityReadiness.courseCoverage.paperCount],
+                    ['Chapter index entries', qualityReadiness.courseCoverage.chapterIndexCount],
+                    ['Original chapter drafts', qualityReadiness.courseCoverage.authoredChapterCount],
+                    ['Human-reviewed chapters', qualityReadiness.courseCoverage.humanReviewedChapterCount],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className="rounded-md bg-slate-50 p-2 dark:bg-slate-900">
+                      <span className="block text-[9px] text-slate-500 dark:text-slate-400">{label}</span>
+                      <strong className="mt-1 block text-sm tabular-nums text-slate-900 dark:text-white">{numberFormat.format(Number(value))}</strong>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[9px] text-slate-500 dark:text-slate-400">
+                  <span>{qualityReadiness.courseCoverage.courseCount} course tracks</span>
+                  <span>{qualityReadiness.courseCoverage.provisionalTopicIndexCount} provisional CA Final topic pointers (not official chapters)</span>
+                  <span>{qualityReadiness.courseCoverage.benchmarkPromptCount} benchmark prompts</span>
+                  <span>{qualityReadiness.courseCoverage.humanReviewedBenchmarkCount} human-reviewed benchmark cases</span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {qualityReadiness.courseCoverage.courses.map((course) => (
+                    <details key={course.course} className="rounded-md border border-slate-200 p-2 dark:border-slate-700">
+                      <summary className="cursor-pointer text-[10px] font-bold text-slate-800 dark:text-slate-200">
+                        {course.title} · {course.paperCount} papers/modules · {course.chapterIndexCount} indexed chapters · {course.authoredChapterCount} authored drafts
+                      </summary>
+                      <div className="mt-2 space-y-2">
+                        {course.papers.map((paper) => (
+                          <div key={paper.code} className="rounded-md bg-slate-50 p-2 dark:bg-slate-900">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-[10px] font-bold text-slate-800 dark:text-slate-200">{paper.code} · {paper.title}</span>
+                              <span className="text-[9px] text-slate-500 dark:text-slate-400">{paper.mappingStatus.replace(/_/g, ' ')}</span>
+                            </div>
+                            {paper.group ? <p className="mt-0.5 text-[9px] text-slate-400">{paper.group}</p> : null}
+                            {paper.sections.length ? <p className="mt-0.5 text-[9px] text-slate-500 dark:text-slate-400">{paper.sections.join(' · ')}</p> : null}
+                            {paper.indexEntries.length ? (
+                              <details className="mt-1">
+                                <summary className="cursor-pointer text-[9px] font-semibold text-indigo-600 dark:text-indigo-300">
+                                  View {paper.indexEntries.length} {paper.indexKind === 'chapter' ? 'chapter entries' : 'provisional topic pointers'} · {paper.authoredChapterCount} authored · {paper.benchmarkPromptCount} benchmark prompts
+                                </summary>
+                                <ul className="mt-1 space-y-1">
+                                  {paper.indexEntries.map((entry) => (
+                                    <li key={entry.number + ':' + entry.title} className="text-[9px] text-slate-600 dark:text-slate-300">
+                                      {entry.section ? <span className="text-slate-400">{entry.section}: </span> : null}
+                                      {entry.number}. {entry.title}
+                                      <span className="ml-1 text-slate-400">· {entry.contentStatus.replace(/_/g, ' ')} · {entry.benchmarkStatus.replace(/_/g, ' ')}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            ) : null}
+                            <p className="mt-1 text-[9px] leading-relaxed text-slate-500 dark:text-slate-400">{paper.note}</p>
+                            <a href={paper.sourceUrl} target="_blank" rel="noreferrer" className="mt-1 inline-block text-[9px] font-semibold text-indigo-600 underline dark:text-indigo-300">ICAI source</a>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
+                <p className="mt-3 text-[9px] leading-relaxed text-amber-700 dark:text-amber-300">
+                  Important: a chapter/topic index is not a full lesson. Only the nine Intermediate FM Section A chapters have original teaching drafts; none is human-reviewed. CA Final topic pointers are provisional, and SPOM chapter indexing remains pending.
+                </p>
               </div>
               <p className="mt-3 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
                 Official paper mapping is not chapter mapping. Select attempt-specific study material, RTP/MTP and amendments before using an answer as exam-current.
