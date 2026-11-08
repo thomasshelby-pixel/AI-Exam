@@ -26,6 +26,34 @@ The official page lists nine chapters:
 | Module 2 | 9. Management of Working Capital | Original authored draft and operating-cycle illustration; six official units listed; not human-verified |
 
 All nine mapped FM chapters now have original draft teaching content in English, Hindi and Hinglish, with answer, example, simpler-explanation and quiz modes. The chapter drafts are a first content rollout, not a claim of complete academic depth or subject mastery.
+## Third rollout: CA Intermediate Paper 4: Cost and Management Accounting
+
+**Source of truth:** ICAI's official Paper 4 page at https://icai.org/post/24297 is headed “Applicable for May 2027 Exam Onwards” and lists 15 chapters.
+
+The 15 original teaching packs cover:
+
+1. Introduction to Cost and Management Accounting
+2. Material Cost
+3. Employee Cost and Direct Expenses
+4. Overheads – Absorption Costing Method
+5. Activity Based Costing
+6. Cost Sheet
+7. Cost Accounting Systems
+8. Unit & Batch Costing
+9. Job Costing
+10. Process & Operation Costing
+11. Joint Products and By Products
+12. Service Costing
+13. Standard Costing
+14. Marginal Costing
+15. Budgets and Budgetary Control
+
+Each pack has original explanations in English, Hindi and Hinglish, plus answer, example, simpler and quiz modes. Worked examples include EOQ, Halsey/Rowan incentives, overhead absorption, activity drivers, cost-sheet build-up, normal/abnormal process loss, further-processing decisions, service cost units, material variances, break-even analysis and flexible budgets. A deterministic cost-sheet helper is covered by regression tests.
+
+Five distinct benchmark prompts are defined per chapter (75 total) across core concept, unseen numerical/application, exam presentation, edge cases and attempt/source sensitivity. There are zero human-reviewed chapters and zero human-reviewed benchmark answer keys. The notes are original and do not reproduce ICAI study material.
+
+**Attempt boundary:** this ICAI page is headed May 2027 Exam Onwards. Do not claim these chapters apply to a different attempt without checking the student's exact ICAI material, RTP, corrigenda and exclusions.
+
 ## Second rollout: CA Intermediate Paper 6B, Section B: Strategic Management
 
 **Source of truth:** ICAI's official Paper 6B page with separate applicability editions. The page for the next listed edition is headed “Applicable for May 2027 Exam Onwards” and lists five chapters:
@@ -109,6 +137,6 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 The paper-level catalogue covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
 
-Two sections of CA Intermediate Paper 6 now have original content: Section A Financial Management (9 chapter drafts, 45 benchmark prompts; catalogue headed May 2026 Exam) and Section B Strategic Management (5 chapter drafts, 25 benchmark prompts; catalogue headed May 2027 Exam Onwards). Across both sections there are 14 authored chapter drafts and 70 prompts, but zero human-reviewed chapters and zero human-reviewed benchmark sets. Foundation and other Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are provisional topic pointers, not official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper in this release has dedicated authored chapter lessons.
+Intermediate Paper 4 and Paper 6 now have original content: Paper 4 Cost and Management Accounting (15 chapter drafts, 75 benchmark prompts; catalogue headed May 2027 Exam Onwards), Paper 6 Section A Financial Management (9 chapter drafts, 45 prompts; catalogue headed May 2026 Exam) and Paper 6 Section B Strategic Management (5 chapter drafts, 25 prompts; catalogue headed May 2027 Exam Onwards). Across these papers there are 29 authored chapter drafts and 145 prompts, but zero human-reviewed chapters and zero human-reviewed benchmark sets. Foundation and other Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are provisional topic pointers, not official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper in this release has dedicated authored chapter lessons.
 
 Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, followed by separate benchmark answer keys and qualified review. Tax and law content needs attempt-aware statutory source controls and must not be promoted from evergreen explanations.
