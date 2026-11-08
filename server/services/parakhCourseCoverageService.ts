@@ -109,9 +109,9 @@ function containsPhrase(haystack: string, needle: string): boolean {
 
 function getIndexEntryAliases(title: string): string[] {
   const normalized = normalize(title);
-  const withoutLeadingArticle = normalized.replace(/^(?:the|a|an)\s+/, '');
-  const withoutTrailingYear = withoutLeadingArticle.replace(/\s+(?:18|19|20)\d{2}$/, '').trim();
-  return Array.from(new Set([title, withoutLeadingArticle, withoutTrailingYear].filter(Boolean)));
+  const withoutLeadingHeading = normalized.replace(/^(?:(?:the|a|an)\s+|theory\s+of\s+)/, '');
+  const withoutTrailingYear = withoutLeadingHeading.replace(/\s+(?:18|19|20)\d{2}$/, '').trim();
+  return Array.from(new Set([title, withoutLeadingHeading, withoutTrailingYear].filter(Boolean)));
 }
 
 function matchesIndexEntry(text: string, title: string): boolean {
