@@ -17,6 +17,7 @@ import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, reso
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhChapterKnowledgeReply, searchParakhChapterKnowledge } from '../services/parakhChapterKnowledgeService.js';
 import { buildParakhStrategicManagementReply, searchParakhStrategicManagementKnowledge } from '../services/parakhStrategicManagementKnowledgeService.js';
+import { buildParakhCostAccountingReply, searchParakhCostAccountingKnowledge } from '../services/parakhCostAccountingKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
@@ -762,7 +763,10 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       const strategicManagementKnowledge = !chapterKnowledge
         ? searchParakhStrategicManagementKnowledge({ message, course, language: replyLanguage })
         : null;
-      const authoredChapterKnowledge = chapterKnowledge || strategicManagementKnowledge;
+      const costAccountingKnowledge = !chapterKnowledge && !strategicManagementKnowledge
+        ? searchParakhCostAccountingKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const authoredChapterKnowledge = chapterKnowledge || strategicManagementKnowledge || costAccountingKnowledge;
       const knowledge = authoredChapterKnowledge
         ? null
         : searchStudyKnowledge({ message, course, history, language: replyLanguage });
@@ -785,7 +789,9 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
         : strategicManagementKnowledge
           ? buildParakhStrategicManagementReply(strategicManagementKnowledge, replyLanguage)
-          : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
+          : costAccountingKnowledge
+            ? buildParakhCostAccountingReply(costAccountingKnowledge, replyLanguage)
+            : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
       const courseCoverageNotice = !authoredChapterKnowledge && !webSources.length && coursePaperContext
         ? buildParakhCourseCoverageNotice(coursePaperContext, replyLanguage)
         : '';
@@ -810,7 +816,8 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
           version: webSources.length ? 'parakh-web-research-v1'
             : chapterKnowledge ? 'parakh-chapter-knowledge-v1'
               : strategicManagementKnowledge ? 'parakh-strategic-management-knowledge-v1'
-                : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
+                : costAccountingKnowledge ? 'parakh-cost-accounting-knowledge-v1'
+                  : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
           modelUsed: false,
           knowledgeMatched,
           knowledgeReviewStatus: authoredChapterKnowledge?.contentReviewStatus || null,
