@@ -33,6 +33,7 @@ import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { QuickResumeModal } from './components/auth/QuickResumeModal.js';
 import { ThemeProvider } from './context/ThemeContext.js';
 import { LegalConsentGate } from './components/auth/LegalConsentGate.js';
+import { PrivacyPolicyUpdateNotice } from './components/auth/PrivacyPolicyUpdateNotice.js';
 import { Navbar } from './components/layout/Navbar.js';
 import { Footer } from './components/layout/Footer.js';
 import { CreditPurchaseModal } from './components/common/CreditPurchaseModal.js';
@@ -1653,6 +1654,7 @@ export default function App() {
         <AuthProvider>
           <AppRoutes />
           <LegalConsentGate />
+          <PrivacyPolicyUpdateNotice />
         </AuthProvider>
       </ThemeProvider>
     </BrowserRouter>
