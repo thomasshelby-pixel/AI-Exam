@@ -67,15 +67,16 @@ test('retrieves every catalogue chapter for CA Intermediate Paper 1 only',()=>{
 
 test('supports English, Hindi, Hinglish and all four learning modes',()=>{
   const cases=[
-    {message:'Explain consolidation',language:'english' as const},
-    {message:'Branch accounting ko simple language mein samjhao',language:'hinglish' as const},
-    {message:'आंतरिक पुनर्गठन का उदाहरण दीजिए',language:'hindi' as const},
-    {message:'Quiz me on buyback of securities',language:'english' as const},
+    {message:'Explain consolidation',language:'english' as const,mode:'answer' as const,minimumLength:160},
+    {message:'Branch accounting ko simple language mein samjhao',language:'hinglish' as const,mode:'simpler' as const,minimumLength:50},
+    {message:'आंतरिक पुनर्गठन का उदाहरण दीजिए',language:'hindi' as const,mode:'example' as const,minimumLength:60},
+    {message:'Quiz me on buyback of securities',language:'english' as const,mode:'quiz' as const,minimumLength:50},
   ];
   for(const item of cases){
     const result=searchParakhAdvancedAccountingKnowledge({message:item.message,course:'CA_INTERMEDIATE',language:item.language});
     assert.ok(result);
-    assert.ok(result.answer.length>160);
+    assert.equal(result.mode,item.mode,item.message);
+    assert.ok(result.answer.length>item.minimumLength,item.message);
   }
   assert.equal(searchParakhAdvancedAccountingKnowledge({
     message:'Explain buyback of securities example',course:'CA_INTERMEDIATE',language:'english'
