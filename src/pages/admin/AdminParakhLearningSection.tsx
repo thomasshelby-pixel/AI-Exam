@@ -451,7 +451,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
                   <div className="rounded-md bg-slate-50 p-2 dark:bg-slate-900">
-                    <span className="block text-slate-500 dark:text-slate-400">Benchmark cases</span>
+                    <span className="block text-slate-500 dark:text-slate-400">Benchmark prompts</span>
                     <strong className="mt-1 block text-sm text-slate-900 dark:text-white">{qualityReadiness.chapterKnowledge.benchmarkCaseCount}</strong>
                     <span className="text-slate-400">{qualityReadiness.chapterKnowledge.humanReviewedBenchmarkCount} human-reviewed</span>
                   </div>
