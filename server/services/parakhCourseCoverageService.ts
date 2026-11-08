@@ -7,6 +7,8 @@ import { getParakhCostAccountingInventory } from './parakhCostAccountingKnowledg
 import { getParakhAuditingInventory } from './parakhAuditingKnowledgeService.js';
 import { getParakhFoundationAccountingInventory } from './parakhFoundationAccountingKnowledgeService.js';
 import { getParakhFoundationBusinessLawInventory } from './parakhFoundationBusinessLawKnowledgeService.js';
+import { getParakhFoundationQuantitativeAptitudeInventory } from './parakhFoundationQuantitativeAptitudeKnowledgeService.js';
+import { getParakhFoundationBusinessEconomicsInventory } from './parakhFoundationBusinessEconomicsKnowledgeService.js';
 
 export type ParakhCoverageLanguage = 'english' | 'hindi' | 'hinglish';
 
@@ -113,6 +115,36 @@ function getPaperIndex(paper: ReturnType<typeof getParakhCurriculumPapers>[numbe
   entries: Array<{ number: number; title: string; section: string | null; authored: boolean; benchmarked: boolean }>;
   note: string;
 } {
+  if (paper.course === 'CA_FOUNDATION' && paper.code === 'FND-P3') {
+    const qa = getParakhFoundationQuantitativeAptitudeInventory();
+    return {
+      indexKind: 'chapter',
+      mappingStatus: 'OFFICIAL_CHAPTER_CATALOGUE_LINKED',
+      entries: qa.chapters.map((chapter) => ({
+        number: chapter.chapterNumber,
+        title: chapter.title,
+        section: chapter.module,
+        authored: chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+        benchmarked: chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED',
+      })),
+      note: 'The 18 chapters are linked to the official ICAI Foundation Paper 3 page marked Relevant for May 2027 and Onwards Examination. Original English/Hindi/Hinglish teaching drafts and benchmark prompts exist for all chapters; none has human-reviewed content or answer keys.',
+    };
+  }
+  if (paper.course === 'CA_FOUNDATION' && paper.code === 'FND-P4') {
+    const economics = getParakhFoundationBusinessEconomicsInventory();
+    return {
+      indexKind: 'chapter',
+      mappingStatus: 'OFFICIAL_CHAPTER_CATALOGUE_LINKED',
+      entries: economics.chapters.map((chapter) => ({
+        number: chapter.chapterNumber,
+        title: chapter.title,
+        section: chapter.module,
+        authored: chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+        benchmarked: chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED',
+      })),
+      note: 'The 10 chapters are linked to the official ICAI Foundation Paper 4 page marked Relevant for May 2027 and Onwards Examination. Original English/Hindi/Hinglish teaching drafts and benchmark prompts exist for all chapters; none has human-reviewed content or answer keys. Current Indian economic data is not embedded and must be sourced for the requested period.',
+    };
+  }
   if (paper.course === 'CA_FOUNDATION' && paper.code === 'FND-P2') {
     const laws = getParakhFoundationBusinessLawInventory();
     return {
@@ -410,6 +442,8 @@ export function resolveParakhCoursePaperContext(input: {
   const intermediateAuditPaper = winner.paper.code === 'INT-G2-P5';
   const foundationAccountingPaper = winner.paper.code === 'FND-P1';
   const foundationBusinessLawPaper = winner.paper.code === 'FND-P2';
+  const foundationQuantitativePaper = winner.paper.code === 'FND-P3';
+  const foundationEconomicsPaper = winner.paper.code === 'FND-P4';
   return {
     course: winner.paper.course,
     paperCode: winner.paper.code,
@@ -419,8 +453,10 @@ export function resolveParakhCoursePaperContext(input: {
     matchedIndexEntry: winner.matchedIndexEntry,
     mappingStatus: index.mappingStatus,
     indexKind: index.indexKind,
-    sourceUrl: foundationBusinessLawPaper ? getParakhFoundationBusinessLawInventory().sourceUrl
-      : foundationAccountingPaper ? getParakhFoundationAccountingInventory().sourceUrl
+    sourceUrl: foundationEconomicsPaper ? getParakhFoundationBusinessEconomicsInventory().sourceUrl
+      : foundationQuantitativePaper ? getParakhFoundationQuantitativeAptitudeInventory().sourceUrl
+        : foundationBusinessLawPaper ? getParakhFoundationBusinessLawInventory().sourceUrl
+          : foundationAccountingPaper ? getParakhFoundationAccountingInventory().sourceUrl
         : intermediateAuditPaper ? getParakhAuditingInventory().sourceUrl
         : intermediateCostPaper ? getParakhCostAccountingInventory().sourceUrl
         : paper6SectionB ? getParakhStrategicManagementInventory().sourceUrl
@@ -428,7 +464,9 @@ export function resolveParakhCoursePaperContext(input: {
     authoredChapterCount: index.entries.filter((entry) => entry.authored).length,
     humanReviewedChapterCount: 0,
     benchmarkPromptCount: winner.paper.code === 'FND-P2' ? getParakhFoundationBusinessLawInventory().benchmarkCaseCount
-      : winner.paper.code === 'FND-P1' ? getParakhFoundationAccountingInventory().benchmarkCaseCount
+      : winner.paper.code === 'FND-P3' ? getParakhFoundationQuantitativeAptitudeInventory().benchmarkCaseCount
+        : winner.paper.code === 'FND-P4' ? getParakhFoundationBusinessEconomicsInventory().benchmarkCaseCount
+          : winner.paper.code === 'FND-P1' ? getParakhFoundationAccountingInventory().benchmarkCaseCount
         : winner.paper.code === 'INT-G2-P6'
         ? getParakhChapterKnowledgeInventory().benchmarkCaseCount + getParakhStrategicManagementInventory().benchmarkCaseCount
         : winner.paper.code === 'INT-G2-P4' ? getParakhCostAccountingInventory().benchmarkCaseCount
