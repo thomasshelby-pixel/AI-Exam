@@ -20,7 +20,7 @@ const cache = new Map<string, { expiresAt: number; response: ParakhWebResearchRe
 export function shouldUseParakhWebResearch(message: string): boolean {
   // Avoid generic words (for example "new", "budget" or "result") that routinely
   // occur in ordinary CA questions such as "new credit policy" or "budgetary control".
-  return /\\b(latest|currently|today|yesterday|recent|newest|newly announced|updated?|amendment|notification|circular|announcement|press release|union budget|exam results?|admit card|exam date|registration date|last date|deadline|due date|cut[- ]?off|repo rate|policy rate|current (?:rate|policy|notification|rule|amendment|syllabus|exam date|version|status|information|update)|as of 20\\d{2}|20\\d{2}|browse|web search|search the internet|internet se|online source|latest update)\\b/i.test(String(message || ''));
+  return /\b(latest|currently|today|yesterday|recent|newest|newly announced|updated?|amendment|notification|circular|announcement|press release|union budget|exam results?|admit card|exam date|registration date|last date|deadline|due date|cut[- ]?off|repo rate|policy rate|current (?:rate|policy|notification|rule|amendment|syllabus|exam date|version|status|information|update)|as of 20\d{2}|20\d{2}|browse|web search|search the internet|internet se|online source|latest update)\b/i.test(String(message || ''));
 }
 
 export function sanitiseParakhSearchQuery(message: string): string {
