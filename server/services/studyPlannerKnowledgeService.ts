@@ -621,7 +621,7 @@ export function buildCreditPolicyAnalysisReply(
           '4. Bad debts: current ' + money(currentBadDebts) + '; proposed ' + money(proposedBadDebts) + '. Incremental bad-debt cost: ' + money(incrementalBadDebts) + '.',
           '5. After-tax surplus before the additional cash-discount cost and receivables-financing cost: **' + surplus + '**.',
           '',
-          '**A final accept/reject decision needs one missing assumption:** the percentage of customers taking the ' + oldDiscountRate + '% discount under the current policy and the percentage taking the ' + newDiscountRate + '% discount under the proposed policy. Assume the remaining customers pay on the net day.',
+          '**A final accept/reject decision needs one missing assumption:** the percentage of customers who take the discount under each policy: the ' + oldDiscountRate + '% discount under the current policy and the ' + newDiscountRate + '% discount under the proposed policy. Assume the remaining customers pay on the net day.',
           'Please provide those two percentages. I can then calculate the average collection periods, incremental discount cost and receivables investment using the ' + percent(afterTaxReturn) + '% after-tax required return.',
         ].join('\n');
 
