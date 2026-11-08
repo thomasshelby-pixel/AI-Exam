@@ -3475,6 +3475,10 @@ router.put('/profile', async (req: AuthRequest, res: Response) => {
     const hasExamAttemptField = Object.prototype.hasOwnProperty.call(req.body || {}, 'examAttemptId') ||
       Object.prototype.hasOwnProperty.call(req.body || {}, 'exam_attempt_id');
     const rawExamAttemptId = req.body?.examAttemptId ?? req.body?.exam_attempt_id;
+    if (hasExamAttemptField && rawExamAttemptId !== undefined && rawExamAttemptId !== null &&
+        typeof rawExamAttemptId !== 'string') {
+      return res.status(400).json({ error: 'Invalid exam attempt selection.' });
+    }
 
     // Field-level validation
     if (fullName !== undefined) {
