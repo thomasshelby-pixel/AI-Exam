@@ -40,6 +40,7 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
+import { getPolicyUpdateNoticeStatus, acknowledgePolicyUpdateNotice } from '../services/policyUpdateNoticeService.js';
 import {
   CURRENT_TERMS_VERSION,
   CURRENT_PRIVACY_VERSION,
@@ -99,6 +100,36 @@ router.post('/legal-consent/accept', authenticateToken, async (req: AuthRequest,
       error: 'We could not securely record your acceptance. Please retry.',
       code: 'LEGAL_CONSENT_PERSISTENCE_FAILED',
     });
+  }
+});
+
+router.get('/policy-update/status', authenticateToken, (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    return res.json({
+      success: true,
+      notice: getPolicyUpdateNoticeStatus(req.user.id),
+    });
+  } catch (error) {
+    console.error('[PolicyUpdateNotice] Could not load notice status:', error);
+    return res.status(503).json({ error: 'Could not load the current Privacy Policy notice.' });
+  }
+});
+
+router.post('/policy-update/acknowledge', authenticateToken, async (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const notice = await acknowledgePolicyUpdateNotice({
+      userId: req.user.id,
+      policyVersion: String(req.body?.policyVersion || ''),
+      ipAddress: req.ip || req.socket.remoteAddress || null,
+      userAgent: String(req.headers['user-agent'] || ''),
+    });
+    return res.json({ success: true, notice });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not record the notice acknowledgement.';
+    const staleVersion = message.includes('Privacy Policy has changed');
+    return res.status(staleVersion ? 409 : 503).json({ error: message });
   }
 });
 
