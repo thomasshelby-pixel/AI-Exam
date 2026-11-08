@@ -19,8 +19,10 @@ interface ParakhSubjectMetric {
   subjectKey: string;
   subjectName: string;
   optedIn: number;
+  collected: number;
+  unreviewed: number;
+  selectedForReview: number;
   verified: number;
-  awaitingReview: number;
 }
 
 interface ParakhMetrics {
@@ -29,8 +31,12 @@ interface ParakhMetrics {
   supervisorEnabled: boolean;
   productionEvaluationImpact: boolean;
   totalOptIns: number;
-  awaitingAdminReview: number;
-  verifiedCandidates: number;
+  totalCollected: number;
+  processing: number;
+  unreviewedObservations: number;
+  selectedForReview: number;
+  verifiedSamples: number;
+  failed: number;
   withdrawn: number;
   benchmarkRuns: number;
   trainingRuns: number;
@@ -79,59 +85,59 @@ export const AdminParakhLearningSection: React.FC = () => {
 
   const stats = [
     {
-      label: 'Opt-in records (all-time)',
-      value: metrics?.totalOptIns ?? 0,
-      helper: 'Students who explicitly agreed',
+      label: 'Collected observations',
+      value: metrics?.totalCollected ?? 0,
+      helper: 'All consented evaluations completed',
       icon: Database,
       tone: 'text-indigo-600 bg-indigo-50 dark:text-indigo-300 dark:bg-indigo-950/50',
     },
     {
-      label: 'Waiting for admin review',
-      value: metrics?.awaitingAdminReview ?? 0,
-      helper: 'Not yet usable as verified examples',
-      icon: Clock,
+      label: 'Unreviewed observations',
+      value: metrics?.unreviewedObservations ?? 0,
+      helper: 'Available for analysis and sampling',
+      icon: Activity,
       tone: 'text-amber-600 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40',
     },
     {
-      label: 'Verified candidates',
-      value: metrics?.verifiedCandidates ?? 0,
-      helper: 'Admin review finalized (V2)',
+      label: 'Selected for quality review',
+      value: metrics?.selectedForReview ?? 0,
+      helper: 'Targeted or integrity-flagged samples',
       icon: ClipboardCheck,
-      tone: 'text-emerald-600 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40',
+      tone: 'text-blue-600 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40',
     },
     {
-      label: 'Withdrawn',
-      value: metrics?.withdrawn ?? 0,
-      helper: 'Excluded from future learning use',
+      label: 'Human-verified samples',
+      value: metrics?.verifiedSamples ?? 0,
+      helper: 'Reviewed and finalized by an admin',
       icon: ShieldCheck,
-      tone: 'text-slate-600 bg-slate-100 dark:text-slate-300 dark:bg-slate-800',
+      tone: 'text-emerald-600 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40',
     },
   ];
 
   const stages = [
     {
       title: 'Optional student consent',
-      detail: 'The student explicitly opts in at answer-sheet upload.',
+      detail: 'Each opted-in submission is recorded; only successfully completed evaluations enter the collection.',
       status: 'ACTIVE',
       statusLabel: 'Active',
       icon: CheckCircle2,
     },
     {
-      title: 'Admin review and finalization',
-      detail: 'Only a finalized admin-reviewed evaluation becomes a verified candidate.',
+      title: 'Sample-based quality review',
+      detail: 'Only selected samples are sent for human review; ordinary observations do not wait for admin review.',
       status: 'ACTIVE',
       statusLabel: 'Active',
       icon: ClipboardCheck,
     },
     {
-      title: 'Anonymisation and dataset export',
+      title: 'Anonymisation and dataset preparation',
       detail: 'Separate safeguards and a reviewed export process are still required.',
       status: 'PENDING',
       statusLabel: 'Not active',
       icon: LockKeyhole,
     },
     {
-      title: 'Independent evaluation benchmark',
+      title: 'Human-verified benchmark',
       detail: 'A human-verified held-out benchmark must be created before quality claims.',
       status: 'PENDING',
       statusLabel: 'Not started',
@@ -162,7 +168,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                 PARAKH <span className="text-indigo-300">Learning Engine</span>
               </h1>
               <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-300 sm:text-sm">
-                A consent-based learning pipeline that collects review-ready examples to help improve future CA evaluation quality.
+                A consent-based learning pipeline that collects every completed opted-in evaluation as an observation and uses selected samples for human quality checks.
               </p>
             </div>
           </div>
@@ -283,8 +289,9 @@ export const AdminParakhLearningSection: React.FC = () => {
                     <tr key={`${item.level}:${item.subjectKey}`} className="border-b border-slate-100 last:border-0 dark:border-slate-800/70">
                       <td className="px-2 py-3 font-semibold text-slate-600 dark:text-slate-300">{item.level}</td>
                       <td className="px-2 py-3 font-semibold text-slate-900 dark:text-white">{item.subjectName}</td>
-                      <td className="px-2 py-3 text-right tabular-nums">{numberFormat.format(item.optedIn)}</td>
-                      <td className="px-2 py-3 text-right tabular-nums">{numberFormat.format(item.awaitingReview)}</td>
+                      <td className="px-2 py-3 text-right tabular-nums">{numberFormat.format(item.collected)}</td>
+                      <td className="px-2 py-3 text-right tabular-nums">{numberFormat.format(item.unreviewed)}</td>
+                      <td className="px-2 py-3 text-right tabular-nums">{numberFormat.format(item.selectedForReview)}</td>
                       <td className="px-2 py-3 text-right tabular-nums">{numberFormat.format(item.verified)}</td>
                     </tr>
                   ))}
@@ -313,6 +320,18 @@ export const AdminParakhLearningSection: React.FC = () => {
               <strong className="text-emerald-600 dark:text-emerald-300">NONE</strong>
             </div>
             <div className="flex items-center justify-between gap-3">
+              <span className="text-slate-500 dark:text-slate-400">Processing</span>
+              <strong className="tabular-nums text-slate-800 dark:text-white">{numberFormat.format(metrics?.processing ?? 0)}</strong>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-slate-500 dark:text-slate-400">Failed submissions (excluded)</span>
+              <strong className="tabular-nums text-slate-800 dark:text-white">{numberFormat.format(metrics?.failed ?? 0)}</strong>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-slate-500 dark:text-slate-400">Withdrawn consent</span>
+              <strong className="tabular-nums text-slate-800 dark:text-white">{numberFormat.format(metrics?.withdrawn ?? 0)}</strong>
+            </div>
+            <div className="flex items-center justify-between gap-3">
               <span className="text-slate-500 dark:text-slate-400">Benchmark runs</span>
               <strong className="tabular-nums text-slate-800 dark:text-white">{numberFormat.format(metrics?.benchmarkRuns ?? 0)}</strong>
             </div>
@@ -336,7 +355,7 @@ export const AdminParakhLearningSection: React.FC = () => {
       <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          <strong>Important:</strong> A verified candidate is not yet a training example. Anonymisation, permitted dataset export, and a held-out human-verified benchmark must be completed before any future training is considered. Counts here measure pipeline progress, not model accuracy.
+          <strong>Important:</strong> All consented completed evaluations are collected as observations. Only selected samples need human review. An unreviewed AI result is never treated as ground truth; anonymisation, permitted dataset export, and a held-out human-verified benchmark are still required before future training. Counts here measure pipeline progress, not model accuracy.
         </p>
       </div>
     </div>
