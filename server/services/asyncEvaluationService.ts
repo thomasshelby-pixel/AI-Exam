@@ -28,6 +28,7 @@ import { validateQuestionDeduplication, deduplicateQuestionList } from './canoni
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
 import { resolveMaterialComponentSourceIds } from './materialComponentSourceIds.js';
+import { markParakhEvaluationCompleted, markParakhEvaluationFailed } from './parakhLearningService.js';
 import {
   EvaluationEvidencePackage,
   enforceEvaluationEvidencePackageMtpGate,
@@ -897,6 +898,11 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       `).run(studentFacingReason, gateReason, evaluationId);
 
       if (rejectionUpdate.changes === 1) {
+        try {
+          await markParakhEvaluationFailed(evaluationId);
+        } catch (parakhError) {
+          console.warn(`[PARAKH] Could not exclude rejected evaluation ${evaluationId}:`, parakhError);
+        }
         const notificationId = `notif_eval_rejected_${evaluationId}`;
         const notificationMessage = `Your evaluation for ${subjectName || 'the selected paper'} was rejected. Reason: ${studentFacingReason}\n\nIf you believe this decision is incorrect, please contact support for a review.`;
         db.prepare(`
@@ -1482,6 +1488,14 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       throw new Error(`Could not finalize evaluation ${evaluationId}; current status is ${latestStatus || 'UNKNOWN'}.`);
     }
 
+    // Every consented result becomes a learning observation after durable
+    // evaluation finalization. NEEDS_REVIEW results are prioritised, not labels.
+    try {
+      await markParakhEvaluationCompleted({ evaluationId, evaluationStatus: finalStatus });
+    } catch (parakhError) {
+      console.warn(`[PARAKH] Could not register completed observation ${evaluationId}:`, parakhError);
+    }
+
     if (finalStatus !== 'COMPLETED') {
       // The personal entitlement was charged when the upload was accepted.
       // Return it when the system could not produce a verified final result.
@@ -1707,6 +1721,12 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       }
       console.error(`[AsyncEval] Could not claim failure status for ${evaluationId}; status is now ${latestStatus || 'UNKNOWN'}.`);
       return;
+    }
+
+    try {
+      await markParakhEvaluationFailed(evaluationId);
+    } catch (parakhError) {
+      console.warn(`[PARAKH] Could not exclude failed evaluation ${evaluationId}:`, parakhError);
     }
 
     await releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
