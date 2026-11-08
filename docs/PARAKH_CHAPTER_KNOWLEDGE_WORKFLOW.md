@@ -26,6 +26,16 @@ The official page lists nine chapters:
 | Module 2 | 9. Management of Working Capital | Original authored draft and operating-cycle illustration; six official units listed; not human-verified |
 
 All nine mapped FM chapters now have original draft teaching content in English, Hindi and Hinglish, with answer, example, simpler-explanation and quiz modes. The chapter drafts are a first content rollout, not a claim of complete academic depth or subject mastery.
+## Fourth rollout: CA Intermediate Paper 5: Auditing and Ethics
+
+**Source of truth:** ICAI's official Paper 5 study material page at https://www.icai.org/post/sm-inter-p5-may2027 is headed “Applicable for May 2027 Exam Onwards” and lists 11 chapters.
+
+The original packs cover Nature, Objective and Scope of Audit; Audit Strategy, Audit Planning and Audit Programme; Risk Assessment and Internal Control; Audit Evidence; Audit of Items of Financial Statements; Audit Documentation; Completion and Review; Audit Report; Special Features of Audit of Different Type of Entities; Audit of Banks; and Ethics and Terms of Audit Engagements.
+
+Each pack includes original English, Hindi and Hinglish teaching notes with answer, example, simpler and quiz modes. Fifty-five distinct benchmark prompts are defined (five per chapter). There are zero human-reviewed chapters and zero benchmark answer keys reviewed by a qualified auditor.
+
+**Attempt and source boundary:** Current Standards on Auditing, audit report wording, bank regulatory requirements, ethics provisions and engagement conditions are not treated as timeless facts. Questions asking for latest/current/applicable requirements are routed away from the evergreen draft and must be checked against exact ICAI material, current primary sources, effective dates and attempt.
+
 ## Third rollout: CA Intermediate Paper 4: Cost and Management Accounting
 
 **Source of truth:** ICAI's official Paper 4 page at https://icai.org/post/24297 is headed “Applicable for May 2027 Exam Onwards” and lists 15 chapters.
@@ -137,6 +147,6 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 The paper-level catalogue covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
 
-Intermediate Paper 4 and Paper 6 now have original content: Paper 4 Cost and Management Accounting (15 chapter drafts, 75 benchmark prompts; catalogue headed May 2027 Exam Onwards), Paper 6 Section A Financial Management (9 chapter drafts, 45 prompts; catalogue headed May 2026 Exam) and Paper 6 Section B Strategic Management (5 chapter drafts, 25 prompts; catalogue headed May 2027 Exam Onwards). Across these papers there are 29 authored chapter drafts and 145 prompts, but zero human-reviewed chapters and zero human-reviewed benchmark sets. Foundation and other Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are provisional topic pointers, not official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper in this release has dedicated authored chapter lessons.
+Intermediate Paper 4, Paper 5 and Paper 6 now have original content: Paper 4 Cost and Management Accounting (15 chapter drafts, 75 prompts; catalogue headed May 2027 Exam Onwards), Paper 5 Auditing and Ethics (11 drafts, 55 prompts; May 2027 Exam Onwards), Paper 6 Section A Financial Management (9 drafts, 45 prompts; May 2026 catalogue edition) and Paper 6 Section B Strategic Management (5 drafts, 25 prompts; May 2027 Exam Onwards). Across these papers there are 40 authored chapter drafts and 200 prompts, but zero human-reviewed chapters and zero human-reviewed benchmark sets. Foundation and other Intermediate chapter indexes are reused from the app curriculum and still need attempt-specific verification; CA Final entries are provisional topic pointers, not official chapter titles; SPOM is mapped at module level while chapter/unit indexing remains pending. No other paper in this release has dedicated authored chapter lessons.
 
 Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, followed by separate benchmark answer keys and qualified review. Tax and law content needs attempt-aware statutory source controls and must not be promoted from evergreen explanations.
