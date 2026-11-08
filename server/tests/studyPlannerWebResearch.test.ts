@@ -11,6 +11,8 @@ test('detects current-information and explicit web-search requests', () => {
   assert.equal(shouldUseParakhWebResearch('What is the latest ICAI notification?'), true);
   assert.equal(shouldUseParakhWebResearch('Browse the internet for current RBI repo rate'), true);
   assert.equal(shouldUseParakhWebResearch('Explain the concept of current ratio'), false);
+  assert.equal(shouldUseParakhWebResearch('The firm proposes a new credit policy of 2/15 net 60 instead of 1/15 net 45. Should it change the policy?'), false);
+  assert.equal(shouldUseParakhWebResearch('What is the latest ICAI exam result update?'), true);
 });
 
 test('removes identifiers and contact details before producing a search query', () => {
