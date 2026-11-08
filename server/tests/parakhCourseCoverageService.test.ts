@@ -72,9 +72,13 @@ test('resolves a paper using the authenticated course context, without cross-cou
   })?.paperCode, 'FIN-G1-P1');
 
   assert.equal(resolveParakhCoursePaperContext({
-    course: 'SPOM',
+    course: 'CA_FINAL',
     message: 'Explain SPOM Set A',
   })?.paperCode, 'SPOM-A');
+  assert.equal(resolveParakhCoursePaperContext({
+    course: 'CA_FINAL',
+    message: 'Explain SPOM forensic accounting',
+  })?.paperCode, 'SPOM-C7');
 
   assert.equal(resolveParakhCoursePaperContext({
     course: 'CA_FINAL',
