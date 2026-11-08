@@ -285,7 +285,10 @@ export function resolveParakhCoursePaperContext(input: {
   const course = input.course as ParakhCurriculumTrack;
   if (!message || !['CA_FOUNDATION', 'CA_INTERMEDIATE', 'CA_FINAL', 'SPOM'].includes(course)) return null;
 
-  const curriculum = getParakhCurriculumPapers(course);
+  const requestsSpomModule = course === 'CA_FINAL' && /\\bspom\\b/i.test(message);
+  const curriculum = requestsSpomModule
+    ? [...getParakhCurriculumPapers('CA_FINAL'), ...getParakhCurriculumPapers('SPOM')]
+    : getParakhCurriculumPapers(course);
   const suppliedSubjects = (input.subjects || []).join(' ');
   const candidates: Array<{ paper: ReturnType<typeof getParakhCurriculumPapers>[number]; score: number; matchedIndexEntry: string | null }> = [];
 
