@@ -500,9 +500,13 @@ export function resolveParakhCoursePaperContext(input: {
   if (candidates.length > 1 && candidates[0].score === candidates[1].score) return null;
   const winner = candidates[0];
   const index = getPaperIndex(winner.paper);
+  // Never guess the first section for a paper that explicitly contains multiple
+  // sections (e.g. Taxation = Income-tax + GST, Paper 6 = FM + SM).
+  // Keep the section unresolved until the message identifies one unambiguously.
+  const singleSectionFallback = winner.paper.sections.length === 1 ? winner.paper.sections[0] : null;
   const resolvedSection = winner.matchedIndexEntry
-    ? index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section || winner.matchedSection || winner.paper.sections[0] || null
-    : winner.matchedSection || winner.paper.sections[0] || null;
+    ? index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section || winner.matchedSection || singleSectionFallback
+    : winner.matchedSection || singleSectionFallback;
   const paper6SectionB = winner.paper.code === 'INT-G2-P6' && resolvedSection === 'Section B: Strategic Management';
   const paper6SectionA = winner.paper.code === 'INT-G2-P6' && resolvedSection === 'Section A: Financial Management';
   const intermediateCostPaper = winner.paper.code === 'INT-G2-P4';
