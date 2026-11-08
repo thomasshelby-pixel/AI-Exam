@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialGreetingReply, buildTopicIntentClarification, buildTopicIntentOptions, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
 import { parseStudyPlannerRequest } from '../services/studyPlannerEngine.js';
 
 test('detects Hinglish, Hindi script, and English independently', () => {
@@ -116,4 +116,25 @@ test('chapter assessment prompts, completion replies and options preserve the de
   assert.deepEqual(buildPlanScopeOptions('hindi'), ['सिर्फ एक दिन का revision plan', 'Exam तक roadmap + weekly timetable']);
   assert.match(buildIntermediateSMClarification('english'), /^I understand/);
   assert.match(buildIntermediateSMClarification('hinglish'), /samajh gaya bhai/);
+});
+
+
+test('recognises ordinary greetings and greeting nudges without swallowing real study questions', () => {
+  assert.equal(isSocialGreeting('hello'), true);
+  assert.equal(isSocialGreeting('Hello bhai!'), true);
+  assert.equal(isSocialGreeting('hello nahi bolo ge kya?'), true);
+  assert.equal(isSocialGreeting('Good morning'), true);
+  assert.equal(isSocialGreeting('Hello, explain marginal costing'), false);
+  assert.match(buildSocialGreetingReply('hinglish'), /Arre hello bhai/);
+});
+
+test('a short subject-plus-me message is treated as Hinglish', () => {
+  assert.equal(detectStudyReplyLanguage('FM me'), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('How can you explain this to me?'), 'english');
+});
+
+test('bare subject clarification gives useful choices in the student language', () => {
+  assert.match(buildTopicIntentClarification('hinglish', 'FM'), /FM samajh gaya bhai/);
+  assert.match(buildTopicIntentClarification('english', 'FM'), /concept explanation/);
+  assert.deepEqual(buildTopicIntentOptions('hinglish', 'FM'), ['FM concept samjhao', 'FM revision strategy', 'FM study plan']);
 });
