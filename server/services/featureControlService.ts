@@ -250,6 +250,14 @@ export function initFeatureFlagsTable(customDb?: any): void {
       msg: "Performance Analysis is coming soon. We're working on chapter-wise performance analytics and statutory syllabus coverage matrices.",
       order: 4,
     },
+    {
+      key: 'checker_ai_planner',
+      name: 'AI Planner',
+      description: 'AI-powered CA student study planning and revision schedules (limited testing).',
+      status: 'TESTING' as FeatureStatus,
+      msg: 'AI Planner is currently available only to student accounts added by the Super Admin for testing.',
+      order: 5,
+    },
   ];
 
   for (const feat of defaultCheckerFeatures) {
