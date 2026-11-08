@@ -433,9 +433,9 @@ test('student-facing quality notices disclose primary-source, coverage and incom
     factualAccuracyCertified: false as const,
   };
   assert.match(buildParakhQualityNotice({ ...base, status: 'NEEDS_PRIMARY_SOURCE' }, 'hinglish'), /recognised official primary-source domain/i);
-  assert.match(buildParakhQualityNotice({ ...base, status: 'NEEDS_HUMAN_REVIEW' }, 'english'), /verified subject-specific reference/i);
-  assert.match(buildParakhQualityNotice({ ...base, status: 'INCOMPLETE' }, 'hindi'), /complete worked answer/i);
-  assert.equal(buildParakhQualityNotice({ ...base, status: 'STRUCTURE_READY' }, 'english'), '');
+  assert.match(buildParakhQualityNotice({ ...base, requiresPrimarySource: false, status: 'NEEDS_HUMAN_REVIEW' }, 'english'), /verified subject-specific reference/i);
+  assert.match(buildParakhQualityNotice({ ...base, requiresPrimarySource: false, status: 'INCOMPLETE' }, 'hindi'), /complete worked answer/i);
+  assert.equal(buildParakhQualityNotice({ ...base, requiresPrimarySource: false, status: 'STRUCTURE_READY' }, 'english'), '');
 });
 
 
