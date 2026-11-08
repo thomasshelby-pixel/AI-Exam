@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
-import { LEGAL_TERMS_ADDENDUM, LEGAL_PRIVACY_ADDENDUM } from './legalConstants.js';
+import { LEGAL_TERMS_ADDENDUM, LEGAL_PRIVACY_ADDENDUM, LEGAL_PRIVACY_MODEL_IMPROVEMENT_ADDENDUM } from './legalConstants.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export const CURRENT_TERMS_VERSION = '2.0';
-export const CURRENT_PRIVACY_VERSION = '2.0';
+export const CURRENT_PRIVACY_VERSION = '3.0';
 export const CURRENT_TERMS_UPDATED_ON = '27 October 2026';
-export const CURRENT_PRIVACY_UPDATED_ON = '27 October 2026';
+export const CURRENT_PRIVACY_UPDATED_ON = '08 November 2026';
 
 export type LegalConsentDocType = 'TERMS' | 'PRIVACY';
 
@@ -48,7 +48,9 @@ export function ensureCurrentLegalDocuments(): void {
       updatedOn: CURRENT_PRIVACY_UPDATED_ON,
       marker: '16. SECURITY, ABUSE PREVENTION AND ACCOUNT REVIEW',
       amendment: LEGAL_PRIVACY_ADDENDUM,
-      changelog: 'Disclosure of account/security data used to prevent and investigate suspected free or paid facility abuse.',
+      additionalMarker: '17. AI EVALUATION QUALITY, RESEARCH AND SYSTEM IMPROVEMENT',
+      additionalAmendment: LEGAL_PRIVACY_MODEL_IMPROVEMENT_ADDENDUM,
+      changelog: 'Disclosure of account/security data processing and AI evaluation system development and improvement purposes.',
     },
   ];
 
@@ -63,15 +65,19 @@ export function ensureCurrentLegalDocuments(): void {
 
     const content = String(current.content || '');
     const hasAmendment = content.includes(item.marker);
+    const hasAdditionalAmendment = !('additionalMarker' in item) || content.includes(String((item as any).additionalMarker));
     const existingVersion = Number.parseFloat(String(current.version || '0'));
     const targetVersion = Number.isFinite(existingVersion) && existingVersion > Number.parseFloat(item.version)
       ? String(current.version)
       : item.version;
 
-    if (hasAmendment && String(current.version) === targetVersion &&
+    if (hasAmendment && hasAdditionalAmendment && String(current.version) === targetVersion &&
         String(current.last_updated_date || '') === item.updatedOn) continue;
 
-    const updatedContent = hasAmendment ? content : `${content.trim()}\n\n${item.amendment}\n`;
+    const additions: string[] = [];
+    if (!hasAmendment) additions.push(item.amendment);
+    if (!hasAdditionalAmendment && 'additionalAmendment' in item) additions.push(String((item as any).additionalAmendment));
+    const updatedContent = additions.length ? `${content.trim()}\n\n${additions.join('\n\n')}\n` : content;
     const oldChangelog = String(current.changelog || '').trim();
     const changelog = oldChangelog.includes(item.changelog)
       ? oldChangelog
@@ -115,9 +121,9 @@ export function getLegalConsentStatus(userId: string, role: string = 'STUDENT'):
 
   const privacy = db.prepare(`
     SELECT 1 FROM legal_acknowledgements
-    WHERE user_id = ? AND UPPER(doc_type) = 'PRIVACY' AND version = ?
+    WHERE user_id = ? AND UPPER(doc_type) = 'PRIVACY' AND version IN (?, ?)
     LIMIT 1
-  `).get(userId, CURRENT_PRIVACY_VERSION);
+  `).get(userId, '2.0', CURRENT_PRIVACY_VERSION);
 
   const termsAccepted = Boolean(terms);
   const privacyAccepted = Boolean(privacy);
