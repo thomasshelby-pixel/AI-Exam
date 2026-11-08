@@ -716,9 +716,15 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Keep CA Final schedule generation gated, but allow greetings and ordinary study conversation above.
+    const explicitPlan = isExplicitStudyPlanRequest(message)
+      || /\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
+
+    // CA Final is gated only for structured plan creation; ordinary conversation and study guidance remain open.
     const courseUnderDevelopmentReply = getCourseUnderDevelopmentReply(course);
-    if (courseUnderDevelopmentReply) {
+    const requestsStructuredPlan = explicitPlan
+      || parsedProbe.intent === 'create_study_plan'
+      || /\b(?:study plan|timetable|schedule|roadmap|daily routine)\b/i.test(message);
+    if (courseUnderDevelopmentReply && requestsStructuredPlan) {
       return res.json({
         success: true,
         status: 'course_under_development',
@@ -733,8 +739,6 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       });
     }
 
-    const explicitPlan = isExplicitStudyPlanRequest(message)
-      || /\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     const priorScopeQuestion = history.some((item) => /choose.*(?:one day|daily|weekly)|what type of plan|which plan would you like|one-day revision plan|exam roadmap.*weekly timetable|sirf ek din|daily\/weekly/i.test(item));
     const oneDayChoice = isOneDayPlanChoice(message);
     const multiDayChoice = isMultiDayPlanChoice(message);
