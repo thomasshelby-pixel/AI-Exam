@@ -7,6 +7,7 @@ PARAKH is the working name for CA Exam Checker's evaluation-learning data pipeli
 - Students may optionally opt in when they submit an answer sheet.
 - A missing or unchecked consent value means **no PARAKH learning record is created**.
 - An opt-in creates a metadata-only pointer to the existing evaluation. It does not duplicate the answer sheet, checked copy, report, or student identity details into a training dataset.
+- A student can withdraw all earlier PARAKH opt-ins from the answer-sheet upload screen. Withdrawn references are excluded from future learning eligibility; existing evaluations, marks, reports, and credits are unchanged.
 - A record remains `AWAITING_ADMIN_REVIEW` until an administrator completes the existing review-and-finalize workflow.
 - Only then can the pointer become `VERIFIED_CANDIDATE`.
 - V1 AI output and admin-finalized V2 results remain distinct in the existing evaluation-version system. Unreviewed AI output is never treated as ground truth.
