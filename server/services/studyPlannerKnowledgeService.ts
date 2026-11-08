@@ -254,6 +254,39 @@ const TOPICS: KnowledgeTopic[] = [
     },
   },
   {
+    id: 'intermediate-fm-ratio-analysis',
+    title: 'Financial Management: Ratio Analysis',
+    subjects: ['Financial Management and Strategic Management'],
+    keywords: [
+      'ratio analysis', 'financial ratio', 'financial ratios', 'ratio', 'ratios',
+      'ratio chapter', 'ratio wala', 'ratio waala', 'liquidity ratio', 'liquidity ratios',
+      'solvency ratio', 'solvency ratios', 'profitability ratio', 'profitability ratios',
+      'current ratio', 'quick ratio', 'debt equity ratio', 'debt-equity ratio',
+      'interest coverage ratio', 'gross profit ratio', 'net profit ratio', 'operating ratio',
+      'return on capital employed', 'roce',
+    ],
+    answers: {
+      english: 'Ratio Analysis is simply a way to compare related numbers in financial statements. It helps us ask three broad questions: can the business meet short-term obligations (liquidity), is its long-term debt position manageable (solvency), and is it generating profit effectively (profitability)? Start with three groups: liquidity ratios such as Current Ratio and Quick Ratio; solvency ratios such as Debt-Equity and Interest Coverage; and profitability ratios such as Gross Profit Ratio, Net Profit Ratio and ROCE. For every question, follow the same steps: identify the ratio asked, pick the correct figures from the statements, apply the formula, calculate carefully, and explain what the result indicates. Never interpret a ratio in isolation; use the period, business context and comparisons supplied in the question.',
+      hinglish: 'Bhai, Ratio Analysis ka simple matlab hai financial statements ke related numbers ka comparison. Isse 3 broad cheezein samajhte hain: business short-term bills pay kar paayega ya nahi (liquidity), long-term debt manageable hai ya nahi (solvency), aur profit kitne effectively kama raha hai (profitability). Is chapter ko 3 groups mein dekh: Liquidity—Current Ratio aur Quick Ratio; Solvency—Debt-Equity aur Interest Coverage; Profitability—Gross Profit Ratio, Net Profit Ratio aur ROCE. Har sum mein same steps follow kar: pehle ratio identify kar, statements se sahi figures pick kar, formula apply kar, calculation kar aur result ka meaning likh. Ratio ko akela dekhkar conclusion mat nikalna; question ka context aur comparison bhi dekhna.',
+      hindi: 'Ratio Analysis का सरल अर्थ है financial statements के आपस में जुड़े numbers की तुलना करना। इससे तीन बातें समझते हैं: क्या business short-term देनदारियाँ चुका सकता है (liquidity), क्या उसका long-term debt manageable है (solvency), और क्या वह प्रभावी तरीके से profit कमा रहा है (profitability)? इसे तीन समूहों में बाँटें: Liquidity—Current Ratio और Quick Ratio; Solvency—Debt-Equity और Interest Coverage; Profitability—Gross Profit Ratio, Net Profit Ratio और ROCE। हर question में ratio पहचानें, statements से सही figures लें, formula लगाएँ, calculation करें और result का अर्थ लिखें। किसी ratio का अर्थ अकेले न निकालें; question का context और comparison भी देखें।',
+    },
+    example: {
+      english: 'Start with Current Ratio: Current Assets divided by Current Liabilities. Suppose Current Assets are ₹2,00,000 and Current Liabilities are ₹1,00,000. The ratio is 2:1. In plain language, the business has ₹2 of current assets for every ₹1 of current liabilities. This is a basic illustration; a final interpretation still depends on the quality and timing of those assets and liabilities.',
+      hinglish: 'Sabse basic example Current Ratio ka: Current Assets ÷ Current Liabilities. Maan le Current Assets ₹2,00,000 hain aur Current Liabilities ₹1,00,000. Ratio = 2:1. Simple meaning: har ₹1 current liability ke against ₹2 current assets hain. Ye sirf calculation ka example hai; final interpretation assets ki quality, timing aur business context par depend karega.',
+      hindi: 'सबसे सरल उदाहरण Current Ratio का है: Current Assets ÷ Current Liabilities। मान लें Current Assets ₹2,00,000 और Current Liabilities ₹1,00,000 हैं। Ratio 2:1 होगा। सरल अर्थ: हर ₹1 current liability के सामने ₹2 current assets हैं। यह केवल calculation का उदाहरण है; अंतिम interpretation assets की quality, timing और business context पर निर्भर करेगा।',
+    },
+    simpler: {
+      english: 'Think of a ratio as a relationship between two numbers. Current Ratio, for example, compares current assets with current liabilities. If assets are ₹2 lakh and liabilities are ₹1 lakh, the ratio is 2:1. So the chapter is not random formulas: each ratio answers a business question. First learn what the ratio measures, then learn its formula.',
+      hinglish: 'Bhai, ratio ko do numbers ke beech ka relationship samajh. Example: Current Ratio, Current Assets ko Current Liabilities se compare karta hai. Assets ₹2 lakh aur liabilities ₹1 lakh hain toh ratio 2:1. Matlab ye chapter random formulas ka nahi hai—har ratio ek business question ka answer deta hai. Pehle samajh ki ratio measure kya karta hai, phir formula yaad kar.',
+      hindi: 'Ratio को दो numbers के बीच का संबंध समझें। उदाहरण के लिए Current Ratio, Current Assets की तुलना Current Liabilities से करता है। Assets ₹2 लाख और liabilities ₹1 लाख हों तो ratio 2:1 होगा। यह chapter केवल formulas याद करने का नहीं है—हर ratio एक business question का उत्तर देता है। पहले समझें कि ratio क्या मापता है, फिर उसका formula सीखें।',
+    },
+    quiz: {
+      english: 'Quick check: if Current Assets are ₹1,50,000 and Current Liabilities are ₹75,000, what is the Current Ratio? Write the formula first, then calculate. After answering, explain in one sentence what the result compares.',
+      hinglish: 'Chhota check: agar Current Assets ₹1,50,000 hain aur Current Liabilities ₹75,000 hain, toh Current Ratio kitna hoga? Pehle formula likh, phir calculate kar. Answer ke baad ek line mein bata ki ye ratio kin do cheezon ko compare karta hai.',
+      hindi: 'छोटी जाँच: यदि Current Assets ₹1,50,000 और Current Liabilities ₹75,000 हैं, तो Current Ratio कितना होगा? पहले formula लिखें, फिर calculation करें। उत्तर के बाद एक वाक्य में बताएँ कि यह ratio किन दो चीजों की तुलना करता है।',
+    },
+  },
+  {
     id: 'intermediate-fm-sm-strategy', title: 'Intermediate FM and SM study strategy', subjects: ['Financial Management and Strategic Management'],
     keywords: ['financial management and strategic management','financial management','strategic management','cost of capital','capital structure','working capital','investment decisions','dividend decisions','strategic intent','strategy implementation','business strategy','fm','sm','fm-sm'],
     answers: {
@@ -292,6 +325,7 @@ function terms(value: string): string[] {
 function getMode(message: string): 'example' | 'simpler' | 'quiz' | 'answer' {
   const text = normalize(message);
   if (/\b(example|example do|udaharan|udharan|misal)\b/.test(text)) return 'example';
+  if (/\b(?:mujhe|mujhko|mujhse)\b.*\b(?:nahi|nahin|nhi)\s+(?:aata|ata|samajh)\b|\b(?:i don['’]?t know|i can['’]?t understand|not getting|struggling with|hard to understand)\b|\b(?:samajh nahi|samajh nhi)\b/.test(text)) return 'simpler';
   if (/\b(simple|simpler|easy|easier|samajh nahi|samajh nhi|aasaan|asan|basic|again|dobara)\b/.test(text)) return 'simpler';
   if (/\b(quiz|test me|ask me|practice question|self test|question pucho)\b/.test(text)) return 'quiz';
   return 'answer';
@@ -303,8 +337,11 @@ function isTopicHistoryEntry(entry: string): boolean {
 }
 
 function isFollowUpMessage(message: string): boolean {
+  const normalized = normalize(message);
+  const contextualConceptChoice = /^(?:explain|teach|show me|walk me through)\s+(?:(?:a|an|the|this|that)\s+)?(?:(?:fm|financial management|sm|strategic management)\s+)?(?:concept|topic|chapter)\b/i.test(normalized);
   return getMode(message) !== 'answer'
-    || /^(and|also|then|more|continue|next|aur|phir|example|samjha|samajh nahi aaya|short mein|again|tell me more|explain more|more details)\b/i.test(normalize(message));
+    || contextualConceptChoice
+    || /^(and|also|then|more|continue|next|aur|phir|example|samjha|samajh nahi aaya|short mein|again|tell me more|explain more|more details)\b/i.test(normalized);
 }
 
 export function isStudyKnowledgeFollowUp(message: string, history: string[] = []): boolean {
