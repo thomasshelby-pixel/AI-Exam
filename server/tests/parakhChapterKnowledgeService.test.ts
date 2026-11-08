@@ -53,7 +53,8 @@ test('supports simpler explanations and keeps the chapter source visible in the 
   const result = searchParakhChapterKnowledge({ ...base, message: 'Explain ratio analysis in simple words' });
   assert.equal(result?.mode, 'simpler');
   const reply = buildParakhChapterKnowledgeReply(result!, 'hinglish');
-  assert.match(reply, /original learning explanation/i);
+  assert.match(reply, /original authored draft/i);
+  assert.match(reply, /not yet been independently reviewed/i);
   assert.match(reply, /exact attempt/i);
   assert.equal(result?.source.publisher, 'Institute of Chartered Accountants of India');
   assert.match(result?.source.url || '', /icai\.org\/post\/sm-inter-p6a-may2026/);
@@ -146,7 +147,8 @@ test('provides language-specific simpler explanations and quizzes for chapter pa
   assert.match(simple?.answer || '', /कीमत/);
   assert.equal(quiz?.mode, 'quiz');
   assert.match(quiz?.answer || '', /EBIT/);
-  assert.match(buildParakhChapterKnowledgeReply(quiz!, 'hinglish'), /original learning explanation/i);
+  assert.match(buildParakhChapterKnowledgeReply(quiz!, 'hinglish'), /authored draft/i);
+  assert.match(buildParakhChapterKnowledgeReply(quiz!, 'hinglish'), /independently verify nahi kiya/i);
 });
 
 test('matches Hindi-script and Hinglish aliases for core FM topics', () => {
