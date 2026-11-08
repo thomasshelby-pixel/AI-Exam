@@ -138,6 +138,13 @@ test('calculates original chapter examples for cost of capital, leverage, invest
   assert.match(npv?.answer || '', /4,132\.23/);
   assert.match(dividend?.answer || '', /30%/);
   assert.match(workingCapital?.answer || '', /75 days/);
+  assert.match(workingCapital?.answer || '', /net operating cycle.*cash conversion cycle/i);
+});
+
+test('routes a singular investment-decision request to Chapter 7', () => {
+  const result = searchParakhChapterKnowledge({ ...base, message: 'Explain investment decision' });
+  assert.equal(result?.chapterNumber, 7);
+  assert.match(result?.answer || '', /incremental cash flows/i);
 });
 
 test('provides language-specific simpler explanations and quizzes for chapter packs', () => {
