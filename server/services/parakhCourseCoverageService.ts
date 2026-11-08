@@ -293,19 +293,36 @@ export function resolveParakhCoursePaperContext(input: {
     ? [...getParakhCurriculumPapers('CA_FINAL'), ...getParakhCurriculumPapers('SPOM')]
     : getParakhCurriculumPapers(course);
   const suppliedSubjects = (input.subjects || []).join(' ');
-  const candidates: Array<{ paper: ReturnType<typeof getParakhCurriculumPapers>[number]; score: number; matchedIndexEntry: string | null }> = [];
+  const candidates: Array<{
+    paper: ReturnType<typeof getParakhCurriculumPapers>[number];
+    score: number;
+    matchedIndexEntry: string | null;
+    matchedSection: string | null;
+  }> = [];
 
   for (const paper of curriculum) {
-    const aliases = [paper.title, ...(PAPER_ALIASES[paper.code] || []), ...paper.sections];
+    const sectionTitles = paper.sections.map((section) => section.replace(/^Section [A-Z]:\\s*/i, '').trim());
+    const aliases = [paper.title, ...(PAPER_ALIASES[paper.code] || []), ...paper.sections, ...sectionTitles];
     const matchedAliases = aliases.filter((alias) => containsPhrase(message, alias) || containsPhrase(suppliedSubjects, alias));
     const index = getPaperIndex(paper);
     const matchedEntries = index.entries.filter((entry) =>
       containsPhrase(message, entry.title) || containsPhrase(suppliedSubjects, entry.title),
     );
+    const matchedSections = paper.sections.filter((section) => {
+      const title = section.replace(/^Section [A-Z]:\\s*/i, '').trim();
+      return containsPhrase(message, title) || containsPhrase(suppliedSubjects, title);
+    });
     if (!matchedAliases.length && !matchedEntries.length) continue;
     const longestAlias = matchedAliases.reduce((max, alias) => Math.max(max, normalize(alias).length), 0);
-    const score = longestAlias * 2 + matchedEntries.reduce((sum, entry) => sum + normalize(entry.title).length, 0);
-    candidates.push({ paper, score, matchedIndexEntry: matchedEntries.length === 1 ? matchedEntries[0].title : null });
+    const score = longestAlias * 2
+      + matchedEntries.reduce((sum, entry) => sum + normalize(entry.title).length, 0)
+      + matchedSections.reduce((sum, section) => sum + normalize(section).length * 2, 0);
+    candidates.push({
+      paper,
+      score,
+      matchedIndexEntry: matchedEntries.length === 1 ? matchedEntries[0].title : null,
+      matchedSection: matchedSections.length === 1 ? matchedSections[0] : null,
+    });
   }
 
   if (!candidates.length) return null;
@@ -319,8 +336,8 @@ export function resolveParakhCoursePaperContext(input: {
     paperTitle: winner.paper.title,
     group: winner.paper.group,
     section: winner.matchedIndexEntry
-      ? index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section || winner.paper.sections[0] || null
-      : winner.paper.sections[0] || null,
+      ? index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section || winner.matchedSection || winner.paper.sections[0] || null
+      : winner.matchedSection || winner.paper.sections[0] || null,
     matchedIndexEntry: winner.matchedIndexEntry,
     mappingStatus: index.mappingStatus,
     indexKind: index.indexKind,
