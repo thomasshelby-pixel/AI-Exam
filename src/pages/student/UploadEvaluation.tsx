@@ -169,6 +169,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
   );
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
+  const [parakhExclusionLoading, setParakhExclusionLoading] = useState<boolean>(false);
+  const [parakhExclusionMessage, setParakhExclusionMessage] = useState<string>('');
 
   // File upload states
   const [file, setFile] = useState<File | null>(null);
@@ -723,6 +725,31 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const handleDisclaimerAcknowledged = async () => {
     setShowDisclaimerModal(false);
     await handleStartEvaluation();
+  };
+
+  const handleExcludeParakhObservations = async () => {
+    const confirmed = window.confirm(
+      'Exclude your previous and future submissions from PARAKH quality analysis? This will not change your evaluation history, marks, reports, or credits.'
+    );
+    if (!confirmed) return;
+
+    try {
+      setParakhExclusionLoading(true);
+      setParakhExclusionMessage('');
+      const response = await apiRequest<{ success: boolean; excludedCount: number; message: string }>(
+        '/api/student/parakh-learning/exclude-previous',
+        { method: 'POST', body: JSON.stringify({}) },
+      );
+      setParakhExclusionMessage(
+        response.message || `Excluded ${response.excludedCount || 0} previous PARAKH observation(s). Future observations are also paused for this account.`
+      );
+    } catch (exclusionError: unknown) {
+      setParakhExclusionMessage(
+        exclusionError instanceof Error ? exclusionError.message : 'Could not save the PARAKH exclusion request. Please try again.'
+      );
+    } finally {
+      setParakhExclusionLoading(false);
+    }
   };
 
   // Submit evaluation
@@ -1775,6 +1802,34 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 >
                   View Guidelines →
                 </button>
+              </div>
+
+              {/* Privacy-policy disclosure for PARAKH learning observations */}
+              <div className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-slate-700 dark:text-slate-300" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-slate-900 dark:text-white">Evaluation quality improvement</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                      Submitted answer sheets, evaluation results, marks, question mapping and feedback may be used to assess and improve our evaluation systems as described in the <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="font-semibold underline">Privacy Policy</a>. Automated model training is currently OFF.
+                    </p>
+                  </div>
+                </div>
+                <div className="pl-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExcludeParakhObservations}
+                    disabled={parakhExclusionLoading || evalStep !== 'IDLE'}
+                    className="text-left text-[10px] font-bold text-slate-700 hover:text-slate-950 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:text-white"
+                  >
+                    {parakhExclusionLoading ? 'Saving exclusion…' : 'Exclude my previous and future uploads'}
+                  </button>
+                  {parakhExclusionMessage && (
+                    <span role="status" className="text-[10px] leading-relaxed text-slate-600 dark:text-slate-300">
+                      {parakhExclusionMessage}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Action CTA Button */}
