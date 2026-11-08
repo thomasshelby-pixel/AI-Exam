@@ -17,6 +17,7 @@ export interface ChunkEvaluationContext {
   checkingMode: 'standard' | 'strict' | 'lenient';
   level: string;
   subjectName: string;
+  subjectKey?: string;
   /** Exact immutable source metadata for question-wise reference locking. */
   referenceMetadata?: QuestionReferenceLockMetadata;
   /** Issues identified by the supervisor; when present, the model must re-check this question. */
@@ -318,7 +319,7 @@ export function buildChunkReferenceSourceInstructions(
 export async function evaluateQuestionChunk(
   ctx: ChunkEvaluationContext
 ): Promise<QuestionEvaluation> {
-  const { subQuestion, mapping, fullPdfBuffer, checkingMode, level, subjectName } = ctx;
+  const { subQuestion, mapping, fullPdfBuffer, checkingMode, level, subjectName, subjectKey } = ctx;
   const maxMarks = subQuestion.maximumMarks; // IMMUTABLE
   const qNum = subQuestion.questionNumber;
   const subQ = subQuestion.subQuestionNumber;
@@ -565,6 +566,7 @@ Return strictly valid JSON with this schema:
       context: {
         level,
         subjectName,
+        subjectKey,
         checkingMode,
         pageCount: mapping.pages.length,
       },
