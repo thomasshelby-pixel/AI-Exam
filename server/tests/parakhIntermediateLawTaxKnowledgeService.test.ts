@@ -27,6 +27,7 @@ test('routes representative Company Law, Other Laws, Income-tax and GST concepts
     ['Explain incorporation of company', 2, 'INT-G1-P2', 'Part I: Company Law and Limited Liability Partnership Law'],
     ['Explain prospectus and allotment of securities', 3, 'INT-G1-P2', 'Part I: Company Law and Limited Liability Partnership Law'],
     ['Explain FEMA capital account transaction', 3, 'INT-G1-P2', 'Part II: Other Laws'],
+    ['Explain FEMA current account transaction', 3, 'INT-G1-P2', 'Part II: Other Laws'],
     ['Explain residential status and scope of total income', 2, 'INT-G1-P3', 'Section A: Income-tax Law'],
     ['Explain income from house property', 3, 'INT-G1-P3', 'Section A: Income-tax Law'],
     ['Explain income of other persons included in total income', 4, 'INT-G1-P3', 'Section A: Income-tax Law'],
