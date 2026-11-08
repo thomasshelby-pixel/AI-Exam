@@ -373,6 +373,11 @@ function scoreTopic(topic: KnowledgeTopic, queryTerms: string[]): number {
   return score;
 }
 
+/** Subject names represented in the authored study-guidance bank. This is not a claim of full syllabus coverage. */
+export function getStudyKnowledgeSubjectInventory(): string[] {
+  return Array.from(new Set(TOPICS.flatMap((topic) => topic.subjects))).sort((a, b) => a.localeCompare(b));
+}
+
 export interface StudyKnowledgeResult {
   topicId: string;
   topicTitle: string;
