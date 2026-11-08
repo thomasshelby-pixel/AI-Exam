@@ -136,7 +136,7 @@ test('a short subject-plus-me message is treated as Hinglish', () => {
 test('bare subject clarification gives useful choices in the student language', () => {
   assert.match(buildTopicIntentClarification('hinglish', 'FM'), /FM samajh gaya bhai/);
   assert.match(buildTopicIntentClarification('english', 'FM'), /concept explanation/);
-  assert.deepEqual(buildTopicIntentOptions('hinglish', 'FM'), ['FM concept samjhao', 'FM revision strategy', 'FM study plan']);
+  assert.deepEqual(buildTopicIntentOptions('hinglish', 'FM'), ['FM ka concept samjhao', 'FM ki revision strategy batao', 'FM ka study plan banao']);
 });
 
 
