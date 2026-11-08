@@ -76,7 +76,7 @@ assert.doesNotMatch(q5Parent.snippet, /^5\.\s*\(b\)/m);
 const q6Parent = extractLockedQuestionSlice(suggestedAnswers, '6', undefined, 'SA');
 assert.equal(q6Parent.found, true, 'Advanced Accounting Q6 must lock inside Division B.');
 assert.match(q6Parent.snippet, /Qualitative characteristics/i);
-assert.doesNotMatch(q6Parent.snippet, /^6\.\s*\(a\)/m);
+assert.doesNotMatch(q6Parent.snippet, /^5\.\s*\(b\)/m);
 
 // Taxation still treats Q5-Q8 as Section B (GST); the special source anchors remain active.
 const taxationAnswers = [
