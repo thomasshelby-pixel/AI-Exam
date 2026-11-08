@@ -325,7 +325,7 @@ function terms(value: string): string[] {
 function getMode(message: string): 'example' | 'simpler' | 'quiz' | 'answer' {
   const text = normalize(message);
   if (/\b(example|example do|udaharan|udharan|misal)\b/.test(text)) return 'example';
-  if (/\b(?:mujhe|mujhko|mujhse)\b.*\b(?:nahi|nahin|nhi)\s+(?:aata|ata|samajh)\b|\b(?:i don['’]?t know|i can['’]?t understand|not getting|struggling with|hard to understand)\b|\b(?:samajh nahi|samajh nhi)\b/.test(text)) return 'simpler';
+  if (/\b(?:mujhe|mujhko|mujhse)\b.*\b(?:nahi|nahin|nhi)\s+(?:aata|ata|samajh)\b|\bsamajh\s+(?:nahi|nahin|nhi)\s+(?:aa\s+)?(?:raha|rahi|aata|ata)\b|\b(?:i don['’]?t know|i can['’]?t understand|not getting|struggling with|hard to understand)\b|\b(?:samajh nahi|samajh nhi)\b/.test(text)) return 'simpler';
   if (/\b(simple|simpler|easy|easier|samajh nahi|samajh nhi|aasaan|asan|basic|again|dobara)\b/.test(text)) return 'simpler';
   if (/\b(quiz|test me|ask me|practice question|self test|question pucho)\b/.test(text)) return 'quiz';
   return 'answer';
