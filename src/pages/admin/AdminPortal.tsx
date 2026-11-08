@@ -17,6 +17,7 @@ import { AdminReviewsSection } from '../../components/admin/AdminReviewsSection.
 import { AdminPricingSection } from './AdminPricingSection.js';
 import { AdminRecheckRequestsSection } from './AdminRecheckRequestsSection.js';
 import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
+import { AdminParakhLearningSection } from './AdminParakhLearningSection.js';
 import { AdminMfaRecoveryRequestsSection } from '../../components/admin/AdminMfaRecoveryRequestsSection.js';
 import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureControlSection.js';
 import { AdminNotificationCentre } from '../../components/admin/AdminNotificationCentre.js';
@@ -405,6 +406,7 @@ export const AdminPortal: React.FC = () => {
       setErrorMsg('');
 
       switch (activeSection) {
+        case 'parakh-learning':
         case 'reviews':
         case 'materials':
         case 'faculty-mocks':
@@ -1434,6 +1436,7 @@ export const AdminPortal: React.FC = () => {
     { id: 'faculty-mocks', label: 'Faculty Mock Evaluation', icon: FileCheck2 },
     { id: 'rules', label: 'Evaluation Controls', icon: ShieldCheck },
     { id: 'ai-models', label: 'AI Models & Fallbacks', icon: Brain },
+    { id: 'parakh-learning', label: 'PARAKH Learning Engine', icon: Brain },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'students', label: 'Students', icon: GraduationCap },
     { id: 'institutes', label: 'Institutes', icon: Building2 },
@@ -1918,6 +1921,9 @@ export const AdminPortal: React.FC = () => {
                   }}
                 />
               )}
+
+              {/* PARAKH POLICY-DISCLOSED LEARNING OBSERVATIONS */}
+              {activeSection === 'parakh-learning' && <AdminParakhLearningSection />}
 
               {/* LEGAL & REGULATORY POLICIES MANAGEMENT */}
               {activeSection === 'legal' && (
