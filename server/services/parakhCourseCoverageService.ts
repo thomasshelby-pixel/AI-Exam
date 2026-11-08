@@ -369,8 +369,12 @@ export function getParakhCourseCoverageInventory(): {
     const authoredChapterCount = indexEntries.filter((entry) => entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length;
     // Every authored chapter currently has five distinct benchmark prompts.
     const benchmarkPromptCount = index.entries.filter((entry) => entry.benchmarked).length * 5;
-    const sourceUrl = paper.code === 'INT-G1-P2' ? 'https://www.icai.org/post/24331'
-      : paper.code === 'INT-G1-P3' ? 'https://www.icai.org/post/24313' : paper.sourceUrl;
+    // Paper 3 contains two separately catalogued sections (Income-tax and GST).
+    // The inventory row represents the whole paper, so link to the official
+    // Intermediate course catalogue here; student replies resolve the exact section URL.
+    const sourceUrl = paper.code === 'INT-G1-P2'
+      ? 'https://www.icai.org/post/24331'
+      : paper.sourceUrl;
     return {
       course: paper.course,
       code: paper.code,
