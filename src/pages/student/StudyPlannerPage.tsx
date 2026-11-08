@@ -168,7 +168,7 @@ export const StudyPlannerPage: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([{
     id: 1,
     role: 'assistant',
-    text: 'Hi! I’m your CA study assistant. Ask a study-related question, request an explanation or revision strategy, or ask me to build a study plan.',
+    text: 'Hi! I’m PARAKH, your CA study assistant. Ask a study-related question, request an explanation or revision strategy, or ask me to build a study plan.',
   }]);
   const nextId = useRef(2);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -536,7 +536,8 @@ export const StudyPlannerPage: React.FC = () => {
         <div className="flex items-start gap-3">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm"><Sparkles className="h-6 w-6" /></span>
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">AI Planner</h1>
+            <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.2em] text-indigo-600 dark:text-indigo-300">PARAKH · CA Learning Assistant</p>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">Study Planner</h1>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">Choose the chapters you want to revise, rate your confidence, and generate a timetable around your available hours.</p>
           </div>
         </div>
