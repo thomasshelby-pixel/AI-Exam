@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
+import {
+  assessParakhResponseQuality,
+  buildParakhSubjectCoverageReport,
+  classifyParakhQuestion,
+  evaluateParakhQualityBenchmark,
+} from '../services/parakhQualityFramework.js';
 
 test('retrieves relevant study guidance without exact wording', () => {
   const result = searchStudyKnowledge({
@@ -287,4 +293,91 @@ test('works through a credit-policy numerical and asks for discount uptake inste
 
 test('does not guess a credit-policy decision when the required problem data is absent', () => {
   assert.equal(buildCreditPolicyAnalysisReply('Should I change my credit policy?', 'english'), null);
+});
+
+
+test('quality gate marks the credit-policy numerical as partial until missing uptake is supplied', () => {
+  const question = "The current credit sales of a firm is ₹20,00,000 and the firm proposes a new credit policy of 2/15 net 60 days against 1/15 net 45 days. Sales increase by 15%, bad debts rise to 2.5% from 1.5%, contribution to sales ratio is 25%, tax is 30%, and required after-tax return is 12%. Should the firm change the credit policy?";
+  const answer = buildCreditPolicyAnalysisReply(question, 'english');
+  assert.ok(answer);
+  const assessment = assessParakhResponseQuality({
+    question,
+    answer,
+    course: 'CA_INTERMEDIATE',
+    subjects: ['Financial Management and Strategic Management'],
+    knowledgeMatched: true,
+  });
+  assert.equal(assessment.questionKind, 'numerical');
+  assert.equal(assessment.subjectDomain, 'financial_management');
+  assert.equal(assessment.status, 'PARTIAL_NEEDS_INPUT');
+  assert.equal(assessment.checks.numericalWorkings, true);
+  assert.equal(assessment.checks.assumptionsDisclosed, true);
+  assert.equal(assessment.factualAccuracyCertified, false);
+});
+
+test('current statutory questions require an authoritative primary source, not just a search result', () => {
+  const question = 'What is the latest GST rate applicable to this supply?';
+  const noSource = assessParakhResponseQuality({
+    question,
+    answer: 'The latest rate must be checked against the current official notification before applying it. Do not rely on an old summary.',
+    course: 'CA_INTERMEDIATE',
+    subjects: ['Taxation'],
+    knowledgeMatched: false,
+  });
+  assert.equal(noSource.questionKind, 'current_information');
+  assert.equal(noSource.requiresPrimarySource, true);
+  assert.equal(noSource.status, 'NEEDS_PRIMARY_SOURCE');
+
+  const withPrimarySource = assessParakhResponseQuality({
+    question,
+    answer: 'The applicable rate is stated in the official notification. Check the exact supply classification, effective date and any exemption before selecting the rate. Apply the primary notification to the facts.',
+    course: 'CA_INTERMEDIATE',
+    subjects: ['Taxation'],
+    sources: [{ title: 'CBIC notification', url: 'https://www.cbic.gov.in/notifications/example' }],
+    knowledgeMatched: true,
+  });
+  assert.equal(withPrimarySource.checks.primarySourcePresent, true);
+  assert.notEqual(withPrimarySource.status, 'NEEDS_PRIMARY_SOURCE');
+});
+
+test('subject readiness reports partial seed guidance without claiming complete CA coverage', () => {
+  const report = buildParakhSubjectCoverageReport([
+    'Accounting',
+    'Business Laws',
+    'Taxation',
+    'Auditing and Ethics',
+    'Financial Management and Strategic Management',
+  ]);
+  const accounting = report.subjectDomains.find((item) => item.domain === 'accounting');
+  const taxation = report.subjectDomains.find((item) => item.domain === 'taxation');
+  assert.equal(report.overallStatus, 'FOUNDATION_IN_PROGRESS');
+  assert.equal(accounting?.guidanceStatus, 'PARTIAL_GUIDANCE_SEEDED');
+  assert.equal(taxation?.guidanceStatus, 'PARTIAL_GUIDANCE_SEEDED');
+  assert.equal(accounting?.completeVerifiedCoverage, false);
+  assert.equal(accounting?.caFinalCurriculumMapping, 'NOT_MAPPED_IN_CURRENT_REGISTRY');
+  assert.equal(report.automaticModelTraining, false);
+  assert.equal(report.humanReviewRequiredForKnowledgeChanges, true);
+});
+
+test('benchmark harness checks required answer evidence without certifying factual accuracy', () => {
+  const result = evaluateParakhQualityBenchmark({
+    id: 'gst-current-primary-source',
+    question: 'What is the latest GST rate for this supply?',
+    course: 'CA_INTERMEDIATE',
+    expectedQuestionKind: 'current_information',
+    requiredPatterns: ['effective date', 'official notification'],
+    forbiddenPatterns: ['always 18%'],
+    requiresPrimarySource: true,
+  }, 'Check the official notification and its effective date for the exact supply classification. Do not apply an undated summary.', [
+    { title: 'CBIC notification', url: 'https://cbic.gov.in/notifications/example' },
+  ], true);
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.failedRequirements, []);
+  assert.equal(result.assessment.factualAccuracyCertified, false);
+});
+
+test('subject classifier distinguishes Financial Management and Strategic Management', () => {
+  assert.equal(classifyParakhQuestion('Explain current ratio in FM', ['Financial Management and Strategic Management']).domain, 'financial_management');
+  assert.equal(classifyParakhQuestion('Explain SWOT analysis in SM', ['Financial Management and Strategic Management']).domain, 'strategic_management');
+  assert.equal(classifyParakhQuestion('How should I prepare audit evidence?', ['Auditing and Ethics']).domain, 'auditing');
 });
