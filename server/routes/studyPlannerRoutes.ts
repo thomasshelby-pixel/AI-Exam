@@ -11,7 +11,7 @@ import { createDailyStudySchedule } from '../services/studyPlannerDailySchedule.
 import { createMultiDayStudyPlan } from '../services/studyPlannerMultiDaySchedule.js';
 import { createAttemptStudyPhases } from '../services/studyPlannerAttemptPhases.js';
 import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRounds.js';
-import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildSocialGreetingReply, buildTopicIntentClarification, detectStudyReplyLanguage, isGeneralStudyQuestion, isSocialGreeting } from '../services/studyPlannerLanguageService.js';
+import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, buildSocialConversationReply, buildTopicIntentClarification, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
@@ -762,7 +762,6 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         message: buildTopicIntentClarification(replyLanguage, subject),
         parsed: { ...parsedProbe, intent: 'clarify', subjects: parsedProbe.subjects.length ? parsedProbe.subjects : [subject], missing_info: ['type of help'], should_call_planner: false },
         plan: null,
-        follow_up_options: buildTopicIntentOptions(replyLanguage, subject),
         reply_language: replyLanguage,
         metadata: { version: 'parakh-topic-intent-v1', modelUsed: false, persistentStorage: false },
       });
