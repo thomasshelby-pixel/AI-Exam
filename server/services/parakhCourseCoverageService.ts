@@ -433,6 +433,18 @@ export function resolveParakhCoursePaperContext(input: {
     const matchedEntries = index.entries.filter((entry) =>
       matchesIndexEntry(message, entry.title) || matchesIndexEntry(suppliedSubjects, entry.title),
     );
+    const firstMessageMatch = matchedEntries
+      .map((entry) => ({
+        entry,
+        positions: getIndexEntryAliases(entry.title)
+          .map((alias) => normalize(message).indexOf(normalize(alias)))
+          .filter((position) => position >= 0),
+      }))
+      .map((match) => ({
+        ...match,
+        firstPosition: match.positions.length ? Math.min(...match.positions) : Number.POSITIVE_INFINITY,
+      }))
+      .sort((a, b) => a.firstPosition - b.firstPosition || a.entry.number - b.entry.number)[0]?.entry;
     const matchedSections = paper.sections.filter((section) => {
       const title = section.replace(/^Section [A-Z]:\\s*/i, '').trim();
       return containsPhrase(message, title) || containsPhrase(suppliedSubjects, title);
@@ -450,7 +462,7 @@ export function resolveParakhCoursePaperContext(input: {
     candidates.push({
       paper,
       score,
-      matchedIndexEntry: matchedEntries.length === 1 ? matchedEntries[0].title : null,
+      matchedIndexEntry: firstMessageMatch?.title || (matchedEntries.length === 1 ? matchedEntries[0].title : null),
       matchedSection,
     });
   }
