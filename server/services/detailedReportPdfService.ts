@@ -3,6 +3,7 @@ import { EvaluationData, toSafePdfText, safeDrawText } from './pdfCheckedCopySer
 import { deduplicateQuestionList } from './canonicalQuestionService.js';
 import { loadEvaluationRunPackage } from '../db.js';
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
+import { isEvaluationPendingReview } from './evaluationReviewState.js';
 
 function wrapText(text: string, maxChars: number = 80): string[] {
   if (!text) return [];
@@ -264,38 +265,7 @@ export function enrichMarkingComponentsWithExaminerReasoning(
  * Review status is a certification/workflow state, not an academic grade.
  * Never print PASS/FAIL as final while question mapping or consistency remains pending.
  */
-export function isEvaluationPendingReview(evalData: Partial<EvaluationData>, resultJson: any): boolean {
-  const adminDecision = String(evalData.adminReviewStatus || '').trim().toUpperCase();
-  // A completed, recorded examiner decision supersedes stale V1 validation flags.
-  if (['AFFIRMED', 'AMENDED', 'APPROVED', 'CERTIFIED'].includes(adminDecision)) {
-    return false;
-  }
-
-  const statuses = [
-    evalData.evaluationStatus,
-    evalData.adminReviewStatus,
-    evalData.validationStatus,
-    evalData.certificationStatus,
-    resultJson?.status,
-    resultJson?.validationStatus,
-    resultJson?.reviewStatus,
-    resultJson?.certificationStatus,
-    resultJson?.grade,
-  ].map((value) => String(value || '').trim().toUpperCase());
-
-  const reviewStatuses = new Set([
-    'NEEDS_REVIEW',
-    'REVIEW_REQUIRED',
-    'VERIFICATION_REQUIRED',
-    'VALIDATION_FAILED',
-  ]);
-
-  return statuses.some((status) => reviewStatuses.has(status)) ||
-    evalData.isTechnicalReviewState === true ||
-    resultJson?.isTechnicalReviewState === true ||
-    resultJson?.integrityAudit?.hardCompletionGatePassed === false ||
-    resultJson?.completionGateReport?.isPassed === false;
-}
+export { isEvaluationPendingReview } from './evaluationReviewState.js';
 
 /**
  * Generates the Detailed Evaluation & Step-Marking Report PDF.

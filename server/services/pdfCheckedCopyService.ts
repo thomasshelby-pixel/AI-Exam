@@ -9,6 +9,7 @@ import {
   parseCanonicalQuestionIdentity,
 } from './canonicalQuestionService.js';
 import { loadEvaluationRunPackage } from '../db.js';
+import { isEvaluationPendingReview } from './evaluationReviewState.js';
 import {
   CanonicalEvaluationRecord,
   RenderManifest,
@@ -28,6 +29,7 @@ export interface EvaluationData {
   checkingMode?: string;
   totalMarks?: number;
   maximumMarks?: number;
+  officialPaperMaxMarks?: number;
   percentage?: number;
   grade?: string;
   createdAt?: string;
@@ -91,6 +93,69 @@ export function toSafePdfText(input: any): string {
 
   // Strip or replace any remaining character outside standard printable ASCII + Latin-1
   return str.replace(/[^\x20-\x7E\n\xA0-\xFF]/g, ' ');
+}
+
+export interface CheckedCopyResultSummary {
+  maxMarks: number;
+  attemptedMaxMarks: number;
+  percentage: number;
+  isReviewPending: boolean;
+  resultStatus: 'NEEDS REVIEW' | 'EXEMPTION' | 'PASS' | 'FAIL';
+}
+
+/**
+ * The checked-copy denominator is the full official paper maximum, not the
+ * subtotal of questions attempted. Review-held evaluations never receive a
+ * final academic PASS/FAIL/EXEMPTION label.
+ */
+export function calculateCheckedCopyResultSummary(options: {
+  evalData: EvaluationData;
+  resultJson: any;
+  runPkg?: any;
+  totalAwarded: number;
+}): CheckedCopyResultSummary {
+  const { evalData, resultJson, runPkg, totalAwarded } = options;
+  const explicitOfficialMaximum = Number(
+    runPkg?.scoreLedger?.officialPaperMaxMarks ??
+    resultJson?.canonicalLedger?.officialPaperMaxMarks ??
+    runPkg?.questionInventory?.totalPaperMaxMarks ??
+    resultJson?.officialPaperMaxMarks ??
+    resultJson?.paperStructure?.totalPaperMaxMarks ??
+    evalData.officialPaperMaxMarks ??
+    0
+  );
+  const fallbackMaximum = Number(
+    resultJson?.maximumMarks ??
+    evalData.maximumMarks ??
+    100
+  );
+  const maxMarks = Number.isFinite(explicitOfficialMaximum) && explicitOfficialMaximum > 0
+    ? explicitOfficialMaximum
+    : Number.isFinite(fallbackMaximum) && fallbackMaximum > 0
+      ? fallbackMaximum
+      : 100;
+
+  const rawAttemptedMaximum = Number(
+    runPkg?.scoreLedger?.totalMaxMarks ??
+    resultJson?.canonicalLedger?.totalMaxMarks ??
+    resultJson?.selectedEvaluatedMaxMarks ??
+    resultJson?.attemptedMaxMarks ??
+    maxMarks
+  );
+  const attemptedMaxMarks = Number.isFinite(rawAttemptedMaximum) && rawAttemptedMaximum > 0
+    ? rawAttemptedMaximum
+    : maxMarks;
+  const percentage = maxMarks > 0 ? (Number(totalAwarded) / maxMarks) * 100 : 0;
+  const isReviewPending = isEvaluationPendingReview(evalData, resultJson);
+  const resultStatus: CheckedCopyResultSummary['resultStatus'] = isReviewPending
+    ? 'NEEDS REVIEW'
+    : percentage >= 60
+      ? 'EXEMPTION'
+      : percentage >= 40
+        ? 'PASS'
+        : 'FAIL';
+
+  return { maxMarks, attemptedMaxMarks, percentage, isReviewPending, resultStatus };
 }
 
 export function safeDrawText(page: any, text: any, options: any) {
@@ -160,6 +225,8 @@ export interface StructuredAnnotationsResult {
     totalAwarded: number;
     maxMarks: number;
     percentage: number;
+    attemptedMaxMarks: number;
+    isReviewPending: boolean;
     resultStatus: string;
   };
   renderManifest?: RenderManifest;
@@ -417,16 +484,13 @@ export function buildStructuredAnnotations(
         ? canonicalRecords.filter((r) => r.counted !== false).reduce((sum, r) => sum + (Number(r.awardedMarks) || 0), 0)
         : 0);
 
-  const maxMarks = runPkg?.scoreLedger?.totalMaxMarks
-    ?? resultJson?.canonicalLedger?.totalMaxMarks
-    ?? evalData.maximumMarks
-    ?? resultJson?.maximumMarks
-    ?? (canonicalRecords.length > 0
-        ? canonicalRecords.filter((r) => r.counted !== false).reduce((sum, r) => sum + (Number(r.maxMarks) || 0), 0)
-        : 100);
-
-  const percentage = maxMarks > 0 ? (totalAwarded / maxMarks) * 100 : 0;
-  const resultStatus = percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
+  const resultSummary = calculateCheckedCopyResultSummary({
+    evalData,
+    resultJson,
+    runPkg,
+    totalAwarded,
+  });
+  const { maxMarks, attemptedMaxMarks, percentage, isReviewPending, resultStatus } = resultSummary;
 
   // Section 8: PRE-RENDER VALIDATION GATE
   const preGate = validatePreRenderGate({
@@ -595,7 +659,9 @@ export function buildStructuredAnnotations(
     summary: {
       totalAwarded,
       maxMarks,
+      attemptedMaxMarks,
       percentage,
+      isReviewPending,
       resultStatus,
     },
     renderManifest: postGate.renderManifest,
@@ -621,13 +687,13 @@ export async function generateCheckedCopyPdf(
     ?? resultJson?.totalMarksAwarded
     ?? resultJson?.totalMarks
     ?? 0;
-  const maxMarks = runPkg?.scoreLedger?.totalMaxMarks
-    ?? resultJson?.canonicalLedger?.totalMaxMarks
-    ?? evalData.maximumMarks
-    ?? resultJson?.maximumMarks
-    ?? 100;
-  const percentage = maxMarks > 0 ? (totalAwarded / maxMarks) * 100 : 0;
-  const resultStatus = percentage >= 60 ? 'EXEMPTION' : percentage >= 40 ? 'PASS' : 'FAIL';
+  const resultSummary = calculateCheckedCopyResultSummary({
+    evalData,
+    resultJson,
+    runPkg,
+    totalAwarded,
+  });
+  const { maxMarks, percentage, resultStatus } = resultSummary;
 
   let pdfDoc: PDFDocument;
 
