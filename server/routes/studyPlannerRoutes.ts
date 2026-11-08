@@ -682,7 +682,6 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
         message: buildIntermediateSMClarification(replyLanguage),
         parsed: parsedProbe,
         plan: null,
-        follow_up_options: ['SM effective revision strategy', 'Explain an SM concept', 'SM study plan'],
         metadata: { version: 'planner-topic-clarification-v1', modelUsed: false, persistentStorage: false },
       });
     }
