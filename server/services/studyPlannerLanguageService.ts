@@ -53,7 +53,7 @@ export function buildSocialConversationReply(text: string, language: StudyReplyL
     return 'I’m doing well, thanks for asking! How are things with you? We can talk about studies or anything else on your mind.';
   }
 
-  if (/^(?:thanks|thank you|thankyou|thx|shukriya|dhanyavaad|धन्यवाद|शुक्रिया)[!. ]*$/i.test(value)) {
+  if (/^(?:thanks|thank you|thankyou|thx|shukriya|dhanyavaad|धन्यवाद|शुक्रिया)(?:\s+bhai)?[!. ]*$/i.test(value)) {
     if (language === 'hindi') return 'खुशी हुई मदद करके! जब भी कोई doubt हो या किसी topic को आगे समझना हो, यहीं से जारी रखेंगे।';
     if (language === 'hinglish') return 'Arey anytime bhai! 😄 Koi bhi doubt ho ya topic aage continue karna ho, bas message kar dena.';
     return 'You’re welcome! Whenever you want to continue or work through another question, just send it here.';
