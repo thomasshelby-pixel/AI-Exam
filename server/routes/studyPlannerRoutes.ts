@@ -20,6 +20,7 @@ import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakh
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
+import { buildParakhCourseCoverageNotice, resolveParakhCoursePaperContext } from '../services/parakhCourseCoverageService.js';
 
 const router = Router();
 const MAX_MESSAGE_LENGTH = 1200;
@@ -760,6 +761,11 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       const knowledge = chapterKnowledge
         ? null
         : searchStudyKnowledge({ message, course, history, language: replyLanguage });
+      const coursePaperContext = resolveParakhCoursePaperContext({
+        message,
+        course,
+        subjects: parsed.subjects,
+      });
       const webResearch = requestsWebResearch ? await searchParakhWebResearch(message) : null;
       const webSources = webResearch?.results || [];
       const webMessage = webSources.length
@@ -767,11 +773,15 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         : null;
       const answerSources = webSources.length
         ? webSources
-        : chapterKnowledge ? [chapterKnowledge.source] : [];
+        : chapterKnowledge ? [chapterKnowledge.source]
+          : coursePaperContext ? [{ title: 'ICAI official course and paper catalogue', url: coursePaperContext.sourceUrl }] : [];
       const guidance = buildGeneralStudyAnswer(message, parsed);
       const answer = webMessage || (chapterKnowledge
         ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
         : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
+      const courseCoverageNotice = !chapterKnowledge && !webSources.length && coursePaperContext
+        ? buildParakhCourseCoverageNotice(coursePaperContext, replyLanguage)
+        : '';
       const knowledgeMatched = Boolean(chapterKnowledge || knowledge);
       const qualityGate = assessParakhResponseQuality({
         question: message,
@@ -781,7 +791,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         sources: answerSources,
         knowledgeMatched,
       });
-      const finalAnswer = answer + buildParakhQualityNotice(qualityGate, replyLanguage);
+      const finalAnswer = answer + courseCoverageNotice + buildParakhQualityNotice(qualityGate, replyLanguage);
       return res.json({
         success: true,
         status: webSources.length ? 'web_research_answered' : knowledgeMatched ? 'knowledge_answered' : 'general_guidance_answered',
@@ -801,6 +811,20 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
             section: chapterKnowledge.section,
             chapterNumber: chapterKnowledge.chapterNumber,
             syllabusApplicability: chapterKnowledge.syllabusApplicability,
+          } : null,
+          coursePaperContext: coursePaperContext ? {
+            course: coursePaperContext.course,
+            paperCode: coursePaperContext.paperCode,
+            paperTitle: coursePaperContext.paperTitle,
+            section: coursePaperContext.section,
+            matchedIndexEntry: coursePaperContext.matchedIndexEntry,
+            mappingStatus: coursePaperContext.mappingStatus,
+            indexKind: coursePaperContext.indexKind,
+            authoredChapterCount: coursePaperContext.authoredChapterCount,
+            humanReviewedChapterCount: coursePaperContext.humanReviewedChapterCount,
+            benchmarkPromptCount: coursePaperContext.benchmarkPromptCount,
+            humanReviewedBenchmarkCount: coursePaperContext.humanReviewedBenchmarkCount,
+            sourceUrl: coursePaperContext.sourceUrl,
           } : null,
           webResearchRequested: requestsWebResearch,
           webResearchAvailable: Boolean(webSources.length),
