@@ -431,7 +431,10 @@ export function buildParakhSubjectCoverageReport(
           : 'KNOWLEDGE_GAP',
         benchmarkFamiliesRequired: [...REQUIRED_BENCHMARK_FAMILIES],
         completeVerifiedCoverage: false,
-        mappedCourses: domain.mappedCourses,
+        mappedCourses: Array.from(new Set([
+          ...domain.mappedCourses,
+          ...(finalPaperDomains.has(domain.key) ? ['CA_FINAL' as ParakhCourseLevel] : []),
+        ])),
         caFinalCurriculumMapping: finalPaperDomains.has(domain.key)
           ? 'MAPPED_NOT_BENCHMARKED'
           : 'NOT_IN_FINAL_PAPER_MAP',
