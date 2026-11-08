@@ -169,9 +169,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
   );
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
-  const [parakhLearningConsent, setParakhLearningConsent] = useState<boolean>(false);
-  const [parakhWithdrawalLoading, setParakhWithdrawalLoading] = useState<boolean>(false);
-  const [parakhWithdrawalMessage, setParakhWithdrawalMessage] = useState<string>('');
+  const [parakhExclusionLoading, setParakhWithdrawalLoading] = useState<boolean>(false);
+  const [parakhExclusionMessage, setParakhWithdrawalMessage] = useState<string>('');
 
   // File upload states
   const [file, setFile] = useState<File | null>(null);
@@ -208,7 +207,6 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     setElapsedSeconds(0);
     setFile(null);
     setFileBase64('');
-    setParakhLearningConsent(false);
     setEnrolledInstitutes([]);
     setSelectedInstituteId('');
     setInstituteMaterials([]);
@@ -729,26 +727,25 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     await handleStartEvaluation();
   };
 
-  const handleWithdrawParakhConsent = async () => {
+  const handleExcludeParakhObservations = async () => {
     const confirmed = window.confirm(
-      'Withdraw all your previous optional PARAKH learning consents? This will not change your evaluation history, marks, or credits.'
+      'Exclude your previous and future submissions from PARAKH quality analysis? This will not change your evaluation history, marks, reports, or credits.'
     );
     if (!confirmed) return;
 
     try {
       setParakhWithdrawalLoading(true);
       setParakhWithdrawalMessage('');
-      const response = await apiRequest<{ success: boolean; withdrawnCount: number; message: string }>(
-        '/api/student/parakh-learning/consent/withdraw',
+      const response = await apiRequest<{ success: boolean; excludedCount: number; message: string }>(
+        '/api/student/parakh-learning/exclude-previous',
         { method: 'POST', body: JSON.stringify({}) },
       );
-      setParakhLearningConsent(false);
       setParakhWithdrawalMessage(
-        response.message || `PARAKH consent withdrawn for ${response.withdrawnCount || 0} previous submission(s).`
+        response.message || `Excluded ${response.excludedCount || 0} previous PARAKH observation(s). Future observations are also paused for this account.`
       );
     } catch (withdrawError: unknown) {
       setParakhWithdrawalMessage(
-        withdrawError instanceof Error ? withdrawError.message : 'Could not withdraw PARAKH consent. Please try again.'
+        withdrawError instanceof Error ? withdrawError.message : 'Could not save the PARAKH exclusion request. Please try again.'
       );
     } finally {
       setParakhWithdrawalLoading(false);
@@ -825,7 +822,6 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           subjectName: currentSubject?.name || 'CA Subject',
           attempt: evaluationSource === 'INSTITUTE' ? 'Institute Series' : (materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt),
           checkingMode,
-          parakhLearningConsent,
           fileBase64,
           mimeType: file.type || 'application/pdf',
           filename: file.name,
@@ -837,7 +833,6 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       });
 
       if (currentStudentIdRef.current !== submissionOwnerId) return;
-      setParakhLearningConsent(false);
 
       if (response.result) {
         if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
@@ -1809,37 +1804,29 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 </button>
               </div>
 
-              {/* Optional consent for the PARAKH Learning Engine */}
-              <div className="rounded-xl border border-indigo-200 dark:border-indigo-900/70 bg-indigo-50/70 dark:bg-indigo-950/30 p-3.5 space-y-2">
-                <label className="flex items-start gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={parakhLearningConsent}
-                    onChange={(e) => setParakhLearningConsent(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
-                    <span className="font-bold text-slate-900 dark:text-white">Optional: Contribute to PARAKH Learning Engine</span>
-                    <span className="block mt-0.5">
-                      I agree that this answer sheet and its final admin-reviewed evaluation may be considered for future evaluation-quality learning, after anonymisation and quality checks.
-                    </span>
-                  </span>
-                </label>
-                <p className="pl-6 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  This is completely optional. Leaving it unchecked will not affect your evaluation, marks, credits, or processing. PARAKH currently records only the consent and evaluation reference; dataset export and model training are not active.
-                </p>
+              {/* Privacy-policy disclosure for PARAKH learning observations */}
+              <div className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-2">
+                <div className="flex items-start gap-2.5">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-slate-700 dark:text-slate-300" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-slate-900 dark:text-white">Evaluation quality improvement</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                      Submitted answer sheets, evaluation results, marks, question mapping and feedback may be used to assess and improve our evaluation systems as described in the <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="font-semibold underline">Privacy Policy</a>. Automated model training is currently OFF.
+                    </p>
+                  </div>
+                </div>
                 <div className="pl-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <button
                     type="button"
-                    onClick={handleWithdrawParakhConsent}
-                    disabled={parakhWithdrawalLoading || evalStep !== 'IDLE'}
-                    className="text-left text-[10px] font-bold text-indigo-700 hover:text-indigo-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-indigo-300 dark:hover:text-indigo-200"
+                    onClick={handleExcludeParakhObservations}
+                    disabled={parakhExclusionLoading || evalStep !== 'IDLE'}
+                    className="text-left text-[10px] font-bold text-slate-700 hover:text-slate-950 hover:underline disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-300 dark:hover:text-white"
                   >
-                    {parakhWithdrawalLoading ? 'Withdrawing consent…' : 'Withdraw consent for previous uploads'}
+                    {parakhExclusionLoading ? 'Saving exclusion…' : 'Exclude my previous and future uploads'}
                   </button>
-                  {parakhWithdrawalMessage && (
+                  {parakhExclusionMessage && (
                     <span role="status" className="text-[10px] leading-relaxed text-slate-600 dark:text-slate-300">
-                      {parakhWithdrawalMessage}
+                      {parakhExclusionMessage}
                     </span>
                   )}
                 </div>
