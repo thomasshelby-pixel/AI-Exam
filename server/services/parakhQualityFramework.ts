@@ -338,6 +338,31 @@ export function assessParakhResponseQuality(
   };
 }
 
+export type ParakhQualityReplyLanguage = 'english' | 'hindi' | 'hinglish';
+
+/** Student-facing caveat for replies that do not meet evidence or coverage requirements. */
+export function buildParakhQualityNotice(
+  assessment: ParakhQualityAssessment,
+  language: ParakhQualityReplyLanguage,
+): string {
+  if (assessment.status === 'NEEDS_PRIMARY_SOURCE') {
+    if (language === 'hinglish') return '\n\nBhai, is answer ke liye verified official primary source abhi confirm nahi hua. Isse final legal/tax position mat maan; ICAI ya relevant government authority ki latest notification se verify kar.';
+    if (language === 'hindi') return '\n\nइस उत्तर के लिए verified official primary source अभी confirm नहीं हुआ है। इसे अंतिम legal/tax position न मानें; ICAI या संबंधित सरकारी authority की latest notification से verify करें।';
+    return '\n\nA verified official primary source has not been confirmed for this answer. Do not treat it as the final legal/tax position; verify the latest ICAI or relevant government-authority notification.';
+  }
+  if (assessment.status === 'NEEDS_HUMAN_REVIEW') {
+    if (language === 'hinglish') return '\n\nYe explanation available general guidance par based hai; is exact topic ka verified subject-specific reference abhi match nahi hua. ICAI module ka page ya exact question bhej de, main uske basis par answer cross-check karunga.';
+    if (language === 'hindi') return '\n\nयह explanation उपलब्ध सामान्य guidance पर आधारित है; इस exact topic का verified subject-specific reference अभी match नहीं हुआ। ICAI module का page या exact question भेजें, मैं उसके आधार पर उत्तर cross-check करूँगा।';
+    return '\n\nThis explanation uses general guidance; a verified subject-specific reference for this exact topic was not matched. Share the ICAI module page or exact question so the answer can be cross-checked.';
+  }
+  if (assessment.status === 'INCOMPLETE') {
+    if (language === 'hinglish') return '\n\nBhai, is reply mein complete worked answer ke liye required steps/data abhi cover nahi hue. Exact question aur saare figures bhej de; incomplete answer ko final mat maan.';
+    if (language === 'hindi') return '\n\nइस reply में complete worked answer के लिए आवश्यक steps/data अभी cover नहीं हुए हैं। Exact question और सभी figures भेजें; अधूरे उत्तर को final न मानें।';
+    return '\n\nThis reply does not yet contain all steps or data required for a complete worked answer. Share the exact question and all figures; do not treat this as final.';
+  }
+  return '';
+}
+
 export interface ParakhSubjectCoverageRow {
   domain: ParakhSubjectDomain;
   label: string;
