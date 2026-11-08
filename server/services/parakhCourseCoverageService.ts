@@ -114,8 +114,8 @@ function getIndexEntryAliases(title: string): string[] {
   return Array.from(new Set([title, withoutLeadingHeading, withoutTrailingYear].filter(Boolean)));
 }
 
-function matchesIndexEntry(text: string, title: string): boolean {
-  return getIndexEntryAliases(title).some((alias) => containsPhrase(text, alias));
+function matchesIndexEntry(text: string, title: string, aliases: string[] = []): boolean {
+  return [...getIndexEntryAliases(title), ...aliases].some((alias) => containsPhrase(text, alias));
 }
 
 function foundationOrIntermediateIndex(course: 'CA_FOUNDATION' | 'CA_INTERMEDIATE', paperNumber: number) {
@@ -125,7 +125,7 @@ function foundationOrIntermediateIndex(course: 'CA_FOUNDATION' | 'CA_INTERMEDIAT
 function getPaperIndex(paper: ReturnType<typeof getParakhCurriculumPapers>[number]): {
   indexKind: ParakhCoveragePaper['indexKind'];
   mappingStatus: ParakhCoveragePaper['mappingStatus'];
-  entries: Array<{ number: number; title: string; section: string | null; authored: boolean; benchmarked: boolean }>;
+  entries: Array<{ number: number; title: string; section: string | null; authored: boolean; benchmarked: boolean; aliases?: string[] }>;
   note: string;
 } {
   if (paper.course === 'CA_INTERMEDIATE' && paper.code === 'INT-G1-P1') {
@@ -431,12 +431,12 @@ export function resolveParakhCoursePaperContext(input: {
     const matchedAliases = aliases.filter((alias) => containsPhrase(message, alias) || containsPhrase(suppliedSubjects, alias));
     const index = getPaperIndex(paper);
     const matchedEntries = index.entries.filter((entry) =>
-      matchesIndexEntry(message, entry.title) || matchesIndexEntry(suppliedSubjects, entry.title),
+      matchesIndexEntry(message, entry.title, entry.aliases) || matchesIndexEntry(suppliedSubjects, entry.title, entry.aliases),
     );
     const firstMessageMatch = matchedEntries
       .map((entry) => ({
         entry,
-        positions: getIndexEntryAliases(entry.title)
+        positions: [...getIndexEntryAliases(entry.title), ...(entry.aliases || [])]
           .map((alias) => normalize(message).indexOf(normalize(alias)))
           .filter((position) => position >= 0),
       }))
