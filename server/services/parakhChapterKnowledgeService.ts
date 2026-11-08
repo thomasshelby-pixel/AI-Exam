@@ -203,6 +203,246 @@ const RATIO_ALIASES = [
   'roce',
 ];
 
+
+type OtherChapterPack = {
+  id: string;
+  chapterNumber: number;
+  title: string;
+  keywords: string[];
+  answers: LocalisedText;
+  examples: LocalisedText;
+  simpler: LocalisedText;
+  quizzes: LocalisedText;
+};
+
+const OTHER_FM_CHAPTERS: OtherChapterPack[] = [
+  {
+    id: 'intermediate-fm-chapter-1-scope-objectives',
+    chapterNumber: 1,
+    title: 'Scope and Objectives of Financial Management',
+    keywords: ['scope of financial management','objectives of financial management','wealth maximisation','wealth maximization','profit maximisation','profit maximization','financial management objective','investment decision','financing decision','dividend decision'],
+    answers: {
+      english: 'Financial management is the planning and control of how an organisation raises, uses and monitors money. Its three connected decision areas are investment (where funds are used), financing (where funds come from) and dividend/retention (how earnings are distributed or reinvested). A sound objective is long-term wealth maximisation: consider the amount, timing and risk of cash flows rather than only accounting profit. Liquidity, solvency, profitability and risk must be balanced; a project that raises reported profit can still destroy value if it ties up too much capital or carries excessive risk.',
+      hinglish: 'Financial Management ka kaam hai organisation ke funds ko raise, use aur monitor karna. Iske 3 connected decisions hain: Investment—funds kahan lagane hain; Financing—funds kahan se laane hain; Dividend/Retention—profit distribute karna hai ya business mein reinvest. Long-term objective wealth maximisation hai, isliye sirf accounting profit nahi; cash flow ka amount, timing aur risk bhi dekh. Liquidity, solvency, profitability aur risk ko balance karna hota hai. Zyada reported profit wala project bhi value destroy kar sakta hai agar capital bahut block ho ya risk excessive ho.',
+      hindi: 'Financial Management में संस्था के धन को जुटाने, उपयोग करने और नियंत्रित करने की योजना बनाई जाती है। इसके तीन जुड़े हुए निर्णय हैं: Investment—धन कहाँ लगाया जाए; Financing—धन कहाँ से जुटाया जाए; Dividend/Retention—कमाई बाँटी जाए या business में दोबारा लगाई जाए। दीर्घकालीन उद्देश्य wealth maximisation है; इसलिए केवल accounting profit नहीं, cash flow की राशि, समय और जोखिम भी देखें। Liquidity, solvency, profitability और risk में संतुलन आवश्यक है। अधिक reported profit वाला project भी value घटा सकता है यदि उसमें बहुत अधिक पूँजी फँसे या जोखिम असंगत हो।',
+    },
+    examples: {
+      english: 'Illustration: Project A reports an accounting profit of ₹1,20,000 but requires a large immediate investment and has uncertain collections. Project B reports ₹1,00,000 with earlier, more predictable cash flows. Accounting profit alone cannot decide between them. Estimate incremental cash flows, timing, investment and risk, then compare value using the required decision method.',
+      hinglish: 'Example: Project A ₹1,20,000 accounting profit dikhata hai, par shuru mein heavy investment aur uncertain collections hain. Project B ₹1,00,000 profit deta hai, lekin cash flows jaldi aur predictable hain. Sirf accounting profit se decision mat le. Incremental cash flows, timing, investment aur risk compare kar.',
+      hindi: 'उदाहरण: Project A ₹1,20,000 accounting profit दिखाता है, लेकिन शुरुआत में बड़ा investment और अनिश्चित collections हैं। Project B ₹1,00,000 profit देता है, पर उसके cash flows जल्दी और अधिक predictable हैं। केवल accounting profit से निर्णय न लें। Incremental cash flows, उनका समय, investment और risk की तुलना करें।',
+    },
+    simpler: {
+      english: 'Think of financial management as three questions: where should money be invested, how should it be raised, and how much should be retained or paid out? The goal is not merely a bigger profit figure; it is sustainable value after considering time and risk.',
+      hinglish: 'Financial Management ko 3 sawaal samajh: paisa kahan invest karna hai, paisa kaise raise karna hai, aur profit kitna retain ya distribute karna hai? Goal sirf profit figure bada karna nahi; time aur risk dekhkar sustainable value create karna hai.',
+      hindi: 'Financial Management के तीन सवाल हैं: धन कहाँ invest करना है, धन कैसे जुटाना है और कितना profit retain या distribute करना है? लक्ष्य केवल profit की संख्या बढ़ाना नहीं, बल्कि समय और जोखिम को ध्यान में रखकर टिकाऊ value बनाना है।',
+    },
+    quizzes: {
+      english: 'A proposal increases accounting profit but delays cash receipts and sharply raises business risk. Explain why profit maximisation alone may be an inadequate decision rule, and identify the three core financial-management decisions.',
+      hinglish: 'Ek proposal accounting profit badhata hai, lekin cash receipts delay karta hai aur business risk bhi badha deta hai. Samjha ki profit maximisation akela decision rule kyun enough nahi, aur Financial Management ke 3 core decisions identify kar.',
+      hindi: 'एक proposal accounting profit बढ़ाता है, लेकिन cash receipts में देरी करता है और business risk भी बढ़ाता है। समझाएँ कि केवल profit maximisation पर्याप्त decision rule क्यों नहीं है और Financial Management के तीन मुख्य निर्णय बताइए।',
+    },
+  },
+  {
+    id: 'intermediate-fm-chapter-2-types-financing',
+    chapterNumber: 2,
+    title: 'Types of Financing',
+    keywords: ['types of financing','sources of finance','sources of financing','short term finance','short-term finance','medium term finance','long term finance','equity financing','debt financing','preference shares','debentures','retained earnings','trade credit','commercial paper','lease financing','factoring'],
+    answers: {
+      english: 'Financing sources can be compared by ownership, maturity, cost, repayment obligation, security, control and flexibility. Owners’ funds include equity and retained earnings; preference capital has specified dividend terms but its legal and financial character must be distinguished from debt; borrowed funds include loans and debentures. Short-term working-capital sources can include trade credit, bank working-capital facilities and eligible money-market instruments. Longer-term needs such as plant or expansion generally require funding whose maturity is aligned with the asset life. No source is automatically cheapest: include issue costs, tax effects where relevant, covenants, dilution, refinancing and cash-flow capacity.',
+      hinglish: 'Financing sources ko ownership, maturity, cost, repayment, security, control aur flexibility ke basis par compare kar. Owners’ funds mein equity aur retained earnings aate hain; preference capital ki dividend terms specified hoti hain, par uski legal/financial nature ko debt se mix mat kar. Borrowed funds mein loans aur debentures aate hain. Short-term working capital ke liye trade credit, bank facilities aur eligible money-market instruments ho sakte hain. Plant ya expansion jaise long-term assets ke liye maturity ko asset life se align kar. Koi source automatically cheapest nahi—issue cost, tax effect, covenants, dilution, refinancing aur cash-flow capacity bhi dekh.',
+      hindi: 'Financing के स्रोतों की तुलना ownership, maturity, cost, repayment obligation, security, control और flexibility के आधार पर करें। Owners’ funds में equity और retained earnings आते हैं; preference capital की dividend terms निश्चित हो सकती हैं, लेकिन उसकी कानूनी और वित्तीय प्रकृति को debt के समान न मानें। Borrowed funds में loans और debentures शामिल हैं। Short-term working capital के लिए trade credit, bank facilities और पात्र money-market instruments उपयोगी हो सकते हैं। Plant या expansion जैसी दीर्घकालीन जरूरतों के लिए funding की maturity को asset life से मिलाएँ। कोई स्रोत अपने आप सबसे सस्ता नहीं होता—issue cost, tax effect, covenants, dilution, refinancing और cash-flow capacity भी देखें।',
+    },
+    examples: {
+      english: 'Illustration: a retailer needs extra funds for inventory before a seasonal sales period and expects to collect cash within 90 days. A short-term facility may fit the timing better than issuing long-term equity. By contrast, a factory machine used for several years should not normally be funded entirely with a facility that must be repaid in a few weeks. Match the source tenor to the purpose and cash-conversion pattern.',
+      hinglish: 'Example: retailer ko festive season se pehle inventory kharidne ke liye funds chahiye aur 90 din mein cash collect ho jayega. Timing ke hisaab se short-term facility long-term equity issue se better fit ho sakti hai. Lekin kai saal chalne wali factory machine ko kuch hafton mein repay hone wali facility se poora fund karna mismatch hoga. Source ki maturity ko purpose aur cash cycle se match kar.',
+      hindi: 'उदाहरण: एक retailer को seasonal sales से पहले inventory खरीदने के लिए धन चाहिए और 90 दिनों में cash मिलने की उम्मीद है। समय के अनुसार short-term facility, long-term equity जारी करने से बेहतर हो सकती है। इसके विपरीत, कई वर्षों तक उपयोग होने वाली factory machine को कुछ सप्ताह में repay होने वाली facility से पूरी तरह finance करना maturity mismatch होगा। Source की maturity को उद्देश्य और cash cycle से मिलाएँ।',
+    },
+    simpler: {
+      english: 'Ask four questions before choosing finance: how long is the money needed, who bears the risk, what is the total cost, and can the business meet repayments without harming operations?',
+      hinglish: 'Finance choose karne se pehle 4 sawaal: paisa kitne time ke liye chahiye, risk kaun bear karega, total cost kya hai, aur repayment se operations disturb toh nahi honge?',
+      hindi: 'Finance चुनने से पहले चार सवाल पूछें: धन कितने समय के लिए चाहिए, जोखिम कौन उठाएगा, कुल लागत क्या है और repayment से operations पर दबाव तो नहीं पड़ेगा?',
+    },
+    quizzes: {
+      english: 'A business needs funds for a 60-day seasonal inventory build-up and separately plans to buy machinery with a five-year useful life. Suggest a suitable broad financing tenor for each and explain why maturity matching matters.',
+      hinglish: 'Business ko 60-day seasonal inventory ke liye funds chahiye aur alag se 5 saal chalne wali machinery kharidni hai. Dono ke liye broad financing tenor suggest kar aur maturity matching ka reason bata.',
+      hindi: 'एक business को 60 दिनों के seasonal inventory build-up के लिए धन चाहिए और अलग से पाँच वर्ष उपयोग होने वाली machinery खरीदनी है। दोनों के लिए उपयुक्त broad financing tenor सुझाएँ और maturity matching का कारण बताएँ।',
+    },
+  },
+  {
+    id: 'intermediate-fm-chapter-4-cost-of-capital',
+    chapterNumber: 4,
+    title: 'Cost of Capital',
+    keywords: ['cost of capital','weighted average cost of capital','wacc','cost of debt','after tax cost of debt','cost of equity','cost of preference capital','capital asset pricing model','capm','dividend growth model','cost of retained earnings'],
+    answers: {
+      english: 'Cost of capital is the required return expected by providers of finance and is commonly used as a benchmark for investment decisions. Estimate the cost of each source using the method and data specified in the question, then combine source costs using the stated capital weights to obtain WACC. In a basic tax-adjusted debt calculation, after-tax cost of debt = pre-tax cost of debt × (1 − tax rate), where the interest tax shield is available and the question asks for an after-tax measure. Equity cost may be estimated using a dividend-growth approach or CAPM when the required assumptions and inputs are supplied. Keep book-value versus market-value weights, flotation costs, preference terms and tax assumptions explicit.',
+      hinglish: 'Cost of Capital finance dene walon ka required return hai aur investment decisions ke liye benchmark ka kaam karta hai. Har source ka cost question mein diye method aur data se calculate kar, phir stated capital weights se combine karke WACC nikaal. Basic tax-adjusted debt formula: after-tax cost of debt = pre-tax cost of debt × (1 − tax rate), jab interest tax shield available ho aur after-tax measure manga ho. Equity cost dividend-growth method ya CAPM se estimate ho sakta hai, par required assumptions/data hone chahiye. Book vs market value weights, flotation cost, preference terms aur tax assumptions clearly likh.',
+      hindi: 'Cost of Capital, finance उपलब्ध कराने वालों का अपेक्षित return है और investment decisions में benchmark का काम करता है। प्रत्येक source की cost प्रश्न में दिए method और data से निकालें, फिर दिए गए capital weights से combine करके WACC निकालें। Basic tax-adjusted debt formula: after-tax cost of debt = pre-tax cost of debt × (1 − tax rate), जब interest tax shield उपलब्ध हो और प्रश्न after-tax measure माँगे। Equity cost dividend-growth method या CAPM से estimate हो सकती है, बशर्ते आवश्यक assumptions और inputs दिए हों। Book-value बनाम market-value weights, flotation costs, preference terms और tax assumptions स्पष्ट रखें।',
+    },
+    examples: {
+      english: 'Illustration: equity is 60% of capital and costs 14%; debt is 40% and its pre-tax cost is 10%; the applicable tax rate is 25% and interest is tax-deductible. After-tax debt cost = 10% × (1 − 0.25) = 7.5%. WACC = (60% × 14%) + (40% × 7.5%) = 8.4% + 3.0% = 11.4%. This result depends on the stated weights and tax assumption.',
+      hinglish: 'Example: capital mein equity 60% hai aur cost 14%; debt 40% hai aur pre-tax cost 10%; tax rate 25% hai aur interest tax-deductible hai. After-tax debt cost = 10% × (1 − 0.25) = 7.5%. WACC = (60% × 14%) + (40% × 7.5%) = 8.4% + 3.0% = 11.4%. Result given weights aur tax assumption par dependent hai.',
+      hindi: 'उदाहरण: capital में equity 60% है जिसकी cost 14% है; debt 40% है जिसकी pre-tax cost 10% है; applicable tax rate 25% है और interest tax-deductible है। After-tax debt cost = 10% × (1 − 0.25) = 7.5%। WACC = (60% × 14%) + (40% × 7.5%) = 8.4% + 3.0% = 11.4%। यह परिणाम दी गई weights और tax assumption पर निर्भर है।',
+    },
+    simpler: {
+      english: 'Imagine every source of money has a price. Cost of capital measures that price. WACC is the weighted average of those prices, using the capital mix given in the question. Use the tax adjustment only when the question and tax assumptions support it.',
+      hinglish: 'Har source of money ki ek price hoti hai—wahi Cost of Capital hai. WACC un prices ka weighted average hai, question mein diye capital mix ke basis par. Tax adjustment tabhi laga jab question aur tax assumptions support karein.',
+      hindi: 'हर source of money की एक कीमत होती है—इसे Cost of Capital कहते हैं। WACC, capital mix के अनुसार उन costs का weighted average है। Tax adjustment तभी लगाएँ जब प्रश्न और tax assumptions उसका समर्थन करें।',
+    },
+    quizzes: {
+      english: 'Equity is 70% of capital with a cost of 12%; debt is 30% with a pre-tax cost of 8%; the tax rate is 25% and interest is deductible. Calculate the after-tax debt cost and WACC, showing each weighted component.',
+      hinglish: 'Equity capital ka 70% hai, cost 12%; debt 30% hai, pre-tax cost 8%; tax rate 25% hai aur interest deductible hai. After-tax debt cost aur WACC calculate kar; har weighted component dikha.',
+      hindi: 'Equity capital का 70% है और उसकी cost 12% है; debt 30% है जिसकी pre-tax cost 8% है; tax rate 25% है और interest deductible है। After-tax debt cost और WACC निकालें तथा प्रत्येक weighted component दिखाएँ।',
+    },
+  },
+  {
+    id: 'intermediate-fm-chapter-5-capital-structure',
+    chapterNumber: 5,
+    title: 'Financing Decisions – Capital Structure',
+    keywords: ['capital structure','capital structure decision','optimal capital structure','financial structure','ebit eps analysis','ebit-eps','net income approach','net operating income approach','traditional approach','modigliani miller','modigliani-miller','mm approach','capital gearing'],
+    answers: {
+      english: 'Capital structure is the mix of long-term sources used to finance a business, especially equity and debt. A financing choice affects the required return, financial risk, control, flexibility and the resilience of cash flows. The chapter compares capital-structure views such as Net Income, Net Operating Income, Traditional and Modigliani–Miller approaches, subject to their assumptions. EBIT–EPS analysis compares the earnings per share under alternative financing plans at different EBIT levels; it should not be used without checking risk, indifference points, tax assumptions and the stability of operating earnings. More debt can magnify returns to equity in favourable conditions but also creates fixed obligations and distress risk.',
+      hinglish: 'Capital Structure business ke long-term funds ka mix hai, mainly equity aur debt. Funding choice required return, financial risk, control, flexibility aur cash-flow resilience ko affect karta hai. Chapter mein Net Income, Net Operating Income, Traditional aur Modigliani–Miller approaches padhe jaate hain—har approach ki assumptions alag hoti hain. EBIT–EPS analysis alag financing plans par different EBIT levels mein EPS compare karta hai; lekin risk, indifference point, tax assumptions aur operating earnings ki stability bhi check kar. Zyada debt favourable time mein equity return ko amplify karta hai, par fixed obligations aur distress risk bhi badhata hai.',
+      hindi: 'Capital Structure business को finance करने के लिए उपयोग किए गए long-term sources, विशेषकर equity और debt, का मिश्रण है। Financing choice required return, financial risk, control, flexibility और cash-flow resilience को प्रभावित करती है। इस chapter में Net Income, Net Operating Income, Traditional और Modigliani–Miller approaches की तुलना होती है; प्रत्येक की assumptions अलग हैं। EBIT–EPS analysis अलग financing plans के अंतर्गत अलग EBIT स्तरों पर EPS की तुलना करता है; साथ में risk, indifference point, tax assumptions और operating earnings की स्थिरता भी जाँचें। अधिक debt अच्छे समय में equity return बढ़ा सकता है, लेकिन fixed obligations और distress risk भी बढ़ाता है।',
+    },
+    examples: {
+      english: 'Illustration: a company raises ₹10,00,000 through debt at 10% annual interest. The fixed annual interest obligation is ₹1,00,000 before considering any other charges. If operating earnings rise, the residual for equity holders may rise faster; if operating earnings fall, the same interest still has to be serviced. Compare alternative plans at more than one EBIT level and consider cash-flow risk—not just the EPS at one forecast.',
+      hinglish: 'Example: company ₹10,00,000 debt 10% annual interest par raise karti hai. Fixed annual interest ₹1,00,000 hoga, other charges alag. EBIT badhe toh equity holders ke liye residual earnings faster badh sakti hain; EBIT gire toh interest phir bhi dena hoga. Alternative plans ko multiple EBIT levels par compare kar aur cash-flow risk dekh—sirf ek forecast EPS nahi.',
+      hindi: 'उदाहरण: company ₹10,00,000 debt पर 10% annual interest से धन जुटाती है। अन्य charges को छोड़कर fixed annual interest ₹1,00,000 होगा। Operating earnings बढ़ने पर equity holders के लिए बची earnings तेज़ी से बढ़ सकती हैं; earnings गिरने पर भी interest देना होगा। Alternative plans को कई EBIT levels पर compare करें और केवल एक forecast EPS नहीं, cash-flow risk भी देखें।',
+    },
+    simpler: {
+      english: 'Capital structure asks: how much should the business fund with owners’ money and how much with borrowing? Debt may lower some financing costs but increases fixed payment pressure. The best mix depends on the business and the assumptions in the question.',
+      hinglish: 'Capital Structure poochta hai: business owners ke funds kitne use kare aur borrowing kitni? Debt kuch cases mein financing cost kam kar sakta hai, par fixed payment ka pressure badhata hai. Best mix business aur question ki assumptions par depend karta hai.',
+      hindi: 'Capital Structure का सवाल है: business owners के funds कितने उपयोग करे और borrowing कितनी? Debt कुछ स्थितियों में financing cost घटा सकता है, लेकिन fixed payments का दबाव बढ़ाता है। उचित mix business और प्रश्न की assumptions पर निर्भर करता है।',
+    },
+    quizzes: {
+      english: 'A company is comparing an all-equity plan with a debt-equity plan. State two possible benefits and two risks of debt financing, and explain why an EBIT–EPS comparison at only one EBIT level can be misleading.',
+      hinglish: 'Company all-equity plan aur debt-equity plan compare kar rahi hai. Debt financing ke 2 possible benefits aur 2 risks bata. Ye bhi samjha ki sirf ek EBIT level par EBIT–EPS comparison misleading kyun ho sakta hai.',
+      hindi: 'Company all-equity plan और debt-equity plan की तुलना कर रही है। Debt financing के दो संभावित लाभ और दो जोखिम बताएँ। यह भी समझाएँ कि केवल एक EBIT level पर EBIT–EPS comparison भ्रामक क्यों हो सकता है।',
+    },
+  },
+  {
+    id: 'intermediate-fm-chapter-6-leverages',
+    chapterNumber: 6,
+    title: 'Financing Decisions – Leverages',
+    keywords: ['leverage','leverages','operating leverage','financial leverage','combined leverage','degree of operating leverage','degree of financial leverage','degree of combined leverage','dol','dfl','dcl','contribution and ebit'],
+    answers: {
+      english: 'Leverage measures how sensitive one financial result is to a change in another. Operating leverage arises from fixed operating costs: in the basic model, Degree of Operating Leverage (DOL) = Contribution ÷ EBIT. Financial leverage arises from fixed financing charges: in a simple debt-only case with no preference dividend, Degree of Financial Leverage (DFL) = EBIT ÷ EBT. Degree of Combined Leverage (DCL) = DOL × DFL, or Contribution ÷ EBT under the same simplified assumptions. Use the full prescribed formula where preference dividends or other fixed charges exist. High leverage magnifies both favourable and unfavourable changes; ratios become unstable or meaningless near zero/negative denominators.',
+      hinglish: 'Leverage batata hai ek financial result doosre result ke change se kitna sensitive hai. Fixed operating costs se Operating Leverage aata hai: basic model mein DOL = Contribution ÷ EBIT. Fixed finance charges se Financial Leverage aata hai: simple debt-only case, preference dividend nahi ho, toh DFL = EBIT ÷ EBT. DCL = DOL × DFL, ya same simplified assumptions mein Contribution ÷ EBT. Preference dividend ya other fixed charges hon toh prescribed full formula use kar. High leverage profit ke saath loss ko bhi magnify karta hai; zero/negative denominator ke paas ratio unstable ya meaningless ho sakta hai.',
+      hindi: 'Leverage बताता है कि एक financial result, दूसरे result में बदलाव के प्रति कितना sensitive है। Fixed operating costs से Operating Leverage आता है: basic model में DOL = Contribution ÷ EBIT। Fixed finance charges से Financial Leverage आता है: simple debt-only case में, जब preference dividend न हो, DFL = EBIT ÷ EBT। DCL = DOL × DFL, या उन्हीं simplified assumptions में Contribution ÷ EBT। Preference dividend या अन्य fixed charges होने पर prescribed full formula अपनाएँ। High leverage अच्छे परिणाम के साथ नुकसान को भी बढ़ाता है; zero/negative denominator के पास ratio अस्थिर या अर्थहीन हो सकता है।',
+    },
+    examples: {
+      english: 'Illustration (debt-only, no preference dividend): Sales ₹5,00,000; variable costs ₹3,00,000; fixed operating costs ₹1,50,000; interest ₹25,000. Contribution = ₹2,00,000; EBIT = ₹50,000; EBT = ₹25,000. DOL = ₹2,00,000 ÷ ₹50,000 = 4 times. DFL = ₹50,000 ÷ ₹25,000 = 2 times. DCL = 4 × 2 = 8 times. State the assumptions because a preference dividend changes the DFL working.',
+      hinglish: 'Example (sirf debt, preference dividend nahi): Sales ₹5,00,000; variable cost ₹3,00,000; fixed operating cost ₹1,50,000; interest ₹25,000. Contribution ₹2,00,000; EBIT ₹50,000; EBT ₹25,000. DOL = 2,00,000 ÷ 50,000 = 4 times. DFL = 50,000 ÷ 25,000 = 2 times. DCL = 4 × 2 = 8 times. Assumption likhna, kyunki preference dividend ho toh DFL working badalti hai.',
+      hindi: 'उदाहरण (केवल debt, preference dividend नहीं): Sales ₹5,00,000; variable cost ₹3,00,000; fixed operating cost ₹1,50,000; interest ₹25,000। Contribution ₹2,00,000; EBIT ₹50,000; EBT ₹25,000। DOL = 2,00,000 ÷ 50,000 = 4 times। DFL = 50,000 ÷ 25,000 = 2 times। DCL = 4 × 2 = 8 times। Assumption अवश्य लिखें, क्योंकि preference dividend होने पर DFL की working बदलती है।',
+    },
+    simpler: {
+      english: 'Operating leverage comes from fixed costs in operations. Financial leverage comes from fixed financing charges. Combined leverage shows how both layers together affect earnings available to equity. More leverage means more sensitivity in both directions.',
+      hinglish: 'Operating leverage business ke fixed operating costs se aata hai. Financial leverage fixed interest/finance charges se. Combined leverage dono ka combined effect dikhata hai. Leverage zyada hoga toh profit bhi aur loss bhi zyada sensitive hoga.',
+      hindi: 'Operating leverage business के fixed operating costs से आता है। Financial leverage fixed interest/finance charges से आता है। Combined leverage दोनों का संयुक्त प्रभाव दिखाता है। Leverage बढ़ने पर profit और loss, दोनों के प्रति sensitivity बढ़ती है।',
+    },
+    quizzes: {
+      english: 'Sales are ₹8,00,000, variable costs ₹4,80,000, fixed operating costs ₹2,40,000 and interest ₹40,000. Assuming no preference dividend, calculate contribution, EBIT, EBT, DOL, DFL and DCL. State why the debt-only assumption matters.',
+      hinglish: 'Sales ₹8,00,000, variable costs ₹4,80,000, fixed operating costs ₹2,40,000 aur interest ₹40,000 hain. Preference dividend nahi hai. Contribution, EBIT, EBT, DOL, DFL aur DCL calculate kar; debt-only assumption kyun important hai woh bata.',
+      hindi: 'Sales ₹8,00,000, variable costs ₹4,80,000, fixed operating costs ₹2,40,000 और interest ₹40,000 हैं। Preference dividend नहीं है। Contribution, EBIT, EBT, DOL, DFL और DCL निकालें तथा debt-only assumption का महत्व बताएँ।',
+    },
+  },
+  {
+    id: 'intermediate-fm-chapter-7-investment-decisions',
+    chapterNumber: 7,
+    title: 'Investment Decisions',
+    keywords: ['investment decisions','capital budgeting','net present value','npv','internal rate of return','irr','profitability index','payback period','discounted payback','cash flows','capital investment appraisal'],
+    answers: {
+      english: 'Investment decisions evaluate long-term projects using incremental cash flows, not accounting profit alone. Identify the initial outlay, operating cash flows, tax effects where relevant, working-capital investment and recovery, disposal proceeds and project life. NPV = present value of relevant future cash inflows − initial investment (with any later outflows also discounted). A positive NPV indicates value creation at the chosen discount rate, subject to the assumptions. IRR is the discount rate that makes NPV zero; PI compares present value of inflows with the investment. Payback measures recovery time but ignores cash flows after payback and, in its simple form, time value of money. For mutually exclusive projects, scale, timing and risk matter—do not select by one metric without checking the decision context.',
+      hinglish: 'Investment decisions mein long-term projects ko incremental cash flows se evaluate karte hain, sirf accounting profit se nahi. Initial outlay, operating cash flows, tax effect (jab applicable ho), working-capital investment/recovery, disposal value aur project life identify kar. NPV = future relevant cash inflows ka present value − initial investment (later outflows bhi discount karo). Chosen discount rate par positive NPV value creation indicate karta hai, given assumptions. IRR woh discount rate hai jahan NPV zero hota hai; PI present value of inflows ko investment se compare karta hai. Simple Payback recovery time batata hai, lekin payback ke baad cash flows ignore karta hai aur time value bhi nahi. Mutually exclusive projects mein scale, timing aur risk check kar.',
+      hindi: 'Investment decisions में long-term projects का मूल्यांकन incremental cash flows से किया जाता है, केवल accounting profit से नहीं। Initial outlay, operating cash flows, जहाँ लागू हो tax effects, working-capital investment और recovery, disposal proceeds तथा project life पहचानें। NPV = relevant future cash inflows का present value − initial investment (बाद के outflows को भी discount करें)। चुनी गई discount rate पर positive NPV value creation दर्शाता है, assumptions के अधीन। IRR वह discount rate है जहाँ NPV शून्य होता है; PI inflows के present value की investment से तुलना करता है। Simple Payback recovery time बताता है, लेकिन उसके बाद के cash flows और time value of money को नज़रअंदाज़ करता है। Mutually exclusive projects में scale, timing और risk भी देखें।',
+    },
+    examples: {
+      english: 'Illustration: initial investment is ₹1,00,000. Cash inflows are ₹60,000 at the end of Year 1 and ₹60,000 at the end of Year 2. At a 10% discount rate, PV of inflows = ₹60,000/1.10 + ₹60,000/(1.10²) = ₹54,545.45 + ₹49,586.78 = ₹1,04,132.23. NPV = ₹1,04,132.23 − ₹1,00,000 = ₹4,132.23 (approximately positive). This conclusion assumes the cash flows and 10% rate are appropriate.',
+      hinglish: 'Example: initial investment ₹1,00,000 hai. Year 1 ke end par ₹60,000 aur Year 2 ke end par ₹60,000 inflow hai. 10% discount rate par PV = 60,000/1.10 + 60,000/(1.10²) = ₹54,545.45 + ₹49,586.78 = ₹1,04,132.23. NPV = 1,04,132.23 − 1,00,000 = lagbhag +₹4,132.23. Decision is assumption par depend karta hai ki cash flows aur 10% rate relevant hain.',
+      hindi: 'उदाहरण: initial investment ₹1,00,000 है। Year 1 के अंत में ₹60,000 और Year 2 के अंत में ₹60,000 inflow है। 10% discount rate पर PV = 60,000/1.10 + 60,000/(1.10²) = ₹54,545.45 + ₹49,586.78 = ₹1,04,132.23। NPV = ₹1,04,132.23 − ₹1,00,000 = लगभग +₹4,132.23। निष्कर्ष cash flows और 10% rate की उपयुक्तता पर निर्भर है।',
+    },
+    simpler: {
+      english: 'NPV asks whether the value today of the project’s future cash flows is greater than what you pay today. Discount future cash to make different dates comparable. A positive NPV is favourable at that discount rate, provided the cash-flow estimates are sound.',
+      hinglish: 'NPV poochta hai: future mein milne wale cash flows ki aaj ki value, aaj ke investment se zyada hai ya nahi? Different dates ko compare karne ke liye future cash ko discount kar. Estimates sahi hon aur NPV positive ho toh chosen rate par project favourable hai.',
+      hindi: 'NPV पूछता है: future cash flows की आज की value, आज के investment से अधिक है या नहीं? अलग-अलग dates की तुलना के लिए future cash को discount करें। Estimates सही हों और NPV positive हो, तो चुनी गई rate पर project अनुकूल है।',
+    },
+    quizzes: {
+      english: 'A project costs ₹1,00,000 today and returns ₹60,000 at each year-end for two years. At 10%, calculate the present value of inflows and NPV. State one limitation of payback period.',
+      hinglish: 'Project aaj ₹1,00,000 cost karta hai aur 2 saal tak har year-end par ₹60,000 return deta hai. 10% par PV of inflows aur NPV nikaal. Payback period ki ek limitation bata.',
+      hindi: 'एक project की आज लागत ₹1,00,000 है और दो वर्षों तक प्रत्येक वर्ष के अंत में ₹60,000 मिलता है। 10% पर inflows का present value और NPV निकालें। Payback period की एक limitation बताएँ।',
+    },
+  },
+  {
+    id: 'intermediate-fm-chapter-8-dividend-decision',
+    chapterNumber: 8,
+    title: 'Dividend Decision',
+    keywords: ['dividend decision','dividend policy','dividend theories','dividend payout ratio','retention ratio','dividend yield','walter model','gordon model','mm dividend','modigliani miller dividend','stable dividend','residual dividend'],
+    answers: {
+      english: 'Dividend decision determines how much earnings are distributed to shareholders and how much is retained for reinvestment. The choice affects current shareholder income, internal funding, growth capacity, liquidity and market expectations. The chapter distinguishes dividend relevance and irrelevance views, including Walter, Gordon and Modigliani–Miller models under their stated assumptions. In practice, consider investment opportunities, access to external finance, stability of earnings, cash availability, legal restrictions, shareholder preferences and signalling effects. Accounting profit is not the same as cash available for dividend.',
+      hinglish: 'Dividend Decision decide karta hai ki earnings ka kitna part shareholders ko distribute hoga aur kitna business mein retain hoga. Isse current shareholder income, internal funds, growth, liquidity aur market expectations affect hote hain. Chapter mein Walter, Gordon aur Modigliani–Miller jaise dividend relevance/irrelevance views unki assumptions ke saath padhe jaate hain. Practical decision mein investment opportunities, external finance access, earnings stability, cash availability, legal restrictions, shareholder preference aur signalling effect dekh. Accounting profit aur dividend ke liye available cash same nahi hote.',
+      hindi: 'Dividend Decision तय करता है कि earnings का कितना भाग shareholders को दिया जाएगा और कितना business में retain होगा। इससे shareholder income, internal funding, growth capacity, liquidity और market expectations प्रभावित होते हैं। Chapter में Walter, Gordon और Modigliani–Miller models के dividend relevance/irrelevance views उनकी assumptions के साथ पढ़े जाते हैं। Practical निर्णय में investment opportunities, external finance, earnings stability, cash availability, legal restrictions, shareholder preferences और signalling effects देखें। Accounting profit और dividend के लिए उपलब्ध cash एक समान नहीं हैं।',
+    },
+    examples: {
+      english: 'Illustration: earnings per share are ₹40 and dividend per share is ₹12. Payout ratio = ₹12/₹40 × 100 = 30%; retention ratio = 70%. This describes the earnings split, not whether the payout is sustainable. Check cash flows, investment needs, restrictions and future earnings before judging the policy.',
+      hinglish: 'Example: EPS ₹40 hai aur dividend per share ₹12. Payout ratio = 12/40 × 100 = 30%; retention ratio = 70%. Ye sirf earnings ka split batata hai, sustainability nahi. Policy judge karne se pehle cash flow, investment need, restrictions aur future earnings check kar.',
+      hindi: 'उदाहरण: EPS ₹40 है और dividend per share ₹12 है। Payout ratio = ₹12/₹40 × 100 = 30%; retention ratio = 70%। यह केवल earnings का विभाजन बताता है, sustainability नहीं। Policy का मूल्यांकन करने से पहले cash flows, investment needs, restrictions और future earnings जाँचें।',
+    },
+    simpler: {
+      english: 'A company can pay earnings now or retain them to fund future growth. A higher dividend gives shareholders more immediate cash; higher retention may support investment but does not guarantee better returns. The right choice depends on opportunities and constraints.',
+      hinglish: 'Company profit abhi dividend ke roop mein de sakti hai ya future growth ke liye retain kar sakti hai. Higher dividend se shareholder ko abhi cash milta hai; higher retention investment support kar sakta hai, par better return guarantee nahi. Sahi choice opportunities aur constraints par depend hai.',
+      hindi: 'Company profit अभी dividend के रूप में दे सकती है या future growth के लिए retain कर सकती है। अधिक dividend से shareholder को तत्काल cash मिलता है; अधिक retention investment को support कर सकता है, लेकिन बेहतर return की guarantee नहीं। सही चुनाव अवसरों और सीमाओं पर निर्भर है।',
+    },
+    quizzes: {
+      english: 'EPS is ₹50 and dividend per share is ₹15. Calculate payout and retention ratios. Then name two factors, other than accounting profit, that should influence the dividend decision.',
+      hinglish: 'EPS ₹50 hai aur dividend per share ₹15 hai. Payout aur retention ratios nikaal. Phir accounting profit ke alawa do factors bata jo dividend decision ko influence karte hain.',
+      hindi: 'EPS ₹50 है और dividend per share ₹15 है। Payout और retention ratios निकालें। फिर accounting profit के अतिरिक्त दो ऐसे factors बताएँ जो dividend decision को प्रभावित करते हैं।',
+    },
+  },
+  {
+    id: 'intermediate-fm-chapter-9-working-capital',
+    chapterNumber: 9,
+    title: 'Management of Working Capital',
+    keywords: ['working capital','working capital management','gross working capital','net working capital','operating cycle','cash management','treasury management','inventory management','receivables management','payables management','creditors management','working capital financing','cash conversion cycle','economic order quantity','eoq'],
+    answers: {
+      english: 'Working capital management ensures that day-to-day operations have enough funds without leaving excessive money idle. Gross working capital refers to current assets; net working capital is Current Assets − Current Liabilities. The operating cycle tracks time tied up in inventory and receivables, reduced by supplier-credit time. The chapter connects cash/treasury management, inventory, receivables, payables and working-capital financing. Each policy involves a trade-off: tighter credit may reduce bad debts but lose sales; more inventory may reduce stock-outs but increase carrying cost; delaying suppliers can preserve cash but damage terms or supply reliability. Funding should consider the duration and risk of the operating cycle.',
+      hinglish: 'Working Capital Management ka aim hai daily operations ke liye enough funds rakhna, bina unnecessary cash idle chhode. Gross Working Capital = Current Assets; Net Working Capital = Current Assets − Current Liabilities. Operating cycle batata hai inventory aur receivables mein paisa kitne time block hai, jisme supplier credit period minus hota hai. Chapter cash/treasury, inventory, receivables, payables aur working-capital financing ko cover karta hai. Har policy mein trade-off hai: strict credit se bad debt kam ho sakta hai par sales lose ho sakti hain; zyada stock se stock-out kam par carrying cost badhti hai; supplier payment delay cash bachata hai par supply terms kharab ho sakte hain. Funding ko operating cycle ki duration aur risk se match kar.',
+      hindi: 'Working Capital Management का उद्देश्य daily operations के लिए पर्याप्त funds उपलब्ध रखना है, बिना बहुत अधिक cash idle छोड़े। Gross Working Capital का अर्थ Current Assets और Net Working Capital = Current Assets − Current Liabilities है। Operating cycle बताता है कि inventory और receivables में धन कितने समय तक लगा रहता है; supplier credit period इसे कम करता है। इस chapter में cash/treasury, inventory, receivables, payables और working-capital financing शामिल हैं। प्रत्येक policy में trade-off है: सख्त credit से bad debts घट सकते हैं पर sales खो सकती हैं; अधिक inventory से stock-outs घट सकते हैं पर carrying cost बढ़ती है; supplier payment टालने से cash बचता है पर supply terms बिगड़ सकते हैं। Funding को operating cycle की अवधि और risk से मिलाएँ।',
+    },
+    examples: {
+      english: 'Illustration: inventory holding period is 30 days, production/WIP period 10 days, finished-goods period 20 days, receivables collection period 40 days and supplier-credit period 25 days. A simplified operating cycle = 30 + 10 + 20 + 40 − 25 = 75 days. The exact cycle formula must follow the components and definitions supplied in the question; avoid double-counting inventory stages.',
+      hinglish: 'Example: inventory holding 30 days, WIP/production 10 days, finished goods 20 days, receivables collection 40 days aur supplier credit 25 days hai. Simplified operating cycle = 30 + 10 + 20 + 40 − 25 = 75 days. Exact formula question ke components/definitions ke according rakhna; inventory stages double-count mat karna.',
+      hindi: 'उदाहरण: inventory holding 30 दिन, WIP/production 10 दिन, finished goods 20 दिन, receivables collection 40 दिन और supplier credit 25 दिन है। Simplified operating cycle = 30 + 10 + 20 + 40 − 25 = 75 दिन। Exact formula प्रश्न में दिए components और definitions के अनुसार रखें; inventory stages को double-count न करें।',
+    },
+    simpler: {
+      english: 'Working capital is the money moving through everyday business activity: buy materials, make or hold goods, sell, collect from customers and pay suppliers. The longer cash is tied up before collection, the more working-capital funding may be required.',
+      hinglish: 'Working capital daily business mein ghoomta hua paisa hai: material kharido, goods banao/hold karo, sell karo, customer se collect karo aur supplier ko pay karo. Cash jitne zyada time tak cycle mein block rahega, utni working-capital funding ki need badh sakti hai.',
+      hindi: 'Working capital वह धन है जो daily business cycle में चलता रहता है: material खरीदना, goods बनाना/रखना, बेचना, customer से collection करना और supplier को भुगतान करना। Collection से पहले cash जितने अधिक समय तक अटका रहेगा, working-capital funding की जरूरत उतनी बढ़ सकती है।',
+    },
+    quizzes: {
+      english: 'Inventory holding is 35 days, WIP is 8 days, finished goods is 12 days, receivables are collected in 45 days and suppliers are paid after 30 days. Calculate the simplified operating cycle and explain one action that could shorten it.',
+      hinglish: 'Inventory holding 35 days, WIP 8 days, finished goods 12 days, receivables collection 45 days aur supplier payment 30 days baad hota hai. Simplified operating cycle nikaal aur ek action bata jo ise shorten kar sakta hai.',
+      hindi: 'Inventory holding 35 दिन, WIP 8 दिन, finished goods 12 दिन, receivables collection 45 दिन और suppliers को 30 दिन बाद भुगतान होता है। Simplified operating cycle निकालें और इसे कम करने का एक उपाय बताएँ।',
+    },
+  },
+];
+
+const OTHER_FM_BENCHMARKS = OTHER_FM_CHAPTERS.flatMap((chapter) => {
+  const purposeByFamily = [
+    ['core_concept', 'Checks understanding of the chapter’s central concept and terminology.'],
+    ['unseen_numerical_or_application', 'Checks transfer to a fresh numerical or practical situation.'],
+    ['exam_style_question', 'Checks orderly workings, assumptions and exam-oriented presentation.'],
+    ['edge_case_and_common_mistake', 'Checks an important limitation, assumption or common error.'],
+    ['source_sensitive_or_amendment_check', 'Checks that attempt-specific treatment is not guessed from evergreen content.'],
+  ] as const;
+  return purposeByFamily.map(([family, purpose], index) => ({
+    id: 'fm-ch' + chapter.chapterNumber + '-benchmark-' + (index + 1),
+    chapterNumber: chapter.chapterNumber,
+    family,
+    question: chapter.quizzes.english,
+    purpose,
+  }));
+});
+
 function normalize(value: string): string {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
