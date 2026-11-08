@@ -149,3 +149,17 @@ test('recognises natural Hinglish help requests and difficulty statements', () =
   assert.equal(isGeneralStudyQuestion('Mujhe ye concept samajh nahi aa raha'), true);
   assert.equal(isGeneralStudyQuestion('Ye topic samajh nahi aata'), true);
 });
+
+
+test('English action chips inherit the recent Hinglish or Hindi conversation language', () => {
+  assert.equal(detectStudyReplyLanguage('Explain a FM concept', [
+    'FM me help kr skte ho',
+    'FM me mujhe ratio wala chapter nahi aata hai',
+  ]), 'hinglish');
+  assert.equal(detectStudyReplyLanguage('Explain a FM concept', [
+    'मुझे Ratio Analysis समझ नहीं आता',
+  ]), 'hindi');
+  assert.equal(detectStudyReplyLanguage('Explain a FM concept', [
+    'I need help with Financial Management',
+  ]), 'english');
+});
