@@ -114,7 +114,7 @@ test('retrieves original chapter explanations across all nine Financial Manageme
     ['Explain capital structure', 5, 'intermediate-fm-chapter-5-capital-structure', /debt|equity/i],
     ['Explain operating leverage', 6, 'intermediate-fm-chapter-6-leverages', /DOL|Operating Leverage/i],
     ['Explain NPV in capital budgeting', 7, 'intermediate-fm-chapter-7-investment-decisions', /NPV|present value/i],
-    ['Explain dividend decision', 8, 'intermediate-fm-chapter-8-dividend-decision', /retained|distributed/i],
+    ['Explain dividend decision', 8, 'intermediate-fm-chapter-8-dividend-decision', /retain|distribute/i],
     ['Explain working capital management', 9, 'intermediate-fm-chapter-9-working-capital', /Current Assets|operating cycle/i],
   ] as const;
   for (const [message, chapterNumber, topicId, pattern] of cases) {
