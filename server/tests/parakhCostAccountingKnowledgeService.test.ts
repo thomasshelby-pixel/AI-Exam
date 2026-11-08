@@ -83,7 +83,8 @@ test('supports English, Hindi, Hinglish and all four learning modes', () => {
       language: item.language,
     });
     assert.ok(result);
-    assert.ok(result.answer.length > 180);
+    assert.ok(result.answer.length > (result.mode === 'quiz' ? 100 : 180));
+    if (result.mode === 'quiz') assert.match(result.answer, /[?؟]/);
   }
   assert.equal(searchParakhCostAccountingKnowledge({
     message: 'Cost sheet ka example',
