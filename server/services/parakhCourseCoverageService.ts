@@ -330,21 +330,23 @@ export function resolveParakhCoursePaperContext(input: {
   if (candidates.length > 1 && candidates[0].score === candidates[1].score) return null;
   const winner = candidates[0];
   const index = getPaperIndex(winner.paper);
+  const resolvedSection = winner.matchedIndexEntry
+    ? index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section || winner.matchedSection || winner.paper.sections[0] || null
+    : winner.matchedSection || winner.paper.sections[0] || null;
+  const paper6SectionB = winner.paper.code === 'INT-G2-P6' && resolvedSection === 'Section B: Strategic Management';
+  const paper6SectionA = winner.paper.code === 'INT-G2-P6' && resolvedSection === 'Section A: Financial Management';
   return {
     course: winner.paper.course,
     paperCode: winner.paper.code,
     paperTitle: winner.paper.title,
     group: winner.paper.group,
-    section: winner.matchedIndexEntry
-      ? index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section || winner.matchedSection || winner.paper.sections[0] || null
-      : winner.matchedSection || winner.paper.sections[0] || null,
+    section: resolvedSection,
     matchedIndexEntry: winner.matchedIndexEntry,
     mappingStatus: index.mappingStatus,
     indexKind: index.indexKind,
-    sourceUrl: winner.matchedIndexEntry && winner.paper.code === 'INT-G2-P6'
-      && index.entries.find((entry) => entry.title === winner.matchedIndexEntry)?.section === 'Section B: Strategic Management'
+    sourceUrl: paper6SectionB
       ? getParakhStrategicManagementInventory().sourceUrl
-      : winner.paper.sourceUrl,
+      : paper6SectionA ? getParakhChapterKnowledgeInventory().sourceUrl : winner.paper.sourceUrl,
     authoredChapterCount: index.entries.filter((entry) => entry.authored).length,
     humanReviewedChapterCount: 0,
     benchmarkPromptCount: winner.paper.code === 'INT-G2-P6'
