@@ -131,7 +131,7 @@ test('resolves a paper using the authenticated course context, without cross-cou
   assert.equal(foundationEconomics?.matchedIndexEntry, 'Theory of Demand and Supply');
   assert.equal(foundationEconomics?.authoredChapterCount, 10);
   assert.equal(foundationEconomics?.benchmarkPromptCount, 50);
-  assert.equal(foundationEconomics?.sourceUrl, 'https://www.icai.org/post/24403');
+  assert.equal(foundationEconomics?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p4-may2027');
 
   assert.equal(resolveParakhCoursePaperContext({
     course: 'CA_INTERMEDIATE',
