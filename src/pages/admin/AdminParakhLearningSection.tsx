@@ -162,7 +162,7 @@ export const AdminParakhLearningSection: React.FC = () => {
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-300">
-                CA Exam Checker AI · Learning programme
+                PARAKH · CA Learning programme
               </p>
               <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl">
                 PARAKH <span className="text-indigo-300">Learning Engine</span>
