@@ -88,7 +88,7 @@ import { verifyEvaluationConsistency } from '../services/evaluationConsistencySe
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } from '../services/parakhLearningService.js';
 import { getParakhConversationLearningMetrics } from '../services/parakhConversationLearningService.js';
-import { getStudyKnowledgeSubjectInventory } from '../services/studyPlannerKnowledgeService.js';
+import { getStudyKnowledgeSubjectInventory, getStudyKnowledgeTopicInventory } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhSubjectCoverageReport } from '../services/parakhQualityFramework.js';
 import { getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
@@ -523,9 +523,18 @@ router.get('/parakh-learning/metrics', async (_req: AuthRequest, res: Response) 
 router.get('/parakh-learning/quality-readiness', (_req: AuthRequest, res: Response) => {
   try {
     const report = buildParakhSubjectCoverageReport(getStudyKnowledgeSubjectInventory());
+    const knowledgeTopics = getStudyKnowledgeTopicInventory();
     return res.json({
       success: true,
-      report: { ...report, curriculum: getParakhCurriculumSummary() },
+      report: {
+        ...report,
+        curriculum: getParakhCurriculumSummary(),
+        knowledgeBank: {
+          topicCount: knowledgeTopics.length,
+          topics: knowledgeTopics,
+          coverageVerified: false,
+        },
+      },
     });
   } catch (error) {
     console.error('[PARAKH] Failed to load subject quality readiness:', error);
