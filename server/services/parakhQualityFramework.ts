@@ -307,7 +307,10 @@ export function assessParakhResponseQuality(
     'This gate checks response structure and evidence signals; it does not prove factual correctness or mathematical validity.',
   ];
   if (classification.requiresPrimarySource && !primarySourcePresent) {
-    limitations.push('A current/statutory answer needs a current primary-source reference before it can be treated as verified.');
+    limitations.push('No link from a recognised official primary-source domain was supplied.');
+  }
+  if (classification.requiresPrimarySource && primarySourcePresent) {
+    limitations.push('The allowlist recognises the source domain only; it does not verify the document text, effective date, provision or applicability to the facts.');
   }
   if (classification.kind === 'numerical' && status === 'PARTIAL_NEEDS_INPUT') {
     limitations.push('The answer must keep the decision conditional until the missing inputs are supplied.');
@@ -345,10 +348,15 @@ export function buildParakhQualityNotice(
   assessment: ParakhQualityAssessment,
   language: ParakhQualityReplyLanguage,
 ): string {
-  if (assessment.status === 'NEEDS_PRIMARY_SOURCE') {
-    if (language === 'hinglish') return '\n\nBhai, is answer ke liye verified official primary source abhi confirm nahi hua. Isse final legal/tax position mat maan; ICAI ya relevant government authority ki latest notification se verify kar.';
-    if (language === 'hindi') return '\n\nइस उत्तर के लिए verified official primary source अभी confirm नहीं हुआ है। इसे अंतिम legal/tax position न मानें; ICAI या संबंधित सरकारी authority की latest notification से verify करें।';
-    return '\n\nA verified official primary source has not been confirmed for this answer. Do not treat it as the final legal/tax position; verify the latest ICAI or relevant government-authority notification.';
+  if (assessment.requiresPrimarySource && !assessment.checks.primarySourcePresent) {
+    if (language === 'hinglish') return '\n\nBhai, answer ke saath recognised official primary-source domain ka link nahi mila. Isse final legal/tax position mat maan; ICAI ya relevant government authority ki current notification verify kar.';
+    if (language === 'hindi') return '\n\nउत्तर के साथ मान्यता-प्राप्त official primary-source domain का link नहीं मिला। इसे अंतिम legal/tax position न मानें; ICAI या संबंधित सरकारी authority की current notification verify करें।';
+    return '\n\nNo link from a recognised official primary-source domain was found. Do not treat this as the final legal/tax position; verify the current ICAI or relevant government-authority notification.';
+  }
+  if (assessment.requiresPrimarySource && assessment.checks.primarySourcePresent) {
+    if (language === 'hinglish') return '\n\nOfficial-domain source link mila hai, lekin ye check document ka exact text, effective date ya is question par applicability certify nahi karta. Relevant notification/provision ko kholkar facts se match kar.';
+    if (language === 'hindi') return '\n\nOfficial-domain source link मिला है, लेकिन यह check document के exact text, effective date या इस प्रश्न पर applicability certify नहीं करता। संबंधित notification/provision खोलकर facts से मिलाएँ।';
+    return '\n\nAn official-domain source link was found, but this check does not certify the document text, effective date or applicability to this question. Open the relevant notification/provision and match it to the facts.';
   }
   if (assessment.status === 'NEEDS_HUMAN_REVIEW') {
     if (language === 'hinglish') return '\n\nYe explanation available general guidance par based hai; is exact topic ka verified subject-specific reference abhi match nahi hua. ICAI module ka page ya exact question bhej de, main uske basis par answer cross-check karunga.';
