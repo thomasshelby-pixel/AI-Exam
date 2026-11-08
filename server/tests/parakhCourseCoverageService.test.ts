@@ -104,7 +104,7 @@ test('resolves a paper using the authenticated course context, without cross-cou
   assert.equal(foundationAccounting?.matchedIndexEntry, 'Depreciation and Amortisation');
   assert.equal(foundationAccounting?.authoredChapterCount, 11);
   assert.equal(foundationAccounting?.benchmarkPromptCount, 55);
-  assert.equal(foundationAccounting?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p1-may2027');
+  assert.equal(foundationAccounting?.sourceUrl, 'https://www.icai.org/post/24417');
   const foundationLaw = resolveParakhCoursePaperContext({
     course: 'CA_FOUNDATION',
     message: 'Explain Indian Contract Act and consideration',
