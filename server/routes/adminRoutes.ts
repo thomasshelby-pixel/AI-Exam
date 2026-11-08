@@ -89,6 +89,7 @@ import { extractRelevantReferenceSnippets } from '../services/questionChunkEvalu
 import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } from '../services/parakhLearningService.js';
 import { getParakhConversationLearningMetrics } from '../services/parakhConversationLearningService.js';
 import { getStudyKnowledgeSubjectInventory, getStudyKnowledgeTopicInventory } from '../services/studyPlannerKnowledgeService.js';
+import { getParakhChapterKnowledgeInventory } from '../services/parakhChapterKnowledgeService.js';
 import { buildParakhSubjectCoverageReport } from '../services/parakhQualityFramework.js';
 import { getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
@@ -534,6 +535,7 @@ router.get('/parakh-learning/quality-readiness', (_req: AuthRequest, res: Respon
           topics: knowledgeTopics,
           coverageVerified: false,
         },
+        chapterKnowledge: getParakhChapterKnowledgeInventory(),
       },
     });
   } catch (error) {
