@@ -817,7 +817,7 @@ function normalize(value: string): string {
 }
 
 function isAttemptSensitive(message: string): boolean {
-  return /\b(latest|current|currently applicable|as of today|amendment|amended|statutory update|notification|circular|corrigendum|finance act|assessment year|applicable for (?:may|september|january)|tax rate|slab|threshold|limit|due date|filing deadline|interest rate|penalty|section \d|rule \d|effective from|in force)\b/i.test(message)
+  return /\b(latest|most recent|currently applicable|current(?:ly)?\s+(?:rate|rates|tax|gst|income tax|slab|threshold|limit|due date|filing deadline|notification|amendment|law|rules?|statutory position)|as of today|amendment|amended|statutory update|notification|circular|corrigendum|finance act|assessment year|applicable for (?:may|september|january)|tax rate|slab|threshold|limit|due date|filing deadline|interest rate|penalty|section \d|rule \d|effective from|in force)\b/i.test(message)
     || /\b(धारा|अधिसूचना|संशोधन|वर्तमान दर|सीमा|अंतिम तारीख)\b/u.test(message);
 }
 
