@@ -617,7 +617,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                   ))}
                 </div>
                 <p className="mt-3 text-[9px] leading-relaxed text-amber-700 dark:text-amber-300">
-                  Important: a chapter/topic index is not a full lesson. Original drafts currently cover Intermediate Paper 4 Cost and Management Accounting (15 chapters, May 2027 onwards), Paper 6 Section A Financial Management (9 chapters, May 2026 catalogue edition) and Section B Strategic Management (5 chapters, May 2027 onwards). None of these 29 chapters is human-reviewed; all 145 benchmark prompts await reviewed answer keys. CA Final topic pointers are provisional, and SPOM chapter indexing remains pending.
+                  Important: a chapter/topic index is not a full lesson. Original drafts currently cover Intermediate Paper 4 Cost and Management Accounting (15 chapters), Paper 5 Auditing and Ethics (11 chapters), Paper 6 Section A Financial Management (9 chapters) and Section B Strategic Management (5 chapters). The Cost, Audit and SM catalogue editions are headed May 2027 onwards; FM uses the May 2026 catalogue edition. None of these 40 chapters is human-reviewed; all 200 benchmark prompts await reviewed answer keys. CA Final topic pointers are provisional, and SPOM chapter indexing remains pending.
                 </p>
               </div>
               <p className="mt-3 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
