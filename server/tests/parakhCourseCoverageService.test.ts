@@ -26,12 +26,17 @@ test('keeps original FM chapter drafts distinct from mapped-only subjects and un
   const fm = inventory.courses.find((course) => course.course === 'CA_INTERMEDIATE')!
     .papers.find((paper) => paper.code === 'INT-G2-P6')!;
   const foundation = inventory.courses.find((course) => course.course === 'CA_FOUNDATION')!;
+  const foundationAccounting = foundation.papers.find((paper) => paper.code === 'FND-P1')!;
+  assert.equal(foundationAccounting.mappingStatus, 'OFFICIAL_CHAPTER_CATALOGUE_LINKED');
+  assert.equal(foundationAccounting.indexEntries.length, 11);
+  assert.equal(foundationAccounting.authoredChapterCount, 11);
+  assert.equal(foundationAccounting.benchmarkPromptCount, 55);
   const final = inventory.courses.find((course) => course.course === 'CA_FINAL')!;
   const spom = inventory.courses.find((course) => course.course === 'SPOM')!;
 
-  assert.equal(inventory.authoredChapterCount, 40);
+  assert.equal(inventory.authoredChapterCount, 51);
   assert.equal(inventory.humanReviewedChapterCount, 0);
-  assert.equal(inventory.benchmarkPromptCount, 200);
+  assert.equal(inventory.benchmarkPromptCount, 255);
   assert.equal(inventory.humanReviewedBenchmarkCount, 0);
   assert.equal(fm.indexKind, 'chapter');
   assert.equal(fm.indexEntries.filter((entry) => entry.section === 'Section A: Financial Management' && entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length, 9);
@@ -76,6 +81,15 @@ test('resolves a paper using the authenticated course context, without cross-cou
     course: 'CA_FOUNDATION',
     message: 'Explain Accounting',
   })?.paperCode, 'FND-P1');
+  const foundationAccounting = resolveParakhCoursePaperContext({
+    course: 'CA_FOUNDATION',
+    message: 'Explain depreciation and amortisation',
+  });
+  assert.equal(foundationAccounting?.paperCode, 'FND-P1');
+  assert.equal(foundationAccounting?.matchedIndexEntry, 'Depreciation and Amortisation');
+  assert.equal(foundationAccounting?.authoredChapterCount, 11);
+  assert.equal(foundationAccounting?.benchmarkPromptCount, 55);
+  assert.equal(foundationAccounting?.sourceUrl, 'https://www.icai.org/post/sm-foundation-p1-may2027');
 
   assert.equal(resolveParakhCoursePaperContext({
     course: 'CA_INTERMEDIATE',
