@@ -358,7 +358,7 @@ test('subject readiness reports partial seed guidance without claiming complete 
   assert.equal(accounting?.guidanceStatus, 'PARTIAL_GUIDANCE_SEEDED');
   assert.equal(taxation?.guidanceStatus, 'PARTIAL_GUIDANCE_SEEDED');
   assert.equal(accounting?.completeVerifiedCoverage, false);
-  assert.equal(accounting?.caFinalCurriculumMapping, 'NOT_MAPPED_IN_CURRENT_REGISTRY');
+  assert.equal(accounting?.caFinalCurriculumMapping, 'MAPPED_NOT_BENCHMARKED');
   assert.equal(report.automaticModelTraining, false);
   assert.equal(report.humanReviewRequiredForKnowledgeChanges, true);
 });
