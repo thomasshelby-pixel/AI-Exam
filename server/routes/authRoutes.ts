@@ -103,12 +103,12 @@ router.post('/legal-consent/accept', authenticateToken, async (req: AuthRequest,
   }
 });
 
-router.get('/policy-update/status', authenticateToken, (req: AuthRequest, res: Response) => {
+router.get('/policy-update/status', authenticateToken, async (req: AuthRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
   try {
     return res.json({
       success: true,
-      notice: getPolicyUpdateNoticeStatus(req.user.id),
+      notice: await getPolicyUpdateNoticeStatus(req.user.id),
     });
   } catch (error) {
     console.error('[PolicyUpdateNotice] Could not load notice status:', error);
