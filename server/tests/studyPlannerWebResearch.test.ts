@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { classifyParakhQuestion } from '../services/parakhQualityFramework.js';
 import {
   parseGoogleNewsRss,
   parseSearxngResults,
@@ -45,4 +46,21 @@ test('parses SearXNG JSON results while filtering unsafe URLs', () => {
   });
   assert.equal(results.length, 1);
   assert.equal(results[0].title, 'RBI policy');
+});
+
+
+test('statutory section questions request primary-source research while current ratio remains a study topic', () => {
+  const sectionQuestion = classifyParakhQuestion(
+    'Explain the Section 80C deduction under income tax',
+    ['Taxation'],
+  );
+  assert.equal(sectionQuestion.kind, 'statutory_application');
+  assert.equal(sectionQuestion.requiresPrimarySource, true);
+
+  const ratioQuestion = classifyParakhQuestion(
+    'Explain current ratio in Financial Management',
+    ['Financial Management and Strategic Management'],
+  );
+  assert.equal(ratioQuestion.kind, 'numerical');
+  assert.equal(ratioQuestion.requiresPrimarySource, false);
 });
