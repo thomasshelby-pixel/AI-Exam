@@ -46,8 +46,30 @@ interface ParakhQualityReadiness {
     guidanceStatus: 'PARTIAL_GUIDANCE_SEEDED' | 'KNOWLEDGE_GAP' | 'GENERAL_GUIDANCE_ONLY';
     benchmarkFamiliesRequired: string[];
     completeVerifiedCoverage: false;
-    caFinalCurriculumMapping: 'NOT_MAPPED_IN_CURRENT_REGISTRY';
+    mappedCourses: string[];
+    caFinalCurriculumMapping: 'MAPPED_NOT_BENCHMARKED' | 'NOT_IN_FINAL_PAPER_MAP';
   }>;
+  curriculum: {
+    scheme: string;
+    checkedAt: string;
+    status: string;
+    knowledgeCoverageVerified: false;
+    courses: Array<{
+      course: string;
+      title: string;
+      paperCount: number;
+      sourceUrl: string;
+      papers: Array<{
+        code: string;
+        title: string;
+        group: string | null;
+        sections: string[];
+        domainKeys: string[];
+        sourceUrl: string;
+      }>;
+    }>;
+    limitations: string[];
+  };
 }
 
 interface ParakhMetrics {
@@ -316,6 +338,7 @@ export const AdminParakhLearningSection: React.FC = () => {
                   <tr className="border-b border-slate-200 text-[10px] uppercase tracking-wide text-slate-400 dark:border-slate-800">
                     <th className="px-2 py-2 font-bold">Subject domain</th>
                     <th className="px-2 py-2 font-bold">Existing guidance</th>
+                    <th className="px-2 py-2 font-bold">Mapped course levels</th>
                     <th className="px-2 py-2 font-bold">Benchmark families required</th>
                     <th className="px-2 py-2 font-bold">Verified coverage</th>
                   </tr>
@@ -329,7 +352,13 @@ export const AdminParakhLearningSection: React.FC = () => {
                         <span className="mt-1 block text-[9px] text-slate-400">{item.guidanceStatus.replace(/_/g, ' ')}</span>
                       </td>
                       <td className="px-2 py-3 text-slate-600 dark:text-slate-300">
-                        {item.benchmarkFamiliesRequired.length} required
+                        {item.mappedCourses.map((course) => course.replace('CA_', '')).join(', ') || 'Not mapped'}
+                        <span className="mt-1 block text-[9px] text-slate-400">
+                          {item.caFinalCurriculumMapping === 'MAPPED_NOT_BENCHMARKED' ? 'CA Final paper mapped; benchmarks pending' : 'No CA Final core-paper mapping'}
+                        </span>
+                      </td>
+                      <td className="px-2 py-3 text-slate-600 dark:text-slate-300">
+                        {item.benchmarkFamiliesRequired.length} required; 0 verified sets
                       </td>
                       <td className="px-2 py-3">
                         <span className="rounded-full bg-amber-100 px-2 py-1 text-[9px] font-black text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
@@ -341,8 +370,47 @@ export const AdminParakhLearningSection: React.FC = () => {
                 </tbody>
               </table>
             </div>
+            <div className="mt-5 border-t border-slate-200 pt-4 dark:border-slate-800">
+              <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+                <div>
+                  <h3 className="text-xs font-black text-slate-900 dark:text-white">Official course and paper map</h3>
+                  <p className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                    ICAI New Scheme catalogue checked {qualityReadiness.curriculum.checkedAt}; this is paper mapping, not verified answer coverage.
+                  </p>
+                </div>
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[9px] font-black text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {qualityReadiness.curriculum.status.replace(/_/g, ' ')}
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                {qualityReadiness.curriculum.courses.map((course) => (
+                  <div key={course.course} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold text-slate-900 dark:text-white">{course.title}</h4>
+                      <span className="text-[10px] font-black tabular-nums text-slate-500">{course.paperCount} papers/modules</span>
+                    </div>
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-[10px] font-semibold text-indigo-600 dark:text-indigo-300">View official paper list</summary>
+                      <ul className="mt-2 space-y-1 pl-4 text-[10px] text-slate-600 dark:text-slate-300">
+                        {course.papers.map((paper) => (
+                          <li key={paper.code}>
+                            <span className="font-semibold">{paper.code} · {paper.title}</span>
+                            {paper.group ? <span className="text-slate-400"> ({paper.group})</span> : null}
+                            {paper.sections.length ? <span className="block pl-2 text-slate-400">{paper.sections.join(' · ')}</span> : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                    <a href={course.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-block text-[10px] font-bold text-indigo-600 underline dark:text-indigo-300">Open ICAI source</a>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
+                Official paper mapping is not chapter mapping. Select attempt-specific study material, RTP/MTP and amendments before using an answer as exam-current.
+              </p>
+            </div>
             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-[10px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-              CA Final subject-to-curriculum mapping is deliberately marked as pending in the current registry. No domain is labelled complete merely because a few guidance templates exist. Knowledge changes require human review; chat insights do not automatically train or update a model.
+              Official course-paper titles are mapped from ICAI's New Scheme pages. This does not mean chapter-level content or benchmarks are complete: the current guidance bank has only a small seed set, and every subject still needs attempt-specific material, verified explanations and held-out tests. Knowledge changes require human review; chat insights do not automatically train or update a model.
             </p>
           </>
         ) : (
