@@ -37,7 +37,7 @@ interface ParakhMetrics {
   selectedForReview: number;
   verifiedSamples: number;
   failed: number;
-  withdrawn: number;
+  excluded: number;
   benchmarkRuns: number;
   trainingRuns: number;
   latestActivityAt?: string | null;
@@ -87,7 +87,7 @@ export const AdminParakhLearningSection: React.FC = () => {
     {
       label: 'Collected observations',
       value: metrics?.totalCollected ?? 0,
-      helper: 'All consented evaluations completed',
+      helper: 'Policy-covered evaluations completed',
       icon: Database,
       tone: 'text-indigo-600 bg-indigo-50 dark:text-indigo-300 dark:bg-indigo-950/50',
     },
@@ -116,8 +116,8 @@ export const AdminParakhLearningSection: React.FC = () => {
 
   const stages = [
     {
-      title: 'Optional student consent',
-      detail: 'Each opted-in submission is recorded; only successfully completed evaluations enter the collection.',
+      title: 'Policy-disclosed observation collection',
+      detail: 'Successfully completed evaluations are recorded as observations unless the student has requested exclusion.',
       status: 'ACTIVE',
       statusLabel: 'Active',
       icon: CheckCircle2,
@@ -175,7 +175,7 @@ export const AdminParakhLearningSection: React.FC = () => {
 
           <div className="flex flex-wrap gap-2 lg:max-w-xs lg:justify-end">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-bold text-emerald-200">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Consent capture active
+              <CheckCircle2 className="h-3.5 w-3.5" /> Policy collection active
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[10px] font-bold text-amber-200">
               <LockKeyhole className="h-3.5 w-3.5" /> Training OFF
@@ -269,7 +269,7 @@ export const AdminParakhLearningSection: React.FC = () => {
           ) : (metrics?.bySubject || []).length === 0 ? (
             <div className="py-8 text-center">
               <Database className="mx-auto h-7 w-7 text-slate-300 dark:text-slate-600" />
-              <p className="mt-2 text-xs font-bold text-slate-600 dark:text-slate-300">No consented submissions yet</p>
+              <p className="mt-2 text-xs font-bold text-slate-600 dark:text-slate-300">No observations collected yet</p>
               <p className="mt-1 text-[10px] text-slate-400">Subject-wise counts will appear after students opt in.</p>
             </div>
           ) : (
@@ -329,8 +329,8 @@ export const AdminParakhLearningSection: React.FC = () => {
               <strong className="tabular-nums text-slate-800 dark:text-white">{numberFormat.format(metrics?.failed ?? 0)}</strong>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-slate-500 dark:text-slate-400">Withdrawn consent</span>
-              <strong className="tabular-nums text-slate-800 dark:text-white">{numberFormat.format(metrics?.withdrawn ?? 0)}</strong>
+              <span className="text-slate-500 dark:text-slate-400">Excluded by student</span>
+              <strong className="tabular-nums text-slate-800 dark:text-white">{numberFormat.format(metrics?.excluded ?? 0)}</strong>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-slate-500 dark:text-slate-400">Benchmark runs</span>
@@ -356,7 +356,7 @@ export const AdminParakhLearningSection: React.FC = () => {
       <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          <strong>Important:</strong> All consented completed evaluations are collected as observations. Only selected samples need human review. An unreviewed AI result is never treated as ground truth; anonymisation, permitted dataset export, and a held-out human-verified benchmark are still required before future training. Counts here measure pipeline progress, not model accuracy.
+          <strong>Important:</strong> Policy-covered completed evaluations are collected as observations unless a student has requested exclusion. Only selected samples need human review. An unreviewed AI result is never treated as ground truth; anonymisation, permitted dataset export, and a held-out human-verified benchmark are still required before future training. Counts here measure pipeline progress, not model accuracy.
         </p>
       </div>
     </div>
