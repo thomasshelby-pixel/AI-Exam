@@ -317,11 +317,16 @@ export function resolveParakhCoursePaperContext(input: {
     const score = longestAlias * 2
       + matchedEntries.reduce((sum, entry) => sum + normalize(entry.title).length, 0)
       + matchedSections.reduce((sum, section) => sum + normalize(section).length * 2, 0);
+    const matchedSection = matchedSections.length === 1
+      ? paper.code === 'INT-G2-P6' && !/^Section [A-Z]:/i.test(matchedSections[0])
+        ? (matchedSections[0] === 'Strategic Management' ? 'Section B: ' : 'Section A: ') + matchedSections[0]
+        : matchedSections[0]
+      : null;
     candidates.push({
       paper,
       score,
       matchedIndexEntry: matchedEntries.length === 1 ? matchedEntries[0].title : null,
-      matchedSection: matchedSections.length === 1 ? matchedSections[0] : null,
+      matchedSection,
     });
   }
 
