@@ -90,6 +90,7 @@ import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } 
 import { getParakhConversationLearningMetrics } from '../services/parakhConversationLearningService.js';
 import { getStudyKnowledgeSubjectInventory } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhSubjectCoverageReport } from '../services/parakhQualityFramework.js';
+import { getParakhCurriculumSummary } from '../services/parakhCurriculumRegistry.js';
 import { normalizeAndSplitCombinedPyq } from '../services/materialHardGateService.js';
 import { findAuthoritativeMaterialWithFallback, findEvaluationMaterialByExactIdForRecovery, getSubjectKeyCandidates, normalizeMtpSeries, syncMaterialRowToSqlite } from '../services/materialLookupService.js';
 import {
@@ -522,7 +523,7 @@ router.get('/parakh-learning/metrics', async (_req: AuthRequest, res: Response) 
 router.get('/parakh-learning/quality-readiness', (_req: AuthRequest, res: Response) => {
   try {
     const report = buildParakhSubjectCoverageReport(getStudyKnowledgeSubjectInventory());
-    return res.json({ success: true, report });
+    return res.json({ success: true, report, curriculum: getParakhCurriculumSummary() });
   } catch (error) {
     console.error('[PARAKH] Failed to load subject quality readiness:', error);
     return res.status(500).json({ error: 'Failed to load PARAKH quality readiness.' });
