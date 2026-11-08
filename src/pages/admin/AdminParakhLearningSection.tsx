@@ -18,7 +18,7 @@ interface ParakhSubjectMetric {
   level: string;
   subjectKey: string;
   subjectName: string;
-  optedIn: number;
+  observations: number;
   collected: number;
   unreviewed: number;
   selectedForReview: number;
@@ -30,7 +30,7 @@ interface ParakhMetrics {
   trainingEnabled: boolean;
   supervisorEnabled: boolean;
   productionEvaluationImpact: boolean;
-  totalOptIns: number;
+  totalObservations: number;
   totalCollected: number;
   processing: number;
   unreviewedObservations: number;
@@ -270,7 +270,7 @@ export const AdminParakhLearningSection: React.FC = () => {
             <div className="py-8 text-center">
               <Database className="mx-auto h-7 w-7 text-slate-300 dark:text-slate-600" />
               <p className="mt-2 text-xs font-bold text-slate-600 dark:text-slate-300">No observations collected yet</p>
-              <p className="mt-1 text-[10px] text-slate-400">Subject-wise counts will appear after students opt in.</p>
+              <p className="mt-1 text-[10px] text-slate-400">Subject-wise observation counts will appear as completed evaluations are collected.</p>
             </div>
           ) : (
             <div className="mt-4 overflow-x-auto">
@@ -342,7 +342,7 @@ export const AdminParakhLearningSection: React.FC = () => {
             </div>
           </div>
           <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/70 p-3 text-[10px] leading-relaxed text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-200">
-            PARAKH stores only an opt-in evaluation reference and review metadata at this stage. It does not export student files, call another AI model, or update model weights.
+            PARAKH stores only a policy-covered evaluation reference and review metadata at this stage. It does not export student files, call another AI model, or update model weights.
           </div>
           <p className="mt-3 text-[10px] text-slate-400">
             Latest activity: {formatDate(metrics?.latestActivityAt)}
