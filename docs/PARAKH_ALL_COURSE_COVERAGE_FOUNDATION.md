@@ -27,7 +27,7 @@ The registry maps 32 official paper/module entries:
 | SPOM | 16 modules/papers |
 | **Total** | **32** |
 
-The registry reuses the application's chapter index for Foundation and Intermediate, with a status that makes clear it has not yet been reconciled chapter-by-chapter to each student's exact attempt. Intermediate Paper 6 is split into Financial Management and Strategic Management sections. The nine Financial Management chapters link to their official ICAI catalogue and retain their existing original draft packs; Strategic Management chapter labels are mapped only.
+The registry reuses the application's chapter index for Foundation and Intermediate, with a status that makes clear it has not yet been reconciled chapter-by-chapter to each student's exact attempt. Intermediate Paper 6 is split into Financial Management and Strategic Management sections. The nine Financial Management chapters link to their official ICAI catalogue and retain their existing original draft packs. Section B Strategic Management now uses the five chapter names on ICAI's page headed “Applicable for May 2027 Exam Onwards” and has separate original draft packs and benchmark prompts.
 
 For CA Final, existing subject metadata is represented as a provisional topic index. Those entries are not labelled as official ICAI chapter titles. SPOM is mapped at module/paper level; this release does not pretend to have imported its detailed chapter/unit index.
 
@@ -35,9 +35,9 @@ For CA Final, existing subject metadata is represented as a provisional topic in
 
 Only Intermediate Paper 6, Section A: Financial Management currently has original chapter teaching drafts in this knowledge service:
 
-- 9 chapter packs in English, Hindi and Hinglish.
+- 9 Section A Financial Management chapter packs and 5 Section B Strategic Management chapter packs (14 total), in English, Hindi and Hinglish.
 - Answer, worked-example, simpler-explanation and quiz modes.
-- 45 distinct benchmark prompts across five benchmark families.
+- 70 distinct benchmark prompts across five benchmark families (45 FM + 25 SM).
 - 0 human-reviewed chapter packs.
 - 0 human-reviewed benchmark sets.
 
