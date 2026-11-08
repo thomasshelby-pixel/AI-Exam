@@ -25,6 +25,15 @@ interface ParakhSubjectMetric {
   verified: number;
 }
 
+interface ParakhConversationMetrics {
+  enabled: boolean;
+  windowDays: number;
+  totalSignals: number;
+  byTopic: Array<{ topic: string; intent: string; language: string; count: number }>;
+  dataMode: string;
+  automaticModelTraining: boolean;
+}
+
 interface ParakhMetrics {
   engineName: string;
   trainingEnabled: boolean;
@@ -57,6 +66,7 @@ function formatDate(value?: string | null): string {
 
 export const AdminParakhLearningSection: React.FC = () => {
   const [metrics, setMetrics] = useState<ParakhMetrics | null>(null);
+  const [conversationMetrics, setConversationMetrics] = useState<ParakhConversationMetrics | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -67,10 +77,12 @@ export const AdminParakhLearningSection: React.FC = () => {
     setError('');
 
     try {
-      const response = await apiRequest<{ success: boolean; metrics: ParakhMetrics }>(
-        '/api/admin/parakh-learning/metrics',
-      );
+      const [response, conversationResponse] = await Promise.all([
+        apiRequest<{ success: boolean; metrics: ParakhMetrics }>('/api/admin/parakh-learning/metrics'),
+        apiRequest<{ success: boolean; metrics: ParakhConversationMetrics }>('/api/admin/parakh-learning/conversation-insights'),
+      ]);
       setMetrics(response.metrics);
+      setConversationMetrics(conversationResponse.metrics);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : 'Could not load PARAKH learning metrics.');
     } finally {
@@ -204,6 +216,62 @@ export const AdminParakhLearningSection: React.FC = () => {
             </div>
           );
         })}
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-black text-slate-900 dark:text-white">
+              <Brain className="h-4 w-4 text-indigo-500" />
+              Student conversation insights
+            </h2>
+            <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+              Aggregate CA topic and learning-difficulty signals from the last {conversationMetrics?.windowDays ?? 30} days.
+            </p>
+          </div>
+          <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-[10px] font-black ${conversationMetrics?.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'}`}>
+            {conversationMetrics?.enabled ? 'Aggregate learning enabled' : 'Collection disabled'}
+          </span>
+        </div>
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div>
+            <p className="text-2xl font-black tabular-nums text-slate-900 dark:text-white">
+              {loading ? '—' : numberFormat.format(conversationMetrics?.totalSignals ?? 0)}
+            </p>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400">Aggregate topic signals</p>
+          </div>
+          <p className="max-w-2xl text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
+            Raw chat text, student IDs, emails and phone numbers are not stored in this dataset. Signals are grouped by a fixed topic, intent and language taxonomy. This does not train or update model weights.
+          </p>
+        </div>
+        {(conversationMetrics?.byTopic || []).length > 0 ? (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[480px] text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-[10px] uppercase tracking-wide text-slate-400 dark:border-slate-800">
+                  <th className="px-2 py-2 font-bold">Topic</th>
+                  <th className="px-2 py-2 font-bold">Learning signal</th>
+                  <th className="px-2 py-2 font-bold">Language</th>
+                  <th className="px-2 py-2 text-right font-bold">Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conversationMetrics!.byTopic.slice(0, 10).map((item) => (
+                  <tr key={item.topic + ':' + item.intent + ':' + item.language} className="border-b border-slate-100 last:border-0 dark:border-slate-800/70">
+                    <td className="px-2 py-2 font-semibold text-slate-800 dark:text-slate-200">{item.topic.replace(/_/g, ' ')}</td>
+                    <td className="px-2 py-2 text-slate-600 dark:text-slate-300">{item.intent.replace(/_/g, ' ')}</td>
+                    <td className="px-2 py-2 text-slate-600 dark:text-slate-300">{item.language}</td>
+                    <td className="px-2 py-2 text-right tabular-nums font-bold">{numberFormat.format(item.count)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-3 rounded-lg bg-slate-50 p-3 text-[11px] text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
+            {conversationMetrics?.enabled ? 'No aggregate chat-learning signals have been recorded yet.' : 'Conversation learning is OFF until its privacy notice and applicable consent/legal basis are reviewed.'}
+          </p>
+        )}
       </section>
 
       {error && (
