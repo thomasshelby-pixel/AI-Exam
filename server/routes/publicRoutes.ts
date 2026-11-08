@@ -9,6 +9,8 @@ import { authenticateToken, AuthRequest, JWT_SECRET } from '../auth.js';
 import { contactTicketRateLimiter, websiteVisitorRateLimiter } from '../utils/rateLimiter.js';
 import { syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { getAllFirestoreDocs, getFirestoreDoc } from '../services/firestoreDbService.js';
+import { CA_CURRICULUM } from '../../src/data/caCurriculum.js';
+import { COMBO_PLANS, CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 import {
   getPublishedAppRelease,
   getDownloadableAppRelease,
@@ -478,6 +480,15 @@ router.get('/pricing', (req: Request, res: Response) => {
     instagramUrl: settingsMap.INSTAGRAM_URL || 'https://insta.openinapp.co/utw2r',
     plans,
     institutePlans,
+    // Shared student-app catalogue. Keep displayed values aligned with checkout.
+    studentEvaluationPricing: {
+      monthlyFreeEvaluations: freeTierEvaluations,
+      customPricePerEvaluationINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+      maxCustomEvaluationsPerOrder: 500,
+      comboPlans: COMBO_PLANS,
+      creditValidityMonths: 3,
+      autoRenewal: false,
+    },
   });
 });
 
@@ -514,6 +525,29 @@ router.get('/attempts', (req: Request, res: Response) => {
     console.error('Get attempts error:', error);
     return res.status(500).json({ error: 'Failed to retrieve exam attempts' });
   }
+});
+
+// Read-only CA curriculum endpoint shared by web and mobile upload flows.
+router.get('/curriculum', (req: Request, res: Response) => {
+  const requestedLevel = String(req.query.level || '').trim().toUpperCase();
+  const levels = ['FOUNDATION', 'INTERMEDIATE', 'FINAL'];
+  if (requestedLevel && !levels.includes(requestedLevel)) {
+    return res.status(400).json({ error: 'Unsupported CA course level.' });
+  }
+
+  const selectedLevels = requestedLevel ? [requestedLevel] : levels;
+  const subjects = selectedLevels.flatMap((level) => {
+    const course = CA_CURRICULUM[level as keyof typeof CA_CURRICULUM];
+    return course.subjects.map((subject) => ({
+      key: subject.key,
+      name: subject.name,
+      paperNumber: subject.paperNumber,
+      group: subject.group || null,
+      maximumMarks: subject.maximumMarks,
+    }));
+  });
+
+  return res.json({ subjects });
 });
 
 // Institute Pricing Plans
