@@ -10,6 +10,7 @@ import { getParakhFoundationBusinessLawInventory } from './parakhFoundationBusin
 import { getParakhFoundationQuantitativeAptitudeInventory } from './parakhFoundationQuantitativeAptitudeKnowledgeService.js';
 import { getParakhFoundationBusinessEconomicsInventory } from './parakhFoundationBusinessEconomicsKnowledgeService.js';
 import { getParakhAdvancedAccountingInventory } from './parakhAdvancedAccountingKnowledgeService.js';
+import { getParakhIntermediateLawTaxInventory } from './parakhIntermediateLawTaxKnowledgeService.js';
 
 export type ParakhCoverageLanguage = 'english' | 'hindi' | 'hinglish';
 
@@ -237,6 +238,27 @@ function getPaperIndex(paper: ReturnType<typeof getParakhCurriculumPapers>[numbe
         note: 'The 15 chapters are linked to the official ICAI Paper 4 catalogue headed Applicable for May 2027 Exam Onwards. Original English/Hindi/Hinglish drafts and benchmark prompts exist for all 15, but none has human-reviewed content or answer keys. Exact attempt applicability must be confirmed.',
       };
     }
+    if (paper.course === 'CA_INTERMEDIATE' && (paper.code === 'INT-G1-P2' || paper.code === 'INT-G1-P3')) {
+      const inventory = getParakhIntermediateLawTaxInventory();
+      const packs = inventory.papers.filter((item) => item.paperCode === paper.code);
+      const entries = packs.flatMap((pack) => pack.chapters.map((chapter) => ({
+        number: chapter.chapterNumber,
+        title: chapter.title,
+        section: chapter.section,
+        aliases: chapter.aliases,
+        authored: chapter.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED',
+        benchmarked: chapter.benchmarkStatus === 'PROMPTS_DEFINED_NOT_EVALUATED',
+      })));
+      const isTaxation = paper.code === 'INT-G1-P3';
+      return {
+        indexKind: 'chapter',
+        mappingStatus: 'OFFICIAL_CHAPTER_CATALOGUE_LINKED',
+        entries,
+        note: isTaxation
+          ? 'Paper 3 has source-linked chapter catalogues for Section A Income-tax Law (9 chapters) and Section B GST (15 chapters). Original English/Hindi/Hinglish teaching drafts and five benchmark prompts per chapter are present; none has qualified human review or approved answer keys. Section A source: https://www.icai.org/post/24313. Section B source: https://www.icai.org/post/24360. Tax rates, thresholds, notifications, effective dates, exclusions and current statutory treatment must be checked against the student’s exact attempt and official primary sources.'
+          : 'Paper 2 has a source-linked chapter catalogue for Company Law/LLP Law (12 chapters) and Other Laws (3 chapters). Original English/Hindi/Hinglish teaching drafts and five benchmark prompts per chapter are present; none has qualified human review or approved answer keys. Source: https://www.icai.org/post/24331. Statutory amendments, procedural limits, filing dates and current legal treatment must be checked against the student’s exact attempt and official primary sources.',
+      };
+    }
     if (paper.course === 'CA_INTERMEDIATE' && paper.code === 'INT-G2-P6') {
       const fm = getParakhChapterKnowledgeInventory();
       const sm = getParakhStrategicManagementInventory();
@@ -347,13 +369,15 @@ export function getParakhCourseCoverageInventory(): {
     const authoredChapterCount = indexEntries.filter((entry) => entry.contentStatus === 'AUTHOR_DRAFT_NOT_HUMAN_VERIFIED').length;
     // Every authored chapter currently has five distinct benchmark prompts.
     const benchmarkPromptCount = index.entries.filter((entry) => entry.benchmarked).length * 5;
+    const sourceUrl = paper.code === 'INT-G1-P2' ? 'https://www.icai.org/post/24331'
+      : paper.code === 'INT-G1-P3' ? 'https://www.icai.org/post/24313' : paper.sourceUrl;
     return {
       course: paper.course,
       code: paper.code,
       title: paper.title,
       group: paper.group,
       sections: [...paper.sections],
-      sourceUrl: paper.sourceUrl,
+      sourceUrl,
       mappingStatus: index.mappingStatus,
       indexKind: index.indexKind,
       indexEntries,
@@ -393,8 +417,8 @@ export function getParakhCourseCoverageInventory(): {
     courses,
     limitations: [
       'A paper map or application chapter index is not equivalent to a complete lesson bank.',
-      'Original authored content covers Foundation Papers 1–4 (11 Accounting, 7 Business Laws, 18 Quantitative Aptitude and 10 Business Economics chapters) and Intermediate Papers 4–6 (15 Cost Accounting, 11 Auditing, 9 FM and 5 SM chapters); none is human-reviewed.',
-      'Foundation Papers 1–4 and Intermediate Papers 4–6 have source-linked chapter catalogues; other Foundation and Intermediate chapter labels are reused from the app curriculum and still need attempt-specific ICAI verification.',
+      'Original authored content covers all four Foundation papers (46 chapter drafts / 230 prompts) and all six Intermediate papers (94 chapter drafts / 470 prompts), for 140 chapter drafts / 700 prompts overall; none is human-reviewed.',
+      'Foundation Papers 1–4 and all Intermediate Papers 1–6 now have source-linked chapter catalogues. Exact attempt editions, statutory updates, exclusions and corrigenda still require verification.',
       'CA Final entries are provisional topic pointers, not official chapter titles.',
       'SPOM papers are mapped at module level only; chapter/unit indexing is pending.',
       'Benchmark prompts are not held-out answer-key evaluations. Human-reviewed benchmark count is zero.',
@@ -484,6 +508,14 @@ export function resolveParakhCoursePaperContext(input: {
   const foundationQuantitativePaper = winner.paper.code === 'FND-P3';
   const foundationEconomicsPaper = winner.paper.code === 'FND-P4';
   const intermediateAdvancedAccountingPaper = winner.paper.code === 'INT-G1-P1';
+  const intermediateCorporateLawPaper = winner.paper.code === 'INT-G1-P2';
+  const intermediateTaxationPaper = winner.paper.code === 'INT-G1-P3';
+  const lawTaxInventory = (intermediateCorporateLawPaper || intermediateTaxationPaper) ? getParakhIntermediateLawTaxInventory() : null;
+  const intermediateLawPack = lawTaxInventory?.papers.find((item) => item.paperCode === 'INT-G1-P2');
+  const incomeTaxPack = lawTaxInventory?.papers.find((item) => item.title.includes('Section A: Income-tax Law'));
+  const gstPack = lawTaxInventory?.papers.find((item) => item.title.includes('Section B: Goods and Services Tax'));
+  const taxationSectionA = intermediateTaxationPaper && /Income-tax Law/i.test(resolvedSection || '');
+  const taxationSectionB = intermediateTaxationPaper && /Goods and Services Tax/i.test(resolvedSection || '');
   return {
     course: winner.paper.course,
     paperCode: winner.paper.code,
@@ -493,7 +525,10 @@ export function resolveParakhCoursePaperContext(input: {
     matchedIndexEntry: winner.matchedIndexEntry,
     mappingStatus: index.mappingStatus,
     indexKind: index.indexKind,
-    sourceUrl: intermediateAdvancedAccountingPaper ? getParakhAdvancedAccountingInventory().sourceUrl
+    sourceUrl: intermediateCorporateLawPaper ? (intermediateLawPack?.sourceUrl || winner.paper.sourceUrl)
+      : taxationSectionA ? (incomeTaxPack?.sourceUrl || winner.paper.sourceUrl)
+        : taxationSectionB ? (gstPack?.sourceUrl || winner.paper.sourceUrl)
+      : intermediateAdvancedAccountingPaper ? getParakhAdvancedAccountingInventory().sourceUrl
       : foundationEconomicsPaper ? getParakhFoundationBusinessEconomicsInventory().sourceUrl
       : foundationQuantitativePaper ? getParakhFoundationQuantitativeAptitudeInventory().sourceUrl
         : foundationBusinessLawPaper ? getParakhFoundationBusinessLawInventory().sourceUrl
@@ -504,7 +539,9 @@ export function resolveParakhCoursePaperContext(input: {
         : paper6SectionA ? getParakhChapterKnowledgeInventory().sourceUrl : winner.paper.sourceUrl,
     authoredChapterCount: index.entries.filter((entry) => entry.authored).length,
     humanReviewedChapterCount: 0,
-    benchmarkPromptCount: winner.paper.code === 'INT-G1-P1' ? getParakhAdvancedAccountingInventory().benchmarkCaseCount
+    benchmarkPromptCount: intermediateCorporateLawPaper ? (intermediateLawPack?.benchmarkPromptCount || 0)
+      : intermediateTaxationPaper ? (taxationSectionA ? incomeTaxPack?.benchmarkPromptCount || 0 : taxationSectionB ? gstPack?.benchmarkPromptCount || 0 : (incomeTaxPack?.benchmarkPromptCount || 0) + (gstPack?.benchmarkPromptCount || 0))
+      : winner.paper.code === 'INT-G1-P1' ? getParakhAdvancedAccountingInventory().benchmarkCaseCount
       : winner.paper.code === 'FND-P2' ? getParakhFoundationBusinessLawInventory().benchmarkCaseCount
       : winner.paper.code === 'FND-P3' ? getParakhFoundationQuantitativeAptitudeInventory().benchmarkCaseCount
         : winner.paper.code === 'FND-P4' ? getParakhFoundationBusinessEconomicsInventory().benchmarkCaseCount
