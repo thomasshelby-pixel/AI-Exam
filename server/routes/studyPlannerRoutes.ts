@@ -14,6 +14,7 @@ import { createAdaptiveRevisionRounds } from '../services/studyPlannerRevisionRo
 import { buildChapterAssessmentPrompt, buildChapterAssessmentReadyMessage, buildGeneralStudyAnswer, buildIntermediateSMClarification, buildPlanScopeOptions, detectStudyReplyLanguage, isGeneralStudyQuestion } from '../services/studyPlannerLanguageService.js';
 import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterAssessment.js';
 import { getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
+import { buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
 
 const router = Router();
@@ -684,7 +685,7 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
     }
 
     // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
-    const guidanceQuestion = isGeneralStudyQuestion(message) && !isExplicitStudyPlanRequest(message)
+    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history)) && !isExplicitStudyPlanRequest(message)
       && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
     if (guidanceQuestion) {
       const parsed = parsedProbe;
@@ -694,10 +695,21 @@ router.post('/', authenticateToken, (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
+      const knowledge = searchStudyKnowledge({ message, course, history, language: replyLanguage });
       const guidance = buildGeneralStudyAnswer(message, parsed);
+      const answer = knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer;
       return res.json({
-        success: true, status: 'general_guidance_answered', message: guidance.answer, parsed, plan: null,
-        metadata: { version: 'study-chat-guidance-v2', modelUsed: false, persistentStorage: false },
+        success: true,
+        status: knowledge ? 'knowledge_answered' : 'general_guidance_answered',
+        message: answer,
+        parsed,
+        plan: null,
+        metadata: {
+          version: knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
+          modelUsed: false,
+          knowledgeMatched: Boolean(knowledge),
+          persistentStorage: false,
+        },
       });
     }
 
