@@ -362,7 +362,7 @@ const CHAPTERS: CostChapter[] = [
       hindi: 'हर unit पहले fixed cost cover करने में योगदान देता है। Fixed cost cover होने के बाद बचा contribution profit बनता है।',
     },
     quiz: {
-      english: 'A special order price is below normal selling price but above variable cost. Explain the conditions under which accepting it may increase profit and the risks that must be checked.',
+      english: 'A special order price is below normal selling price but above variable cost. Under what conditions could accepting it increase profit, and which capacity or displacement risks must be checked?',
       hinglish: 'Special order price normal price se kam but variable cost se zyada hai. Kin conditions mein accept karne se profit badhega? Kaunse risks check karne chahiye?',
       hindi: 'Special order price normal selling price से कम लेकिन variable cost से अधिक है। किन conditions में इसे स्वीकार करने से profit बढ़ सकता है और कौन-से risks जाँचने चाहिए?',
     },
