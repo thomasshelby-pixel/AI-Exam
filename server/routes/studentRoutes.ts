@@ -31,6 +31,7 @@ import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
+import { recordParakhLearningOptIn } from '../services/parakhLearningService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { validateAnswerSheetSubject } from '../services/subjectValidationService.js';
@@ -1865,6 +1866,26 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Once enqueueEvaluation returns, the background worker owns final status
     // and entitlement settlement. The request catch must not refund a running job.
     asyncEvaluationAccepted = true;
+
+    // PARAKH is opt-in only. Its metadata ledger is deliberately non-blocking:
+    // a tracking/storage issue must never fail evaluation or affect entitlements.
+    if (req.body?.parakhLearningConsent === true) {
+      try {
+        recordParakhLearningOptIn(true, {
+          evaluationId,
+          studentId,
+          level: String(level || ''),
+          subjectKey: String(subjectKey || ''),
+          subjectName: String(subjectName || ''),
+          materialType: String(materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP')),
+          paper: String(referenceMaterial.paper || 'Paper 1'),
+          attempt: String(evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026')),
+          checkingMode: String(checkingMode || 'standard'),
+        });
+      } catch (parakhError) {
+        console.warn('[PARAKH] Consent ledger write failed; evaluation continues without learning eligibility:', parakhError);
+      }
+    }
 
     return res.json({
       success: true,
