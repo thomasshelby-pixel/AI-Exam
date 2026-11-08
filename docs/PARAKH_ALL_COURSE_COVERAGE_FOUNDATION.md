@@ -27,19 +27,20 @@ The registry maps 32 official paper/module entries:
 | SPOM | 16 modules/papers |
 | **Total** | **32** |
 
-The registry reuses the application's chapter index for Foundation and Intermediate, with a status that makes clear it has not yet been reconciled chapter-by-chapter to each student's exact attempt. Intermediate Paper 6 is split into Financial Management and Strategic Management sections. The nine Financial Management chapters link to their official ICAI catalogue and retain their existing original draft packs. Section B Strategic Management now uses the five chapter names on ICAI's page headed “Applicable for May 2027 Exam Onwards” and has separate original draft packs and benchmark prompts.
+The registry reuses the application's chapter index for most Foundation and Intermediate papers with an explicit attempt-verification status. Foundation Paper 1, Intermediate Paper 4 and 5, and both sections of Paper 6 have their own source-linked chapter catalogues and original draft packs. Intermediate Paper 6 is split into Financial Management and Strategic Management sections.
 
 For CA Final, existing subject metadata is represented as a provisional topic index. Those entries are not labelled as official ICAI chapter titles. SPOM is mapped at module/paper level; this release does not pretend to have imported its detailed chapter/unit index.
 
 ## What this release authors
 
-Only Intermediate Paper 6, Section A: Financial Management currently has original chapter teaching drafts in this knowledge service:
+Original teaching drafts currently cover Foundation Paper 1 Accounting and Intermediate Papers 4, 5 and 6:
 
-- Paper 4 Cost and Management Accounting: 15 chapter packs, in English, Hindi and Hinglish, with answer/example/simpler/quiz modes and 75 benchmark prompts.
-- Paper 6 Section A Financial Management: 9 chapter packs and 45 benchmark prompts.
-- Paper 5 Auditing and Ethics: 11 chapter packs and 55 benchmark prompts, linked to the ICAI page headed May 2027 Exam Onwards.
-- Paper 6 Section B Strategic Management: 5 chapter packs and 25 benchmark prompts.
-- Across Intermediate Papers 4, 5 and 6: 40 original chapter drafts and 200 benchmark prompts.
+- Foundation Paper 1 Accounting: 11 chapter packs and 55 benchmark prompts, relevant for May 2027 and onwards.
+- Intermediate Paper 4 Cost and Management Accounting: 15 chapter packs and 75 benchmark prompts.
+- Intermediate Paper 5 Auditing and Ethics: 11 chapter packs and 55 benchmark prompts.
+- Intermediate Paper 6 Section A Financial Management: 9 chapter packs and 45 benchmark prompts.
+- Intermediate Paper 6 Section B Strategic Management: 5 chapter packs and 25 benchmark prompts.
+- Across Foundation Paper 1 and Intermediate Papers 4, 5 and 6: 51 original chapter drafts and 255 benchmark prompts.
 - 0 human-reviewed chapter packs and 0 human-reviewed benchmark sets.
 
 The remaining mapped subjects are not silently promoted to authored content. The student response path may identify the matching paper and explain the coverage gap. Current/statutory questions continue to require live primary-source support.
