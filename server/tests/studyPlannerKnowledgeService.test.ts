@@ -386,6 +386,15 @@ test('subject classifier distinguishes Financial Management and Strategic Manage
   assert.equal(classifyParakhQuestion('How should I prepare audit evidence?', ['Auditing and Ethics']).domain, 'auditing');
 });
 
+test('subject classifier recognises CA Final and SPOM paper titles from the official curriculum registry', () => {
+  assert.equal(classifyParakhQuestion('Explain Advanced Financial Management', ['Advanced Financial Management']).domain, 'financial_management');
+  assert.equal(classifyParakhQuestion('Explain Direct Tax Laws & International Taxation', ['Direct Tax Laws & International Taxation']).domain, 'taxation');
+  assert.equal(classifyParakhQuestion('Explain Integrated Business Solutions', ['Integrated Business Solutions']).domain, 'integrated_business_solutions');
+  assert.equal(classifyParakhQuestion('Explain Strategic Cost & Performance Management', ['Strategic Cost & Performance Management']).domain, 'cost_accounting');
+  assert.equal(classifyParakhQuestion('Explain Valuation', ['Valuation']).domain, 'financial_management');
+});
+
+
 
 test('authored topic inventory reports the exact current seed count and never claims verification', () => {
   const topics = getStudyKnowledgeTopicInventory();
