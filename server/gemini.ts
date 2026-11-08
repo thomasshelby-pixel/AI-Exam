@@ -32,6 +32,7 @@ import { getAuthoritativePaperStructure } from './services/paperStructureService
 import { buildAnswerSheetCoverageMap } from './services/answerSheetCoverageService.js';
 import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.js';
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
+import { deriveEvaluationModelAttribution } from './services/evaluationModelAttribution.js';
 import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
 import { deduplicateQuestionList, toCanonicalQuestionId } from './services/canonicalQuestionService.js';
 import { classifyPreEvaluationFailures, validatePreEvaluationGate } from './services/evaluationIntegrityHardening.js';
@@ -1366,6 +1367,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                     checkingMode: (params.checkingMode as any) || 'standard',
                     level: params.level,
                     subjectName: params.subjectName,
+                    subjectKey: params.subjectKey,
                     referenceMetadata: questionReferenceMetadata,
                   });
                 } catch (chunkErr: unknown) {
@@ -1422,6 +1424,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                     checkingMode: (params.checkingMode as any) || 'standard',
                     level: params.level,
                     subjectName: params.subjectName,
+                    subjectKey: params.subjectKey,
                     referenceMetadata: questionReferenceMetadata,
                   });
                   descriptiveQuestions.push(recoveredQ);
@@ -1480,6 +1483,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           );
 
           const activeQuestions = multiMode.activeQuestions;
+          const modelAttribution = deriveEvaluationModelAttribution(activeQuestions);
           const calculatedTotal = multiMode.activeTotalMarks;
           const officialMax = multiMode.officialPaperMaxMarks;
           const attemptedMax = multiMode.attemptedMaxMarks;
@@ -1579,9 +1583,11 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             structuredMarkingEvidence: activeQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
             scoreCalculationAudit,
             isMcqPaper: false,
-            modelUsed: 'authoritative-ensemble-v4',
-            modelDisplayName: 'CA Evaluator Engine v4 (Structure-Enforced)',
-            modelProvider: 'Google Gemini Pro / Flash Vision',
+            modelUsed: modelAttribution.modelUsed,
+            modelDisplayName: modelAttribution.modelDisplayName,
+            modelProvider: modelAttribution.modelProvider,
+            fallbackOccurred: modelAttribution.fallbackOccurred,
+            fallbackReason: modelAttribution.fallbackReason,
             coverageMap,
             modeBreakdown: multiMode.modeBreakdown,
             checkingMode: params.checkingMode,

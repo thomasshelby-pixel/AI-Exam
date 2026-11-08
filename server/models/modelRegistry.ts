@@ -127,8 +127,8 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
   {
     id: 'gpt-5.6-sol',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Sol',
-    description: 'Deep evaluation & highest-quality reasoning. Unrivaled precision in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, ambiguous answers, deep marking verification, score calculation cross-checks, and checked-copy annotation instructions.',
+    displayName: 'OpenAI GPT-6.1 Sol',
+    description: 'GPT-6.1 Sol API model for deep reasoning in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, ambiguous answers, marking verification, score cross-checks, and checked-copy annotation instructions.',
     contextWindow: 200000,
     recommended: true,
     role: 'Deep Reasoning & Calculation Cross-Check',
@@ -147,8 +147,8 @@ export const APPROVED_MODELS: ModelDescriptor[] = [
   {
     id: 'gpt-5.6-terra',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Terra',
-    description: 'Fast high-volume & multimodal evaluation. Low latency OCR, dense handwriting reading, routine question evaluation, standard practical/theory evaluation, and speed-critical fallback processing.',
+    displayName: 'OpenAI GPT-6.1 Terra',
+    description: 'GPT-6.1 Terra API model for fast high-volume multimodal evaluation, low-latency OCR, handwriting reading, routine question evaluation, and speed-critical fallback processing.',
     contextWindow: 128000,
     recommended: false,
     role: 'Fast High-Volume / Multimodal / Low Latency',
@@ -295,11 +295,11 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
   {
     id: 'gpt-5.6-sol',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Sol (Deep Reasoning & Calculation Cross-Check)',
+    displayName: 'OpenAI GPT-6.1 Sol (Deep Reasoning & Calculation Cross-Check)',
     category: 'pro',
     status: 'STABLE',
     role: 'Deep Reasoning & Calculation Cross-Check',
-    description: 'Deep evaluation & highest-quality reasoning. Unrivaled precision in difficult CA answer evaluation, complex tax/costing computations, capital budgeting, and score calculation cross-checks.',
+    description: 'GPT-6.1 Sol API model for deep evaluation, difficult CA answer evaluation, complex tax/costing computations, capital budgeting, and score calculation cross-checks.',
     contextWindow: 200000,
     supportsMultimodal: true,
     supportsThinking: true,
@@ -311,11 +311,11 @@ export const EVALUATION_MODEL_REGISTRY: EvaluationModelRegistryItem[] = [
   {
     id: 'gpt-5.6-terra',
     provider: 'openai',
-    displayName: 'OpenAI GPT-5.6 Terra (Fast Multimodal & OCR)',
+    displayName: 'OpenAI GPT-6.1 Terra (Fast Multimodal & OCR)',
     category: 'flash',
     status: 'STABLE',
     role: 'Fast High-Volume / Multimodal / Low Latency',
-    description: 'Fast high-volume & multimodal evaluation. Low latency OCR, dense handwriting reading, routine question evaluation, and speed-critical fallback processing.',
+    description: 'GPT-6.1 Terra API model for fast high-volume multimodal evaluation, low-latency OCR, dense handwriting reading, and speed-critical fallback processing.',
     contextWindow: 128000,
     supportsMultimodal: true,
     supportsThinking: true,
@@ -1047,85 +1047,107 @@ export function isOpenAIReasoningModel(modelId: string): boolean {
     normalized.startsWith('o1');
 }
 
+/**
+ * Persisted admin/model-routing IDs remain stable for compatibility with SQLite
+ * and Firestore settings. Resolve them only at the OpenAI transport boundary.
+ */
+const OPENAI_API_MODEL_ID_ALIASES: Record<string, string> = {
+  'gpt-5.6-sol': 'gpt-6.1-sol',
+  'gpt-5.6-terra': 'gpt-6.1-terra',
+};
+
+export function getOpenAIApiModelId(modelId: string): string {
+  return OPENAI_API_MODEL_ID_ALIASES[String(modelId || '')] || modelId;
+}
+
+/**
+ * Build a provider-valid Chat Completions payload without a live API call.
+ * Reasoning models receive developer instructions and no temperature.
+ */
+export function buildOpenAIChatCompletionPayload(
+  modelId: string,
+  params: ModelExecutionParams,
+  effectiveThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = 'HIGH'
+): any {
+  const isReasoningModel = isOpenAIReasoningModel(modelId);
+  const messages: any[] = [];
+  if (params.systemPrompt) {
+    messages.push({
+      role: isReasoningModel ? 'developer' : 'system',
+      content: params.systemPrompt,
+    });
+  }
+
+  const userContent = buildOpenAIUserContent(params);
+  messages.push({
+    role: 'user',
+    content: userContent.length === 1 ? userContent[0].text : userContent,
+  });
+
+  const payload: any = {
+    model: getOpenAIApiModelId(modelId),
+    messages,
+  };
+
+  if (isReasoningModel) {
+    const reasoningEffort =
+      effectiveThinkingLevel === 'XHIGH' ? 'xhigh' :
+      effectiveThinkingLevel === 'HIGH' ? 'high' :
+      effectiveThinkingLevel === 'LOW' ? 'low' : 'medium';
+    payload.reasoning_effort = reasoningEffort;
+    payload.max_completion_tokens = params.maxTokens || 8192;
+  } else {
+    payload.max_tokens = params.maxTokens || 8192;
+    payload.temperature = 0.2;
+  }
+
+  if (params.responseMimeType === 'application/json') {
+    payload.response_format = { type: 'json_object' };
+  }
+
+  return payload;
+}
+
+export function extractOpenAIChatCompletionText(response: any): string {
+  const choice = response?.choices?.[0];
+  const message = choice?.message;
+  const finishReason = choice?.finish_reason;
+
+  if (finishReason === 'length') {
+    throw new Error('OPENAI_OUTPUT_TRUNCATED: provider stopped at the token limit.');
+  }
+  if (finishReason === 'content_filter') {
+    throw new Error('OPENAI_OUTPUT_BLOCKED: provider content filter stopped the response.');
+  }
+  if (finishReason !== 'stop') {
+    throw new Error(`OPENAI_OUTPUT_INCOMPLETE: finish_reason=${finishReason || 'missing'}.`);
+  }
+
+  const text = typeof message?.content === 'string' ? message.content.trim() : '';
+  if (!text) {
+    const refusal = typeof message?.refusal === 'string' ? message.refusal.trim() : '';
+    throw new Error(refusal
+      ? `OPENAI_REFUSAL: ${refusal.slice(0, 300)}`
+      : 'OPENAI_EMPTY_OUTPUT: provider returned no textual evaluation content.');
+  }
+  return text;
+}
+
 async function callOpenAI(
   modelId: string,
   params: ModelExecutionParams,
   effectiveThinkingLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'XHIGH' = 'HIGH'
 ): Promise<{ text: string; promptTokens?: number; completionTokens?: number; totalTokens?: number }> {
   const openai = getOpenAI();
-  const messages: any[] = [];
+  const requestPayload = buildOpenAIChatCompletionPayload(modelId, params, effectiveThinkingLevel);
 
-  if (params.systemPrompt) {
-    messages.push({
-      role: 'system',
-      content: params.systemPrompt,
-    });
-  }
-
-  const userContent = buildOpenAIUserContent(params);
-
-  messages.push({
-    role: 'user',
-    content: userContent.length === 1 ? userContent[0].text : userContent,
-  });
-
-  const requestPayload: any = {
-    model: modelId,
-    messages,
-  };
-
-  const isReasoningModel = isOpenAIReasoningModel(modelId);
-  if (isReasoningModel) {
-    const reasoningEffort =
-      effectiveThinkingLevel === 'XHIGH' || effectiveThinkingLevel === 'HIGH'
-        ? 'high'
-        : effectiveThinkingLevel === 'LOW'
-        ? 'low'
-        : 'medium';
-    requestPayload.reasoning_effort = reasoningEffort;
-    requestPayload.max_completion_tokens = params.maxTokens || 8192;
-  } else {
-    requestPayload.max_tokens = params.maxTokens || 8192;
-    requestPayload.temperature = 0.2;
-  }
-
-  if (params.responseMimeType === 'application/json') {
-    requestPayload.response_format = { type: 'json_object' };
-  }
-
-  let response: any;
-  try {
-    response = await openai.chat.completions.create(requestPayload);
-  } catch (err: any) {
-    const errMsg = (err?.message || String(err)).toLowerCase();
-    const isBillingOrQuota = errMsg.includes('credit') || errMsg.includes('quota') || errMsg.includes('429') || errMsg.includes('401') || errMsg.includes('billing');
-    const isParameterCompatibilityError = isOpenAIParameterCompatibilityError(errMsg);
-    // Retry without reasoning only when the provider explicitly rejects a request parameter.
-    // Do not silently downgrade reasoning for unrelated 400/404/5xx failures.
-    if (!isBillingOrQuota && isParameterCompatibilityError && (requestPayload.reasoning_effort || requestPayload.max_completion_tokens)) {
-      delete requestPayload.reasoning_effort;
-      requestPayload.max_tokens = requestPayload.max_completion_tokens || 8192;
-      delete requestPayload.max_completion_tokens;
-      response = await openai.chat.completions.create(requestPayload);
-    } else {
-      throw err;
-    }
-  }
-
-  const choice = response.choices?.[0];
+  // Do not silently downgrade an evaluator's reasoning settings by retrying the
+  // same request with altered token parameters. The outer provider fallback
+  // chain handles provider/API failures and preserves an auditable failure path.
+  const response = await openai.chat.completions.create(requestPayload);
+  const text = extractOpenAIChatCompletionText(response);
   const usage = response.usage;
-  const finishReason = choice?.finish_reason;
-  if (finishReason === 'length') {
-    const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens ?? 0;
-    throw new Error(`OPENAI_OUTPUT_TRUNCATED: finish_reason=length; completion_tokens=${usage?.completion_tokens ?? 'unknown'}; reasoning_tokens=${reasoningTokens}.`);
-  }
-  if (finishReason !== 'stop') {
-    throw new Error(`OPENAI_OUTPUT_INCOMPLETE: finish_reason=${finishReason || 'missing'}.`);
-  }
-  const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';
-  if (!text.trim()) {
-    throw new Error('OPENAI_EMPTY_OUTPUT: provider returned no textual evaluation content.');
-  }
+
   return {
     text,
     promptTokens: usage?.prompt_tokens,

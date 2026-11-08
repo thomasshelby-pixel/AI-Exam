@@ -8,11 +8,15 @@ import {
   determineModelRouting,
   clearModelCooldown,
   buildOpenAIUserContent,
+  getOpenAIApiModelId,
+  buildOpenAIChatCompletionPayload,
+  extractOpenAIChatCompletionText,
   isOpenAIReasoningModel,
   getOpenAIThinkingLevel,
   isOpenAIParameterCompatibilityError,
 } from '../models/modelRegistry.js';
 import { buildMarksLeakReport } from '../../src/utils/marksLeakDetector.js';
+import { deriveEvaluationModelAttribution } from '../services/evaluationModelAttribution.js';
 import {
   assessQuestionReferenceForEvaluation,
   parseAndValidateQuestionChunkOutput,
@@ -315,6 +319,86 @@ async function runTests() {
   assert.strictEqual(getOpenAIThinkingLevel('gpt-5.6-terra', 'HIGH'), 'LOW', 'Terra remains on low-latency reasoning');
   assert.strictEqual(isOpenAIParameterCompatibilityError('Unsupported parameter: reasoning_effort'), true, 'Explicit reasoning parameter rejection may use compatibility retry');
   assert.strictEqual(isOpenAIParameterCompatibilityError('Model not found for this project'), false, 'Unrelated provider failures must not trigger a reasoning downgrade');
+
+  assert.strictEqual(getOpenAIApiModelId('gpt-5.6-sol'), 'gpt-6.1-sol');
+  assert.strictEqual(getOpenAIApiModelId('gpt-5.6-terra'), 'gpt-6.1-terra');
+  assert.strictEqual(getOpenAIApiModelId('gpt-6-astra'), 'gpt-6-astra');
+
+  const solPayload = buildOpenAIChatCompletionPayload(
+    'gpt-5.6-sol',
+    {
+      systemPrompt: 'You are a strict CA examiner.',
+      userPrompt: 'Evaluate the answer against the selected references.',
+      responseMimeType: 'application/json',
+    },
+    'XHIGH',
+  );
+  assert.strictEqual(solPayload.model, 'gpt-6.1-sol');
+  assert.strictEqual(solPayload.messages[0].role, 'developer');
+  assert.strictEqual(solPayload.reasoning_effort, 'xhigh');
+  assert.strictEqual(solPayload.max_completion_tokens, 8192);
+  assert.strictEqual(solPayload.temperature, undefined);
+  assert.strictEqual(solPayload.max_tokens, undefined);
+  assert.deepStrictEqual(solPayload.response_format, { type: 'json_object' });
+
+  const terraPayload = buildOpenAIChatCompletionPayload(
+    'gpt-5.6-terra',
+    { systemPrompt: '', userPrompt: 'Read this answer sheet.' },
+    'LOW',
+  );
+  assert.strictEqual(terraPayload.model, 'gpt-6.1-terra');
+  assert.strictEqual(terraPayload.reasoning_effort, 'low');
+  assert.strictEqual(terraPayload.temperature, undefined);
+
+  const astraPayload = buildOpenAIChatCompletionPayload(
+    'gpt-6-astra',
+    { systemPrompt: 'Strict examiner.', userPrompt: 'Review the calculation.' },
+    'HIGH',
+  );
+  assert.strictEqual(astraPayload.model, 'gpt-6-astra');
+  assert.strictEqual(astraPayload.reasoning_effort, 'high');
+
+  assert.strictEqual(
+    extractOpenAIChatCompletionText({
+      choices: [{ finish_reason: 'stop', message: { content: '{"marksAwarded": 3}' } }],
+    }),
+    '{"marksAwarded": 3}',
+  );
+  assert.throws(
+    () => extractOpenAIChatCompletionText({
+      choices: [{ finish_reason: 'length', message: { content: '{"marksAwarded":' } }],
+    }),
+    /OPENAI_OUTPUT_TRUNCATED/,
+  );
+  assert.throws(
+    () => extractOpenAIChatCompletionText({
+      choices: [{ finish_reason: 'stop', message: { content: null, refusal: 'Request declined.' } }],
+    }),
+    /OPENAI_REFUSAL/,
+  );
+  assert.throws(
+    () => extractOpenAIChatCompletionText({
+      choices: [{ finish_reason: 'content_filter', message: { content: null } }],
+    }),
+    /OPENAI_OUTPUT_BLOCKED/,
+  );
+
+  const mixedAttribution = deriveEvaluationModelAttribution([
+    { modelUsed: 'gpt-6.1-sol', modelProvider: 'openai', fallbackOccurred: false },
+    { modelUsed: 'gemini-3.8-flash', modelProvider: 'gemini', fallbackOccurred: true, fallbackReason: 'OpenAI request failed' },
+  ]);
+  assert.strictEqual(mixedAttribution.modelUsed, 'multi-model (gpt-6.1-sol, gemini-3.8-flash)');
+  assert.strictEqual(mixedAttribution.modelProvider, 'multi-provider (openai + gemini)');
+  assert.strictEqual(mixedAttribution.fallbackOccurred, true);
+  assert.strictEqual(mixedAttribution.fallbackReason, 'OpenAI request failed');
+
+  const deterministicAttribution = deriveEvaluationModelAttribution([
+    { fallbackOccurred: false },
+  ]);
+  assert.strictEqual(deterministicAttribution.modelUsed, 'deterministic');
+  assert.strictEqual(deterministicAttribution.modelProvider, 'deterministic');
+  assert.strictEqual(deterministicAttribution.fallbackOccurred, false);
+
 
   // Marks Leak Detector: only explicit attempt and component evidence is counted.
   const leakReport = buildMarksLeakReport({
