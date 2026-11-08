@@ -169,6 +169,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     getAttemptsForLevel(navState.level || 'INTERMEDIATE')
   );
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
+  const [parakhLearningConsent, setParakhLearningConsent] = useState<boolean>(false);
 
   // File upload states
   const [file, setFile] = useState<File | null>(null);
@@ -205,6 +206,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     setElapsedSeconds(0);
     setFile(null);
     setFileBase64('');
+    setParakhLearningConsent(false);
     setEnrolledInstitutes([]);
     setSelectedInstituteId('');
     setInstituteMaterials([]);
@@ -795,6 +797,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           subjectName: currentSubject?.name || 'CA Subject',
           attempt: evaluationSource === 'INSTITUTE' ? 'Institute Series' : (materialType === 'MODEL_TEST_PAPER' ? 'All' : attempt),
           checkingMode,
+          parakhLearningConsent,
           fileBase64,
           mimeType: file.type || 'application/pdf',
           filename: file.name,
@@ -806,6 +809,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       });
 
       if (currentStudentIdRef.current !== submissionOwnerId) return;
+      setParakhLearningConsent(false);
 
       if (response.result) {
         if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
@@ -1775,6 +1779,27 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 >
                   View Guidelines →
                 </button>
+              </div>
+
+              {/* Optional consent for the PARAKH Learning Engine */}
+              <div className="rounded-xl border border-indigo-200 dark:border-indigo-900/70 bg-indigo-50/70 dark:bg-indigo-950/30 p-3.5 space-y-2">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={parakhLearningConsent}
+                    onChange={(e) => setParakhLearningConsent(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
+                    <span className="font-bold text-slate-900 dark:text-white">Optional: Contribute to PARAKH Learning Engine</span>
+                    <span className="block mt-0.5">
+                      I agree that this answer sheet and its final admin-reviewed evaluation may be considered for future evaluation-quality learning, after anonymisation and quality checks.
+                    </span>
+                  </span>
+                </label>
+                <p className="pl-6 text-[10px] leading-relaxed text-slate-500 dark:text-slate-400">
+                  This is completely optional. Leaving it unchecked will not affect your evaluation, marks, credits, or processing. PARAKH currently records only the consent and evaluation reference; dataset export and model training are not active.
+                </p>
               </div>
 
               {/* Action CTA Button */}
