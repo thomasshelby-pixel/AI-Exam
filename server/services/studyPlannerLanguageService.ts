@@ -2,7 +2,7 @@ import type { ParsedStudyPlannerRequest } from './studyPlannerEngine.js';
 
 export type StudyReplyLanguage = 'english' | 'hinglish' | 'hindi';
 
-const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krna|karna|hai|hain|hoon|hu|mujhe|mera|meri|mere|mein|kya|kyu|kyun|samjhao|samjha|padhai|padhu|padna|nahi|nahin|accha|acha|bta|kri|kriya|kro|chahiye|kitna|kitne|ghante|laane|lana|yaad|bhool|banao|bana|karunga|karungi|raha|rahi|rhe|pehle|liye)\b/i;
+const HINGLISH_MARKERS = /\b(bhai|batao|btao|kaise|kaisa|kaisi|karo|kru|karu|krna|karna|kr|krne|hai|hain|hoon|hu|ho|mujhe|mujhko|mujhse|mera|meri|mere|mein|kya|kyu|kyun|samjhao|samjha|samajh|padhai|padhu|padna|nahi|nahin|nhi|aata|ata|wala|wali|wale|accha|acha|bta|kri|kriya|kro|skte|sakte|sakta|sakti|chahiye|kitna|kitne|ghante|laane|lana|yaad|bhool|banao|bana|karunga|karungi|raha|rahi|rhe|pehle|liye)\b/i;
 
 export function detectStudyReplyLanguage(text: string): StudyReplyLanguage {
   if (/[\u0900-\u097F]/.test(text)) return 'hindi';
@@ -43,21 +43,25 @@ export function buildTopicIntentClarification(language: StudyReplyLanguage, subj
 
 export function buildTopicIntentOptions(language: StudyReplyLanguage, subject: string): string[] {
   if (language === 'hindi') return [subject + ' का concept समझाओ', subject + ' की revision strategy', subject + ' का study plan'];
-  if (language === 'hinglish') return [subject + ' concept samjhao', subject + ' revision strategy', subject + ' study plan'];
+  if (language === 'hinglish') return [subject + ' ka concept samjhao', subject + ' ki revision strategy batao', subject + ' ka study plan banao'];
   return ['Explain a ' + subject + ' concept', subject + ' revision strategy', subject + ' study plan'];
 }
 
 export function isGeneralStudyQuestion(text: string): boolean {
+  const learningDifficulty = /\b(?:mujhe|mujhko|mujhse|i)\b.{0,80}\b(?:nahi|nahin|nhi|don't|do not|cannot|can't|cant|unable|struggling)\b.{0,80}\b(?:aata|ata|samajh|understand|chapter|topic|ratio|formula|concept)\b/i.test(text)
+    || /\b(?:nahi|nahin|nhi)\s+(?:aata|ata|samajh(?:h)?\s+(?:aa\s+)?(?:raha|rahi)|samajh)\b/i.test(text)
+    || /\b(?:hard|difficult|struggling)\s+(?:with|in|to understand)\b/i.test(text);
+  if (learningDifficulty) return true;
   if (/[\u0900-\u097F]/.test(text) && /(कैसे|क्या|पढ़|revision|समझ|बताइ|करूँ|करें|मदद|सवाल|डाउट|उलझ|समस्या)/i.test(text)) return true;
   return /\b(how\s+(?:can|do|should|to)\s+i|how\s+to|explain(?:ed)?|explain\s+me|what\s+(?:is|are)|tell\s+me\s+about|define|describe|difference\s+between|compare|why\s+(?:does|is|are|do)|meaning\s+of|concept\s+of|help\s+me\s+understand|i(?:'m|\s+am)\s+(?:confused|stuck|struggling)|i\s+(?:don't|do\s+not)\s+understand|i\s+have\s+(?:a\s+)?(?:doubt|question)|confused\s+about|stuck\s+on|struggling\s+with|doubt\s+about|effective|strategy|strategies|tips|improve|remember|memorize|study\s+method|revision\s+method|revision\s+strategy|prepare\s+for|exam\s+strategy|batao|btao|kaise|samjhao|samjha[o]?|kya\s+hai|kyu|kyun|kaise\s+kar|kaise\s+kru|kaise\s+karu|kaise\s+kri|kaise\s+karun|kaise\s+kare|revision\s+kaise\s+(?:kru|karu|kri|karun)|effective\s+revision|revision\s+kaise|padhai\s+kaise|yaad\s+kaise|samajh\s+kaise)\b/i.test(text);
 }
-
 export function buildGeneralStudyAnswer(
   message: string,
   parsed: ParsedStudyPlannerRequest,
 ): { language: StudyReplyLanguage; answer: string } {
   const language = detectStudyReplyLanguage(message);
   const subject = parsed.subjects[0] || '';
+  const isLearningDifficulty = /\b(?:mujhe|mujhko|mujhse)\b.{0,80}\b(?:nahi|nahin|nhi)\b.{0,40}\b(?:aata|ata|samajh|chapter|topic)\b|\b(?:i don['’]?t know|i can['’]?t understand|not getting|struggling with|hard to understand)\b/i.test(message);
   const isRevision = /revision|revise|repeat|recall|yaad|padhai|study|prepare|preparation|exam/i.test(message);
   const isMemoryQuestion = /remember|memorize|memory|retention|forget|yaad|bhool|retain/i.test(message);
   const isExamStrategyQuestion = /mock|paper|attempt|marks?|score|time management|exam hall|exam strategy|answer presentation|paper solving/i.test(message);
@@ -65,7 +69,9 @@ export function buildGeneralStudyAnswer(
   const subjectLabel = subject ? subject : (language === 'english' ? 'your subject' : language === 'hindi' ? 'अपने subject' : 'apne subject');
 
   if (language === 'hindi') {
-    const answer = isRevision
+    const answer = isLearningDifficulty
+      ? `कोई बात नहीं। जिस chapter में दिक्कत आ रही है, उसे बिल्कुल basic से step-by-step समझते हैं। पहले उसका core idea, फिर एक solved example और फिर एक छोटा practice question करेंगे। Chapter या exact question भेजिए; हम वहीं से शुरू करेंगे।`
+      : isRevision
       ? `प्रभावी revision के लिए ${subjectLabel} को इस तरह पढ़ो:\n\n1. **Active recall:** Notes बंद करके मुख्य concepts, provisions या formulas याद से लिखो।\n2. **Question practice:** ICAI module के questions पहले खुद solve करो, फिर suggested answer से compare करो।\n3. **Error log:** गलतियों को concept, presentation और calculation में बाँटो।\n4. **Spaced revision:** आज पढ़ने के बाद 1 दिन, 3 दिन और 7 दिन बाद दोबारा recall करो।\n5. **Self-test:** Session के आखिरी 10–15 मिनट बिना notes देखे test दो।\n\nSubject या chapter का नाम बताओ, तो मैं उसी के हिसाब से specific strategy दूँगा।`
       : isMemoryQuestion
         ? `याद रखने के लिए छोटे topics बनाओ, बिना notes देखे recall करो, और उसी topic को 1, 3 और 7 दिन बाद दोहराओ। केवल पढ़ने के बजाय short self-test और गलतियों की सूची बनाओ।`
@@ -78,7 +84,9 @@ export function buildGeneralStudyAnswer(
   }
 
   if (language === 'hinglish') {
-    const answer = isRevision
+    const answer = isLearningDifficulty
+      ? `Koi baat nahi bhai. Jis chapter mein dikkat aa rahi hai, use bilkul basic se step-by-step karte hain. Pehle core idea samjhenge, phir ek solved example aur uske baad ek chhota practice question. Chapter ya exact question bhej—wahi se start karte hain.`
+      : isRevision
       ? `Bhai, ${subjectLabel} ki effective revision aise kar:\n\n1. **Active recall:** Notes band karke main concepts, provisions ya formulas khud yaad se likh.\n2. **Question practice:** ICAI module ke questions pehle khud solve kar, phir suggested answer se compare kar.\n3. **Error log:** Har galti ko concept, presentation ya calculation mistake mein mark kar.\n4. **Spaced revision:** Aaj revise karne ke baad 1 din, 3 din aur 7 din baad quick recall kar.\n5. **Self-test:** Session ke last 10–15 min bina notes dekhe test de.\n\nSubject/chapter bata de toh main uske according exact revision approach bhi bata dunga.`
       : isMemoryQuestion
         ? `Bhai, yaad rakhne ke liye topic ko chhote parts mein tod, notes band karke recall kar, aur 1, 3, 7 din baad spaced revision kar. Har session mein ek short self-test aur error log rakh.`
@@ -90,7 +98,9 @@ export function buildGeneralStudyAnswer(
     return { language, answer };
   }
 
-  const answer = isRevision
+  const answer = isLearningDifficulty
+    ? `No problem. We can build this chapter from the basics: first understand the core idea, then work through one solved example, and finally try a short practice question. Share the exact chapter or question and we will start there.`
+    : isRevision
     ? `For effective revision of ${subjectLabel}, use this cycle:\n\n1. **Active recall:** Close your notes and write the key concepts, provisions or formulas from memory.\n2. **Question practice:** Attempt ICAI module questions before checking the suggested answer.\n3. **Error log:** Classify mistakes as concept, presentation or calculation errors.\n4. **Spaced revision:** Revisit the topic after 1 day, 3 days and 7 days.\n5. **Self-test:** Finish with a 10–15 minute closed-book test.\n\nShare the subject/chapter or an exact question and I can tailor the explanation to it.`
     : isMemoryQuestion
       ? `For retention, break the chapter into small units, practise closed-book recall, then revisit it after 1, 3 and 7 days. Use a short self-test and an error log instead of rereading alone.`
