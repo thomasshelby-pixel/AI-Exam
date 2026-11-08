@@ -1761,6 +1761,19 @@ function runMigrations() {
       user_agent TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS policy_update_acknowledgements (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      policy_version TEXT NOT NULL,
+      acknowledged_at TEXT NOT NULL,
+      ip_address TEXT,
+      user_agent TEXT,
+      UNIQUE(user_id, policy_version)
+    );
+    CREATE INDEX IF NOT EXISTS idx_policy_update_ack_user
+      ON policy_update_acknowledgements(user_id, policy_version);
+
+
     CREATE TABLE IF NOT EXISTS legal_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
