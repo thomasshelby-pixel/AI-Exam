@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, hashPassword, verifyPassword, loadEvaluationRunPackage } from '../db.js';
-import { authenticateToken, authenticateSelfDeleteToken, AuthRequest, getStudentEntitlement } from '../auth.js';
+import { authenticateToken, authenticateSelfDeleteToken, AuthRequest, getStudentEntitlement, checkPermanentFreeAccess } from '../auth.js';
 import { validateAnswerSheetDocument, evaluateCAAnswerSheet } from '../gemini.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
 import {
@@ -429,6 +429,7 @@ router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) =
     }
     const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user!.id) as { ca_level?: string } | undefined;
     const courseLevel = String(profile?.ca_level || '').trim().toUpperCase();
+    const permanentFreeAccess = checkPermanentFreeAccess(req.user!.email || '');
     if (!['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(courseLevel)) {
       return res.status(403).json({ error: 'Complete your CA course profile before viewing faculty mock tests.', code: 'PROFILE_COMPLETION_REQUIRED' });
     }
@@ -478,7 +479,7 @@ router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) =
         attempts: [...new Set(tests.filter((t) => t.faculty_id === f.id).map((t) => String(t.attempt)))].sort(),
       }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    return res.json({ courseLevel, faculties, tests });
+    return res.json({ courseLevel, faculties, tests, permanentFreeAccess });
   } catch (error) {
     console.error('[FacultyMocks] Student catalogue error:', error);
     return res.status(503).json({ error: 'Faculty mock catalogue is temporarily unavailable. Please retry.' });
@@ -505,7 +506,7 @@ router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, r
     if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
       return res.status(404).json({ error: 'This faculty mock is not currently available.' });
     }
-    if (String(test.access_type || 'FREE').toUpperCase() === 'PAID') {
+    if (String(test.access_type || 'FREE').toUpperCase() === 'PAID' && !checkPermanentFreeAccess(req.user!.email || '')) {
       const availablePaidCopy = await findAvailableFacultyMockPaidCopy(req.user!.id, testId);
       if (!availablePaidCopy) {
         return res.status(402).json({
@@ -1161,6 +1162,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     // Step 0: Check mandatory evaluation disclaimer acknowledgement
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+    const isPermanentFreeStudent = checkPermanentFreeAccess(studentEmail);
     if (!isStudentDisclaimerAcknowledged(studentId, studentEmail)) {
       return res.status(403).json({
         error: 'Mandatory evaluation disclaimer must be acknowledged before submitting answer sheets for evaluation.',
@@ -1285,7 +1287,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     let resolvedSponsoringEnrollmentId: string | null = null;
     let resolvedSponsoringBatchId: string | null = null;
     let resolvedInstituteName: string | null = null;
-    entitlementSource = isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
+    entitlementSource = isPermanentFreeStudent ? 'PERMANENT_FREE' : isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
     let personalEntitlement: any = null;
     let preloadedMat: any = null;
     let facultyMockRecord: any = null;
@@ -1326,10 +1328,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
       }
 
-      const mockAccessType = String(facultyMockRecord.access_type || 'FREE').trim().toUpperCase() === 'PAID'
-        ? 'PAID'
-        : 'FREE';
-      if (mockAccessType === 'PAID') {
+      if (!isPermanentFreeStudent) {
+        const mockAccessType = String(facultyMockRecord.access_type || 'FREE').trim().toUpperCase() === 'PAID'
+          ? 'PAID'
+          : 'FREE';
+        if (mockAccessType === 'PAID') {
         // Paid mocks never receive a first-copy free claim. Every submission
         // must have its own verified single-copy Razorpay entitlement.
         const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
@@ -1364,6 +1367,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           }
           resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
         }
+      }
       }
 
       if (
@@ -1438,7 +1442,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         LIMIT 1
       `).get(chosenInst.institute_id) as { evaluations_remaining: number } | undefined;
 
-      if (sub && sub.evaluations_remaining <= 0) {
+      if (!isPermanentFreeStudent && sub && sub.evaluations_remaining <= 0) {
         return res.status(402).json({
           error: `Coaching institute evaluation quota for ${chosenInst.institute_name} is exhausted. Please contact institute administration.`,
         });
@@ -1448,7 +1452,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       resolvedSponsoringEnrollmentId = chosenInst.membership_id;
       resolvedSponsoringBatchId = chosenInst.batch_id || null;
       resolvedInstituteName = chosenInst.institute_name;
-      entitlementSource = 'INSTITUTE_ALLOCATION';
+      entitlementSource = isPermanentFreeStudent ? 'PERMANENT_FREE' : 'INSTITUTE_ALLOCATION';
     } else {
       // Student has NO active institute enrollment
       if (isInstituteMode) {
@@ -1813,9 +1817,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     // Faculty Mock copy policy:
     // FREE mocks grant one first copy per student + exact mock; PAID mocks
-    // require a captured one-copy purchase for every evaluation. Neither path
-    // consumes general evaluation credits or institute quotas.
-    if (isFacultyMockMode) {
+    // require a captured one-copy purchase for every evaluation. Accounts with
+    // a permanent-free entitlement bypass both copy-payment paths entirely.
+    if (isFacultyMockMode && !isPermanentFreeStudent) {
       const selectedMockId = String(facultyMockRecord?.id || '').trim();
       const mockAccessType = String(facultyMockRecord?.access_type || 'FREE').trim().toUpperCase() === 'PAID'
         ? 'PAID'
