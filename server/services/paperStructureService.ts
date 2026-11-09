@@ -857,7 +857,7 @@ function getSourceBackedMcqMaximumMarks(
   // Source-backed rules can define a uniform allocation for all MCQs.
   const combined = sources.join('\n');
   const sharedRules = [
-    /\b(?:each|every)\s+(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\s+(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
+    /\b(?:each|every)\s+(?:MCQs?|multiple[- ]choice|objective)\s*(?:(?:question|item)s?\s*)?(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
     /\b(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\b[^\n.]{0,60}\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per\s+question)\b/i,
     /\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per)\s+(?:MCQ|multiple[- ]choice|objective)\b/i,
   ];
