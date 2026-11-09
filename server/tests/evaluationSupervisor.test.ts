@@ -269,6 +269,10 @@ async function run(): Promise<void> {
         calls++;
         assert(context.supervisorIssues?.some((issue) => issue.includes('SUPERVISOR_UNCLEAR_EVALUATION')),
           'Model-uncertain result sends its precise uncertainty to the correction evaluator');
+        assert(context.referenceMetadata?.facultyMockTestId === 'faculty-test-1',
+          'Second-pass evaluator receives the exact selected Faculty Mock source identity');
+        assert(context.referenceMetadata?.materialType === 'FACULTY_MOCK_TEST',
+          'Second-pass evaluator receives the source-driven material type');
         return makeQuestion(4);
       },
       reprocessIntegrity: (result) => ({
@@ -280,10 +284,17 @@ async function run(): Promise<void> {
         downloadsUnlocked: true,
       }),
     };
-    const supervised = await runEvaluationSupervisor(
-      makeParams(makeResult(uncertainQuestion, 'NEEDS_REVIEW'), makeCoverage()),
-      dependencies,
-    );
+    const uncertainParams = makeParams(makeResult(uncertainQuestion, 'NEEDS_REVIEW'), makeCoverage());
+    uncertainParams.evaluationResult.materialType = 'FACULTY_MOCK_TEST' as any;
+    uncertainParams.referenceMetadata = {
+      qpMaterialId: 'faculty-qp',
+      saMaterialId: 'faculty-sa',
+      msMaterialId: 'faculty-ms',
+      sourceType: 'FACULTY_MOCK',
+      materialType: 'FACULTY_MOCK_TEST',
+      facultyMockTestId: 'faculty-test-1',
+    };
+    const supervised = await runEvaluationSupervisor(uncertainParams, dependencies);
     const audit = (supervised.integrityAudit as any)?.supervisor;
     assert(calls === 1, 'A readable answer with model uncertainty receives one targeted second pass');
     assert(audit?.status === 'PASS', 'A successfully resolved model uncertainty no longer remains in NEEDS_REVIEW');
