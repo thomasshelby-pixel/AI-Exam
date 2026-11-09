@@ -59,7 +59,7 @@ const paperStructure: any = {
   questions: [],
   subQuestions: validNestedIds.slice(0, 8).map((fullQuestionCode) => ({
     fullQuestionCode,
-    questionNumber: fullQuestionCode.match(/^Q(\\d+)/)?.[1] || '1',
+    questionNumber: fullQuestionCode.match(/^Q(\d+)/)?.[1] || '1',
     subQuestionNumber: undefined,
     maximumMarks: 1,
     isMcq: false,
@@ -83,7 +83,7 @@ assert.equal(
 const validEvaluation: any = {
   questions: validNestedIds.slice(0, 8).map((canonicalId) => ({
     canonicalId,
-    questionNumber: canonicalId.match(/^Q(\\d+)/)?.[1] || '1',
+    questionNumber: canonicalId.match(/^Q(\d+)/)?.[1] || '1',
     maximumMarks: 1,
     marksAwarded: 0,
     status: 'not_attempted',
