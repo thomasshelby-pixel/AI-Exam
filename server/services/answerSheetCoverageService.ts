@@ -1188,6 +1188,18 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
   question label when it agrees with the material. If the label conflicts with a strong material match,
   report the material match and set labelMismatch=true; do not silently hide the conflict.
 - One page may contain multiple independent questions. Split and map each answer block separately.
+- Treat every separately labelled descriptive sub-part as its own answer block: (a), (b), (i), (ii),
+  (1), (2), and nested labels such as (a)(i) or (5)(ii). Never collapse siblings into their parent.
+- Count every distinct attempted answer block in answerBlocksObserved. Count each descriptive sub-part
+  and each attempted MCQ once. Do not count printed question stems, blank space or unattempted parts.
+- If an answer block is visibly attempted but its question identity cannot be safely mapped, add a concise
+  literal description to unresolvedAnswerBlocks. Do not omit it and do not guess a nearby question ID.
+- If an MCQ response is visibly attempted but its chosen option is unreadable, overwritten, ambiguous or
+  conflicting, add its exact source label to mcqNeedsReview. Do NOT leave it out as blank, infer an option,
+  or put it in mcqSelections. Preserve other clearly read MCQ choices normally.
+- Read common MCQ response formats: a circled/ticked A-D, a handwritten option beside the number,
+  "1-(c)", "1. c", "Q1(iv)=C", answer grids and clearly marked option bubbles. Link them only to the
+  authoritative MCQ crosswalk above.
 - A continuation can refer to ANY earlier question, not necessarily the previous page's last question.
   Compare it with PRIOR DETECTED ANSWERS FROM ALL EARLIER PAGES. Set isContinuation=true and use the
   same canonical ID only when the handwriting/content clearly continues that earlier answer.
@@ -1255,7 +1267,10 @@ TASK:
 3. Set isContinuation=true only for a clear continuation without a new label.
 4. Give literal questionLabelEvidence (e.g. "circled 2 in left margin") and readingConfidence 0–1.
    Confidence is diagnostic only and must not override identity validation.
-5. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
+5. Set answerBlocksObserved to the exact number of distinct attempted answer blocks on this page.
+6. Return every unresolved visible answer block in unresolvedAnswerBlocks.
+7. Return every visible MCQ attempt with an unreadable/ambiguous option in mcqNeedsReview.
+8. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
    CLEARLY_UNATTEMPTED or QUESTION_NOT_IDENTIFIED.
 
 Return valid JSON only:
@@ -1265,6 +1280,9 @@ Return valid JSON only:
   "summary": "brief factual page summary",
   "questionLabelEvidence": "literal label evidence and its location",
   "readingConfidence": 0.0,
+  "answerBlocksObserved": 2,
+  "unresolvedAnswerBlocks": [],
+  "mcqNeedsReview": [],
   "detectedQuestions": [
     {
       "questionNumber": "2",
