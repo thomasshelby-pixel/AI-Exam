@@ -82,6 +82,14 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
     rest = rest.replace(/^\s+/, '');
     if (!rest) break;
 
+    if (allowBareToken) {
+      const nestedDotted = rest.match(/^([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)+)$/);
+      if (nestedDotted) {
+        parts.push(...nestedDotted[1].split('.').map((token) => token.toLowerCase()));
+        break;
+      }
+    }
+
     if (rest[0] === '(' || rest[0] === '[') {
       const opening = rest[0] as '(' | '[';
       const closeAt = findBalancedClosing(rest, 0, opening);
