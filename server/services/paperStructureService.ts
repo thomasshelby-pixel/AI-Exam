@@ -558,7 +558,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const lines = text.split(/\r?\n/);
   let activeParentQNum: string | null = null;
   let activeSubQuestionPath: string[] = [];
-  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b|CLAUSE\b|ITEM\b|PARA\b))/i;
+  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b([\s\S]*)$/i;
   const childSubQRegex = new RegExp(
     '^\\s*(' + namedPrefixPath + '|' +
     '(?:' + labelledPrefixName + '\\s*)?' + bracketPath + '|' +
@@ -619,7 +619,13 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     const parentMatch = line.match(parentHeaderRegex);
     if (parentMatch) {
       activeParentQNum = parentMatch[1];
-      activeSubQuestionPath = [];
+      const parentSuffix = String(parentMatch[2] || '')
+        .trim()
+        .replace(/^[-–—:]\\s*/, '')
+        .replace(/^\\.(?=\\s*[\\(\\[])/, '');
+      activeSubQuestionPath = parseCanonicalQuestionIdentity(
+        'Q' + activeParentQNum + parentSuffix
+      ).subQuestionPath || [];
     }
 
     if (!activeParentQNum) continue;
