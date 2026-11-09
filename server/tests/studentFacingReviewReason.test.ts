@@ -25,6 +25,12 @@ assert.match(modelUncertainReason, /uploaded answer is readable/i);
 assert.match(modelUncertainReason, /second check/i);
 assert.match(modelUncertainReason, /24–48 working hours/i);
 assert.doesNotMatch(modelUncertainReason, /blurry|sharper scan/i);
+const mixedUnclearReason = getStudentFacingReviewReason([
+  'MODEL_UNCERTAIN: Q3(b) needs an additional check.',
+  'HANDWRITING_UNCLEAR_FLAG: Q3(b) contains unreadable handwriting.',
+]);
+assert.match(mixedUnclearReason, /could not be read confidently/i);
+assert.doesNotMatch(mixedUnclearReason, /uploaded answer is readable/i);
 
 assert.match(handwritingReason, /marks already evaluated have been preserved/i);
 assert.match(handwritingReason, /24–48 working hours/i);
