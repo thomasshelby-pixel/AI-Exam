@@ -2448,6 +2448,13 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
           (resultJson as any).facultyMockTestId = record.faculty_mock_test_id || null;
           (resultJson as any).facultyMockReviewRetryEvaluationId = record.faculty_mock_review_retry_evaluation_id || null;
           (resultJson as any).retryOfEvaluationId = record.retry_of_evaluation_id || null;
+          (resultJson as any).facultyMockReviewRetryAvailable =
+            String(record.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
+            String(record.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK' &&
+            String(record.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
+            Boolean(String(record.faculty_mock_test_id || '').trim()) &&
+            /^[a-f0-9]{64}$/i.test(String(record.answer_sheet_sha256 || '').trim()) &&
+            !String(record.faculty_mock_review_retry_evaluation_id || '').trim();
 
           // Single Source of Truth: inject authoritative EvaluationRunPackage if available
           const realEvaluationId = record.id;
@@ -3239,7 +3246,7 @@ router.get(
     // server's exact-copy check (or, worse, could mislead the student).
     if (String(record.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK') {
       return res.status(404).json({
-        error: 'The original Faculty Mock answer-sheet file is no longer available in storage, so an exact same-copy retry cannot be started. Please contact support to arrange the review.',
+        error: 'The original Faculty Mock answer sheet is unavailable or its stored file cannot be verified against the original SHA-256 fingerprint. An exact same-copy retry cannot be started safely. Please contact support to arrange the review.',
         code: 'FACULTY_MOCK_ORIGINAL_COPY_UNAVAILABLE',
       });
     }
