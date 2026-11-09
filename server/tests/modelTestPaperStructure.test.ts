@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { extractSubQuestionsFromText, getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { deduplicateQuestionList, parseCanonicalQuestionIdentity, toCanonicalQuestionId, validateQuestionDeduplication } from '../services/canonicalQuestionService.js';
 import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
-import { buildCanonicalQuestionInventory } from '../services/canonicalQuestionInventoryService.js';
+import {
+  buildCanonicalQuestionInventory,
+  detectIndependentAttempts,
+} from '../services/canonicalQuestionInventoryService.js';
 import { normalizeDetectedAttemptHierarchy } from '../services/answerSheetCoverageService.js';
 
 const levelSubjectMatrix: Record<string, string[]> = {
@@ -261,6 +264,38 @@ assert.deepEqual(
 assert.ok(
   normalizedDetectedAttempts.attemptedQuestions.some((attempt) => attempt.fullQuestionCode === 'Q2(a)'),
   'A parent-only detection with no detected child must be preserved for review rather than guessed.',
+);
+
+const nestedAttemptInventory = buildCanonicalQuestionInventory({
+  paperStructure: {
+    paperTitle: 'Nested Attempt Regression',
+    totalPaperMaxMarks: 10,
+    questions: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q1(a(i))', questionNumber: '1', maximumMarks: 2, compulsory: true, isMcq: false, section: 'A' },
+      { fullQuestionCode: 'Q1(a(ii))', questionNumber: '1', maximumMarks: 3, compulsory: true, isMcq: false, section: 'A' },
+    ],
+    mcqs: [],
+  } as any,
+  totalPaperMaxMarks: 10,
+});
+const nestedAttemptMap = detectIndependentAttempts({
+  inventory: nestedAttemptInventory,
+  rawPageOccurrences: [
+    { questionCode: 'Q1(a)', pageNumber: 1, studentSnippet: '(a) Workings are continued below.' },
+    { questionCode: 'Q1(a(i))', pageNumber: 2, studentSnippet: '(i) First calculation step.' },
+    { questionCode: 'Q1(a(ii))', pageNumber: 3, studentSnippet: '(ii) Second calculation step.' },
+  ],
+});
+assert.deepEqual(
+  Array.from(nestedAttemptMap.keys()).sort(),
+  ['Q1(a(i))', 'Q1(a(ii))'],
+  'Canonical attempt detection must remove intermediate parents with detected nested leaves.',
+);
+assert.deepEqual(
+  nestedAttemptMap.get('Q1(a(i))')?.sourcePages,
+  [1, 2],
+  'Intermediate parent pages must be transferred to the nested leaf in the durable attempt manifest.',
 );
 
 // Contextual numbering under a single parent header must also retain each level.
