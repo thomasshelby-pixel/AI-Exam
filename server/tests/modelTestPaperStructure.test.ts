@@ -141,6 +141,37 @@ assert.deepEqual(taxation, taxationMtp);
 assert.equal(taxation.mcqs.length, 16,
   'Existing configured Taxation MCQ structure must remain unchanged.');
 
+// CA Final Direct/Indirect Tax must never receive the CA Intermediate Paper 3
+// Taxation template merely because the subject title contains the word "tax".
+const caFinalTaxPaper = getAuthoritativePaperStructure({
+  level: 'FINAL',
+  subjectName: 'Direct Tax Laws and International Taxation',
+  paper: 'Paper 4',
+  materialType: 'PYQ',
+  questionPaperText: [
+    'CA Final Direct Tax Laws - Question Paper',
+    'Question 1(a) - 4 Marks',
+    'Question 2(a) - 6 Marks',
+  ].join('\\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Question 1(a) - Source-backed answer for CA Final direct tax problem.',
+    'Question 2(a) - Source-backed answer for international tax problem.',
+  ].join('\\n'),
+  markingSchemeText: [
+    'Marking Scheme',
+    'Question 1(a) - 4 Marks',
+    'Question 2(a) - 6 Marks',
+  ].join('\\n'),
+  officialPaperMaxMarks: 100,
+});
+assert.notEqual(caFinalTaxPaper.paperTitle, 'CA Intermediate – Paper 3: Taxation');
+assert.deepEqual(
+  caFinalTaxPaper.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 4], ['Q2(a)', 6]],
+  'CA Final tax question identity/marks must be extracted from the selected paper, not the Intermediate template.',
+);
+
 // A Model Test with unparseable source text follows the same parser, but must not
 // inherit the generic PYQ/MTP guessed Q1-Q6 fallback with invented maxima.
 const unparseableModelTest = getAuthoritativePaperStructure({
