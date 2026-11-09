@@ -557,12 +557,22 @@ export function validatePostEvaluationGate(params: {
     }
   }
 
-  // 7. Unclear Handwriting Handling
+  // 7. Preserve the reason an answer is unclear. A readable answer for which
+  // the model is uncertain can be re-evaluated by the bounded supervisor; do not
+  // mislabel it as illegible handwriting. Only the independent page mapper's
+  // handwriting flag should block automatic retry.
   for (const q of questions) {
     if (q.status === 'unclear') {
-      warnings.push(`HANDWRITING_UNCLEAR_FLAG: Question ${q.canonicalId || q.questionNumber} marked as UNCLEAR.`);
-      if (!q.flags?.includes('HANDWRITING_UNCLEAR')) {
-        q.flags = [...(q.flags || []), 'HANDWRITING_UNCLEAR', 'RECHECK_RECOMMENDED'];
+      const questionId = q.canonicalId || q.questionNumber;
+      if (q.flags?.includes('HANDWRITING_UNCLEAR')) {
+        warnings.push(`HANDWRITING_UNCLEAR_FLAG: Question ${questionId} marked as UNCLEAR.`);
+      } else if (q.flags?.includes('MODEL_UNCERTAIN')) {
+        warnings.push(`MODEL_UNCERTAIN_FLAG: Question ${questionId} needs an independent second evaluation.`);
+      } else {
+        warnings.push(`QUESTION_UNCLEAR_FLAG: Question ${questionId} remains unresolved.`);
+      }
+      if (!q.flags?.includes('RECHECK_RECOMMENDED')) {
+        q.flags = [...(q.flags || []), 'RECHECK_RECOMMENDED'];
       }
     }
   }
