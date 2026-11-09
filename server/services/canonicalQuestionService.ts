@@ -103,6 +103,14 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
       continue;
     }
 
+    // Preserve an unwrapped level followed by another nested level, e.g. a(i)(2).
+    const directBeforeNested = rest.match(/^([a-zA-Z0-9]+)(?=\s*[([])/);
+    if (directBeforeNested) {
+      parts.push(directBeforeNested[1].toLowerCase());
+      rest = rest.slice(directBeforeNested[0].length);
+      continue;
+    }
+
     // Explicit bare labels such as "a)", "iv.", "2)" are unambiguous.
     const punctuated = rest.match(/^([a-zA-Z0-9]+)\s*[.)](?=\s|$|[-–—:])/);
     if (punctuated) {
