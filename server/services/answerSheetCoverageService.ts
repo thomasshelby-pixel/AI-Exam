@@ -826,6 +826,8 @@ export async function buildAnswerSheetCoverageMap(
         analysis.status === 'ATTEMPTED_UNCLEAR' ||
         analysis.status === 'ATTEMPTED_PARTIALLY_READABLE' ||
         Boolean(analysis.mappingReviewReason) ||
+        Boolean(analysis.unresolvedAnswerBlocks?.length) ||
+        Boolean(analysis.mcqNeedsReview?.length) ||
         analysis.detectedQuestions.length === 0
       );
 
@@ -848,9 +850,40 @@ export async function buildAnswerSheetCoverageMap(
             const existing = recoveredByCode.get(key);
             if (!existing) {
               recoveredByCode.set(key, { ...detected });
-            } else if (detected.snippet && !existing.snippet?.includes(detected.snippet)) {
+              continue;
+            }
+
+            if (detected.snippet && !existing.snippet?.includes(detected.snippet)) {
               existing.snippet = [existing.snippet, detected.snippet].filter(Boolean).join('\n\n').slice(-1200);
             }
+
+            // The targeted read may recover an option that the first pass missed.
+            // A clear second-pass option resolves the first-pass unreadable flag,
+            // but conflicting options across passes are never silently selected.
+            if (detected.mcqSelectionNeedsReview) {
+              existing.studentSelectedOption = undefined;
+              existing.mcqSelectionNeedsReview = true;
+              existing.mappingReviewReason = detected.mappingReviewReason || existing.mappingReviewReason ||
+                'The MCQ answer is visible, but the selected option remains unreadable or ambiguous.';
+              existing.status = 'ATTEMPTED_UNCLEAR';
+            } else if (detected.studentSelectedOption) {
+              const incomingOption = detected.studentSelectedOption.toUpperCase();
+              const existingOption = String(existing.studentSelectedOption || '').toUpperCase();
+              if (existingOption && existingOption !== incomingOption) {
+                existing.studentSelectedOption = undefined;
+                existing.mcqSelectionNeedsReview = true;
+                existing.mappingReviewReason = 'The two independent page reads detected conflicting MCQ selections.';
+                existing.status = 'ATTEMPTED_UNCLEAR';
+              } else {
+                existing.studentSelectedOption = incomingOption;
+                existing.mcqSelectionNeedsReview = false;
+                existing.mappingReviewReason = undefined;
+                existing.status = detected.status;
+              }
+            }
+
+            if (detected.mappingBasis && !existing.mappingBasis) existing.mappingBasis = detected.mappingBasis;
+            if (detected.labelMismatch !== undefined) existing.labelMismatch = detected.labelMismatch;
           }
 
           const recoveredQuestions = Array.from(recoveredByCode.values());
@@ -859,6 +892,7 @@ export async function buildAnswerSheetCoverageMap(
             recovery.status !== 'PAGE_UNREADABLE' &&
             recovery.status !== 'CLEARLY_UNATTEMPTED' &&
             !recovery.mappingReviewReason &&
+            !(recovery.unresolvedAnswerBlocks?.length) &&
             recoveredQuestions.length > 0;
 
           analysis = {
@@ -876,6 +910,11 @@ export async function buildAnswerSheetCoverageMap(
                   .join(' | '),
             questionLabelEvidence: recovery.questionLabelEvidence || analysis.questionLabelEvidence,
             readingConfidence: recovery.readingConfidence ?? analysis.readingConfidence,
+            answerBlocksObserved: recovery.answerBlocksObserved ?? analysis.answerBlocksObserved,
+            unresolvedAnswerBlocks: recovery.unresolvedAnswerBlocks ?? analysis.unresolvedAnswerBlocks,
+            mcqNeedsReview: recoveredQuestions
+              .filter((question) => question.isMcq && question.mcqSelectionNeedsReview)
+              .map((question) => question.questionNumber),
           };
         } else {
           analysis = {
