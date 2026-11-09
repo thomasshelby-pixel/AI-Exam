@@ -509,15 +509,28 @@ export function buildCanonicalEvaluationLedger(options: {
         evaluation?.flags?.includes('FAILED_TO_EVALUATE') ||
         evaluation?.flags?.includes('TECHNICAL_FAILURE')
       );
-      if (evaluation && !isTechFail) {
-        status = 'EVALUATED';
-        awardedMarks = Number(evaluation.marksAwarded) || 0;
-        counted = isSelectedAlternative; // Counted only if selected alternative (or non-alternative)
-      } else if (evaluation && isTechFail) {
+      const requiresHumanReview = Boolean(
+        attempt?.mcqSelectionNeedsReview ||
+        evaluation?.status === 'unclear' ||
+        evaluation?.flags?.includes('REVIEW_REQUIRED') ||
+        evaluation?.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED')
+      );
+      if (evaluation && isTechFail) {
         status = 'FAILED_TO_EVALUATE';
         awardedMarks = 0;
         counted = false;
         errors.push(`ATTEMPTED_QUESTION_FAILED_EVALUATION: Attempted question ${canonId} encountered a technical issue and requires review.`);
+      } else if (evaluation && requiresHumanReview) {
+        // An attempted answer with unresolved handwriting/selection must not be
+        // converted into an academic zero or included in the score ledger.
+        status = 'NEEDS_REVIEW';
+        awardedMarks = 0;
+        counted = false;
+        errors.push(`ATTEMPTED_QUESTION_NEEDS_REVIEW: Attempted question ${canonId} has unresolved answer/selection evidence; no academic zero has been assigned.`);
+      } else if (evaluation) {
+        status = 'EVALUATED';
+        awardedMarks = Number(evaluation.marksAwarded) || 0;
+        counted = isSelectedAlternative; // Counted only if selected alternative (or non-alternative)
       } else {
         status = 'FAILED_TO_EVALUATE';
         errors.push(`ATTEMPTED_QUESTION_NOT_EVALUATED: Attempted question ${canonId} was not evaluated.`);
@@ -552,7 +565,8 @@ export function buildCanonicalEvaluationLedger(options: {
       pageLoadMap.set(annotationPage, (pageLoadMap.get(annotationPage) || 0) + 1);
     }
     const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
-    const annotationRequired = isAttempted && isSelectedAlternative && (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE');
+    const annotationRequired = isAttempted && isSelectedAlternative &&
+      (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE' || status === 'NEEDS_REVIEW');
 
     records.push({
       questionId: canonId,
@@ -571,7 +585,9 @@ export function buildCanonicalEvaluationLedger(options: {
       annotationAnchor: {
         pageNumber: annotationPage,
         region: 'RIGHT_MARGIN',
-        annotationType: isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
+        annotationType: status === 'NEEDS_REVIEW'
+          ? 'EVALUATION_NOTE'
+          : isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
       },
       renderOrder: item.sourceOrder ?? 1,
       rendered,
