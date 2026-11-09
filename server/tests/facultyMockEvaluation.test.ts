@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import { enforceMaterialHardGate } from '../services/materialHardGateService.js';
-import { buildFacultyMockEvaluationReference, parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
+import { buildFacultyMockEvaluationReference, parseFacultyMockEvaluationReference, validateFacultyMockReferenceSections } from '../services/facultyMockReferenceParser.js';
 
 initDatabase();
 
@@ -32,6 +32,15 @@ const combinedReferenceTxt = buildFacultyMockEvaluationReference({
   markingSchemeText,
 });
 const parsedReference = parseFacultyMockEvaluationReference(combinedReferenceTxt);
+const independentReferences = validateFacultyMockReferenceSections({
+  questionPaperText,
+  suggestedAnswersText,
+  // Repeated heading-like lines are ordinary content inside a separate TXT.
+  markingSchemeText: 'Marking Scheme\\n' + markingSchemeText + '\\nMarking Scheme\\nAdditional marking notes and examiner guidance.',
+});
+assert.equal(independentReferences.questionPaperText, questionPaperText, 'Separate Question Paper TXT is validated as its own section');
+assert.equal(independentReferences.suggestedAnswersText, suggestedAnswersText, 'Separate Suggested Answers TXT is validated as its own section');
+assert.match(independentReferences.markingSchemeText, /Marking Scheme\\nAdditional marking notes/, 'Repeated Marking Scheme phrases inside its own TXT are accepted as content');
 assert.equal(parsedReference.questionPaperText, questionPaperText, 'Parser separates the Question Paper section from the single TXT');
 assert.equal(parsedReference.suggestedAnswersText, suggestedAnswersText, 'Parser separates Suggested Answers from the single TXT');
 assert.equal(parsedReference.markingSchemeText, markingSchemeText, 'Parser separates Marking Scheme from the single TXT');
