@@ -85,6 +85,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   useEffect(() => { void loadData(); }, []);
 
   useEffect(() => {
+    if (editingTestId) return;
     const nextSubjects = CA_CURRICULUM[courseLevel].subjects;
     const nextSubject = nextSubjects.find((item) => item.key === subjectKey) || nextSubjects[0];
     if (nextSubject) {
@@ -92,14 +93,15 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       setPaper(`Paper ${nextSubject.paperNumber}`);
       setMaximumMarks(String(nextSubject.maximumMarks));
     }
-  }, [courseLevel]);
+  }, [courseLevel, editingTestId]);
 
   useEffect(() => {
+    if (editingTestId) return;
     if (selectedSubject) {
       setPaper(`Paper ${selectedSubject.paperNumber}`);
       setMaximumMarks(String(selectedSubject.maximumMarks));
     }
-  }, [subjectKey]);
+  }, [subjectKey, editingTestId]);
 
   const filteredTests = useMemo(() => tests.filter((test) =>
     (filterFaculty === 'ALL' || test.faculty_id === filterFaculty) &&
