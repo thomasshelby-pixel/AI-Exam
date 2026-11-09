@@ -169,4 +169,20 @@ assert.equal(namedClauseTwo.found, true, 'Part IV Clause 2 must be a separate so
 assert.match(namedClauseTwo.snippet, /Only named clause two evidence/);
 assert.doesNotMatch(namedClauseTwo.snippet, /Only named clause one evidence/);
 
+const mixedLabelAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 5 Part IV(1) First mixed-format sub-part answer with separate working and conclusion.',
+  'Only mixed one evidence.',
+  'Question 5 Part IV(2) Second mixed-format sub-part answer with separate working and conclusion.',
+  'Only mixed two evidence.',
+].join('\n');
+const mixedLabelOne = extractLockedQuestionSlice(mixedLabelAnswers, '5', 'iv(1)', 'SA');
+assert.equal(mixedLabelOne.found, true, 'A named parent followed by a bracketed numeric child must resolve.');
+assert.match(mixedLabelOne.snippet, /Only mixed one evidence/);
+assert.doesNotMatch(mixedLabelOne.snippet, /Only mixed two evidence/);
+const mixedLabelTwo = extractLockedQuestionSlice(mixedLabelAnswers, '5', 'iv(2)', 'SA');
+assert.equal(mixedLabelTwo.found, true, 'The sibling mixed-format numeric child must resolve independently.');
+assert.match(mixedLabelTwo.snippet, /Only mixed two evidence/);
+assert.doesNotMatch(mixedLabelTwo.snippet, /Only mixed one evidence/);
+
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');
