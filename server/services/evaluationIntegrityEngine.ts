@@ -62,6 +62,43 @@ export interface ConsistencyValidationReport {
   detailedReportConsistent: boolean;
 }
 
+/**
+ * A detected, non-MCQ attempt may legitimately earn zero, but the decision must
+ * be supported by a clear no-credit rationale or itemized incorrect components.
+ * A generic "incorrect" / "no creditworthy component" statement is not enough
+ * to turn a visible answer into a certified academic zero.
+ */
+function hasSpecificZeroMarkJustification(
+  rawQuestion: any,
+  components: MarkingComponent[],
+): boolean {
+  const explanation = [
+    rawQuestion?.reasonForDeduction,
+    rawQuestion?.detailedFeedback,
+    rawQuestion?.technicalEvaluation,
+    rawQuestion?.finalConclusionAssessment,
+    rawQuestion?.overallReason,
+    ...(Array.isArray(components)
+      ? components.flatMap((component) => [
+          component?.deductionReason,
+          component?.studentEvidence,
+          component?.assessment === 'INCORRECT' ? component?.expectedRequirement : '',
+        ])
+      : []),
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  const explicitReason = /\b(?:blank answer|left blank|not attempted|unattempted|wholly irrelevant|entirely unrelated|no (?:correct|creditable|creditworthy|relevant) (?:steps?|working|provisions?|calculations?|concepts?|entries?)|(?:all|every) (?:steps?|working|calculations?|entries?|provisions?).{0,100}(?:incorrect|wrong|irrelevant)|fundamental premise (?:is )?incorrect|materially incorrect with no creditable step|does not address the question|no relevant answer content)\b/i;
+  if (explicitReason.test(explanation)) return true;
+
+  // An independently itemized zero across every required component is a
+  // substantive basis; an empty or generic component list is not.
+  return components.length > 0 && components.every((component) =>
+    component.assessment === 'INCORRECT' &&
+    Boolean(String(component.deductionReason || '').trim()) &&
+    Boolean(String(component.expectedRequirement || '').trim())
+  );
+}
+
 export interface IntegrityProcessOptions {
   markingSchemeText?: string;
   questionPaperText?: string;
