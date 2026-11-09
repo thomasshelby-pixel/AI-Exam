@@ -582,7 +582,7 @@ function isTerminalEvaluationStatus(status: unknown): boolean {
  * Model Test / Faculty jobs on the shared MTP/PYQ evaluator without accepting
  * a stale UI selection or a reference TXT from another test.
  */
-function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
+async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promise<void> {
   const evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(job.evaluationId) as any;
   if (!evaluation) {
     throw new Error('EVALUATION_SOURCE_BINDING_FAILED: Evaluation record not found.');
@@ -675,8 +675,24 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
       throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: Selected Faculty Mock ID does not match the saved evaluation.');
     }
 
-    const mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
+    const sharedSourceRequired = process.env.USE_FIREBASE_ADMIN === 'true' ||
+      Boolean(process.env.K_SERVICE && !process.env.K_SERVICE.startsWith('ais-dev')) ||
+      process.env.NODE_ENV === 'production';
+    let mock: any = null;
+    try {
+      mock = await getFirestoreDoc<any>('faculty_mock_tests', mockId, {
+        failOnError: sharedSourceRequired,
+      });
+    } catch (sourceReadError) {
+      console.error('[AsyncEval] Shared Faculty Mock source lookup failed:', sourceReadError);
+      throw new Error('FACULTY_MOCK_SOURCE_LOOKUP_UNAVAILABLE: The shared published Faculty Mock could not be verified; no cached source was used.');
+    }
+    // Per-instance SQLite is intentionally allowed only for local development.
+    if (!mock && !sharedSourceRequired) {
+      mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
+    }
     if (!mock ||
+        String(mock.status || '').toUpperCase() !== 'PUBLISHED' ||
         !same(mock.course_level, job.level) ||
         !same(mock.subject_key, job.subjectKey) ||
         !same(mock.subject_name, job.subjectName) ||
@@ -875,7 +891,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
     // Fail closed before any AI work if the selected Model / Faculty material
     // no longer matches the exact submission captured by the API route.
-    assertExactEvaluationSourceBinding(job);
+    await assertExactEvaluationSourceBinding(job);
 
     try {
       enforceEvaluationEvidencePackageMtpGate(evidencePackage);
