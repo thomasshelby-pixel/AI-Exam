@@ -61,7 +61,7 @@ export function buildFacultyMockEvaluationReference(sections: FacultyMockReferen
     String(sections.suggestedAnswersText || '').trim(),
     '[MARKING SCHEME]',
     String(sections.markingSchemeText || '').trim(),
-  ].join('\\n\\n');
+  ].join('\n\n');
 }
 
 /**
