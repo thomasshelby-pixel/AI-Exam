@@ -53,6 +53,9 @@ export interface IndependentAttemptRecord {
   evidence: string;
   studentSnippet?: string;
   studentSelectedOption?: string;
+  /** Visible MCQ attempt whose selected option is unreadable or conflicting. */
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
   isMcq: boolean;
 }
 
@@ -198,6 +201,8 @@ export function detectIndependentAttempts(options: {
     hasReplacement?: boolean;
     selectedOption?: string;
     isPartial?: boolean;
+    mcqSelectionNeedsReview?: boolean;
+    mappingReviewReason?: string;
   }>;
   mcqSelections?: Record<string, string>;
 }): Map<string, IndependentAttemptRecord> {
@@ -308,7 +313,9 @@ export function detectIndependentAttempts(options: {
         isCrossedOutWithNoReplacement: isCrossedWithoutReplacement,
         evidence,
         studentSnippet: occ.studentSnippet,
-        studentSelectedOption: occ.selectedOption,
+        studentSelectedOption: occ.mcqSelectionNeedsReview ? undefined : occ.selectedOption,
+        ...(occ.mcqSelectionNeedsReview ? { mcqSelectionNeedsReview: true } : {}),
+        ...(occ.mappingReviewReason ? { mappingReviewReason: occ.mappingReviewReason } : {}),
         isMcq: parsed.isMcq,
       });
     } else {
@@ -322,8 +329,20 @@ export function detectIndependentAttempts(options: {
       if (occ.studentSnippet && !existing.studentSnippet?.includes(occ.studentSnippet)) {
         existing.studentSnippet = (existing.studentSnippet ? `${existing.studentSnippet}\n\n` : '') + occ.studentSnippet;
       }
-      if (occ.selectedOption && !existing.studentSelectedOption) {
-        existing.studentSelectedOption = occ.selectedOption;
+      if (occ.mappingReviewReason) existing.mappingReviewReason = occ.mappingReviewReason;
+      if (occ.mcqSelectionNeedsReview) {
+        existing.studentSelectedOption = undefined;
+        existing.mcqSelectionNeedsReview = true;
+      } else if (occ.selectedOption) {
+        const incomingOption = occ.selectedOption.toUpperCase();
+        const existingOption = String(existing.studentSelectedOption || '').toUpperCase();
+        if (existingOption && existingOption !== incomingOption) {
+          existing.studentSelectedOption = undefined;
+          existing.mcqSelectionNeedsReview = true;
+          existing.mappingReviewReason = 'Conflicting MCQ selections were detected across page occurrences.';
+        } else if (!existing.mcqSelectionNeedsReview) {
+          existing.studentSelectedOption = incomingOption;
+        }
       }
       existing.evidence = `${existing.evidence} | Page ${occ.pageNumber} continuation`;
     }
