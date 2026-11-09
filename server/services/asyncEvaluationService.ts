@@ -25,6 +25,7 @@ import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js
 import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
 import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
+import type { QuestionReferenceLockMetadata, ReferenceSourceType } from './questionReferenceLock.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
 import { resolveMaterialComponentSourceIds, resolveFacultyMockComponentSourceIds } from './materialComponentSourceIds.js';
@@ -1056,6 +1057,26 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     // receive up to four targeted re-evaluations before unresolved cases stay in review.
     if (ENABLE_EVALUATION_SUPERVISOR) {
       const { runEvaluationSupervisor } = await import('./evaluationSupervisorService.js');
+      const supervisorReferenceSourceType: ReferenceSourceType =
+        job.materialType === 'FACULTY_MOCK_TEST' || job.requestedEvalSource === 'FACULTY_MOCK'
+          ? 'FACULTY_MOCK'
+          : job.materialType === 'MODEL_TEST_PAPER'
+            ? 'MODEL_TEST'
+            : job.requestedEvalSource === 'INSTITUTE'
+              ? 'INSTITUTE'
+              : 'GLOBAL';
+      const supervisorReferenceMetadata: QuestionReferenceLockMetadata = {
+        qpMaterialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        saMaterialId: job.suggestedAnswerMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        msMaterialId: job.markingSchemeMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        materialVersions: job.referenceMaterialVersion || '1.0',
+        sourceType: supervisorReferenceSourceType,
+        materialType: job.materialType,
+        mtpSeries: job.materialType === 'MTP' ? job.mtpSeries : undefined,
+        modelTestNumber: job.materialType === 'MODEL_TEST_PAPER' ? job.modelTestNumber : undefined,
+        facultyMockTestId: job.facultyMockTestId,
+        materialTitle: job.referenceMaterialTitle,
+      };
       evaluationResult = await runEvaluationSupervisor({
         evaluationResult,
         pdfBuffer: job.pdfBuf,
@@ -1070,6 +1091,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         paper: job.paper,
         subjectKey: job.subjectKey,
         materialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        referenceMetadata: supervisorReferenceMetadata,
         coverageMap: evaluationResult.coverageMap || null,
       });
     }
