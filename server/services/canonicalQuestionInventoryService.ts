@@ -615,6 +615,10 @@ export function buildCanonicalEvaluationLedger(options: {
       isAlternative: item.isAlternative,
       alternativeGroupId: item.alternativeGroupId,
       studentSelectedOption: evaluation?.candidateSelectedOption || attempt?.studentSelectedOption,
+      reviewRequired: status === 'NEEDS_REVIEW',
+      reviewReason: status === 'NEEDS_REVIEW'
+        ? attempt?.mappingReviewReason || evaluation?.reasonForDeduction || 'Answer evidence requires manual verification.'
+        : undefined,
       officialAnswer: evaluation?.officialCorrectOption,
       evidence: attempt?.evidence,
       stepMarkingBreakdown: evaluation?.stepMarkingBreakdown,
@@ -842,6 +846,8 @@ export function buildStudentAttemptManifest(options: {
       selectedAlternative: att.selectedAlternative,
       studentSnippet: att.studentSnippet,
       studentSelectedOption: att.studentSelectedOption,
+      mcqSelectionNeedsReview: att.mcqSelectionNeedsReview,
+      mappingReviewReason: att.mappingReviewReason,
       isCrossedOutWithNoReplacement: att.isCrossedOutWithNoReplacement,
       isMcq: att.isMcq,
     });
