@@ -1229,6 +1229,7 @@ console.log('\n--- TEST X: Official Mark Ceiling Integrity (Dynamic Scheme Overr
   `;
 
   const paper = getAuthoritativePaperStructure({
+    level: 'INTERMEDIATE',
     subjectName: 'Taxation',
     paper: 'Paper 3',
     markingSchemeText: schemeText,
