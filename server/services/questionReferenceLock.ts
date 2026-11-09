@@ -261,8 +261,20 @@ export function extractLockedQuestionSlice(
   if (subQ) {
     const path = parseQuestionCode('Q' + qNum + '(' + subQ + ')').subQuestionPath;
     if (path.length) {
-      const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\  // Define candidate search patterns for this question
-  const startRegexes: RegExp[] = [];
+      // Path tokens are normalized alphanumeric identifiers, so this is safe
+      // to interpolate into a question-heading matcher without regex syntax.
+      const escapeRegex = (value: string) => value.replace(/[^a-z0-9]/gi, '');
+      const group = (value: string) => '\\s*[([{]\\s*' + escapeRegex(value) + '\\s*[)\\]}]';
+      const expandedSuffix = path.map(group).join('');
+      const compactSuffix = '\\s*\\(\\s*' + escapeRegex(path[0]) +
+        path.slice(1).map((part) => '\\s*\\(\\s*' + escapeRegex(part) + '\\s*\\)').join('') +
+        '\\s*\\)';
+      const questionPrefix = '^\\s*(?:(?:QUESTION\\s*(?:NO\\.?\\s*)?|Q\\.?\\s*|ANSWER\\s*|ANS\\.?\\s*)?' +
+        qNum + '\\s*(?:[.):]\\s*)?)';
+      startRegexes.push(new RegExp(questionPrefix + expandedSuffix, 'i'));
+      if (path.length > 1) startRegexes.push(new RegExp(questionPrefix + compactSuffix, 'i'));
+    }
+  }
 
   if (docType === 'MS') {');
       const group = (value: string) => '\\s*[([{]\\s*' + escapeRegex(value) + '\\s*[)\\]}]';
@@ -486,7 +498,7 @@ export function extractLockedQuestionSlice(
       break;
     }
 
-    if (docType === 'MS' && new RegExp('^\\\\s*total\\\\s+q' + qNum + '\\\\b', 'i').test(trimmed)) break;
+    if (docType === 'MS' && new RegExp('^\\s*total\\s+q' + qNum + '\\b', 'i').test(trimmed)) break;
 
     capturedLines.push(line);
     if (capturedLines.length > 250) break;
