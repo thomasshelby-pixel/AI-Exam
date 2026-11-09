@@ -62,7 +62,7 @@ async function run() {
   assert.match(pagePrompt, /unresolvedAnswerBlocks/i);
   assert.match(pagePrompt, /mcqNeedsReview/i);
   assert.match(pagePrompt, /every separately labelled descriptive sub-part as its own answer block/i);
-  assert.match(pagePrompt, /must never be downgraded to blank or incorrect/i);
+  assert.match(pagePrompt, /must never be downgraded to a blank\/unattempted or wrong answer/i);
   assert.match(pagePrompt, /Students use genuinely different handwriting styles/i);
   assert.match(pagePrompt, /NO handwriting style is illegal or invalid/i);
   assert.match(pagePrompt, /cursive \/ joined-up writing/i);
