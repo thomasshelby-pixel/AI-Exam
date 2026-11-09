@@ -82,9 +82,24 @@ function getSubQuestionPath(subQuestion: string): string[] {
 }
 
 function subQuestionSuffixPattern(subQuestion: string): string {
-  return getSubQuestionPath(subQuestion)
+  const path = getSubQuestionPath(subQuestion);
+  if (!path.length) return '';
+
+  const parenthesized = path
     .map((part) => '\\s*\\(\\s*' + escapeRegex(part) + '\\s*\\)')
     .join('');
+  const dotted = path
+    .map((part) => '\\s*\\.\\s*' + escapeRegex(part))
+    .join('');
+  const namedPrefixes = '(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)';
+  const named = path
+    .map((part) => '\\s*' + namedPrefixes + '\\s*' + escapeRegex(part))
+    .join('');
+  const compact = path.length === 1
+    ? '\\s*' + escapeRegex(path[0]) + '(?=\\s|[-–—:.)]|$)'
+    : '';
+
+  return '(?:' + [parenthesized, dotted, named, compact].filter(Boolean).join('|') + ')';
 }
 
 export function parseQuestionCode(code: string): {
