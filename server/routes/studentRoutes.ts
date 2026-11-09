@@ -479,6 +479,17 @@ router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, r
     if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
       return res.status(404).json({ error: 'This faculty mock is not currently available.' });
     }
+    if (String(test.access_type || 'FREE').toUpperCase() === 'PAID') {
+      const availablePaidCopy = await findAvailableFacultyMockPaidCopy(req.user!.id, testId);
+      if (!availablePaidCopy) {
+        return res.status(402).json({
+          error: `Unlock this paid Faculty Mock for ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to download its Question Paper.`,
+          code: 'FACULTY_MOCK_PAYMENT_REQUIRED',
+          amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+          facultyMockTestId: testId,
+        });
+      }
+    }
     if (!test.question_paper_file_id) return res.status(404).json({ error: 'Question Paper PDF is unavailable.' });
     const saved = await getPersistentFile(String(test.question_paper_file_id), String(test.question_paper_file_name || 'Question_Paper.pdf'));
     if (!saved?.buffer?.length) return res.status(404).json({ error: 'Question Paper PDF could not be retrieved. Contact support.' });
