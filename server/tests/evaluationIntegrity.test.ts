@@ -596,6 +596,10 @@ console.log('\n--- TEST M: Report and Checked Copy Consistency Guarantee ---');
   const qReport = testEval.questions[0];
 
   assert(
+    testEval.validationStatus === 'VALID' && testEval.certificationStatus === 'CERTIFIED',
+    'TEST M.0: A fully mapped, mathematically reconciled, non-unclear evaluation is certified without unnecessary NEEDS_REVIEW.',
+  );
+  assert(
     qChecked.marksAwarded === qReport.marksAwarded &&
       qChecked.maximumMarks === qReport.maximumMarks &&
       qChecked.markingComponents?.length === qReport.markingComponents?.length,
