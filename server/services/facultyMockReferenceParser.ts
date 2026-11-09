@@ -48,6 +48,31 @@ function identifySectionHeading(line: string): FacultyMockReferenceSectionKey | 
 }
 
 /**
+ * Validate each independently uploaded section without interpreting content
+ * lines as structural headings. A section may legitimately contain repeated
+ * phrases such as "Marking Scheme" within its own text.
+ */
+export function validateFacultyMockReferenceSections(
+  sections: FacultyMockReferenceSections,
+): FacultyMockReferenceSections {
+  const result: FacultyMockReferenceSections = {
+    questionPaperText: String(sections.questionPaperText || '').replace(/^\\uFEFF/, '').trim(),
+    suggestedAnswersText: String(sections.suggestedAnswersText || '').replace(/^\\uFEFF/, '').trim(),
+    markingSchemeText: String(sections.markingSchemeText || '').replace(/^\\uFEFF/, '').trim(),
+  };
+  if (result.questionPaperText.length < 50) {
+    throw new Error('The Question Paper Text TXT must contain at least 50 characters.');
+  }
+  if (result.suggestedAnswersText.length < 50) {
+    throw new Error('The Suggested Answers TXT must contain at least 50 characters.');
+  }
+  if (result.markingSchemeText.length < 10) {
+    throw new Error('The Marking Scheme TXT must contain at least 10 characters.');
+  }
+  return result;
+}
+
+/**
  * Serialize independently uploaded private TXT sections into the legacy
  * canonical reference format consumed by the existing parser and evaluator.
  * The browser uploads/stores each section separately; this serialization is
