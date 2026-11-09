@@ -298,6 +298,24 @@ assert.deepEqual(
   'Intermediate parent pages must be transferred to the nested leaf in the durable attempt manifest.',
 );
 
+const nestedContinuationAttempts = detectIndependentAttempts({
+  inventory: nestedAttemptInventory,
+  rawPageOccurrences: [
+    { questionCode: 'Q1(a(i))', pageNumber: 1, studentSnippet: '(i) First clause solution.' },
+    {
+      questionCode: 'Q1(a)',
+      pageNumber: 2,
+      studentSnippet: '(ii) Second clause solution continues on this page.',
+      isContinuation: true,
+    },
+  ],
+});
+assert.deepEqual(
+  Array.from(nestedContinuationAttempts.keys()),
+  ['Q1(a(i))', 'Q1(a(ii))'],
+  'A continuation containing a Roman-numeral child label must resolve to that exact nested leaf.',
+);
+
 // Contextual numbering under a single parent header must also retain each level.
 const contextualParts = extractSubQuestionsFromText([
   'Question 9',
