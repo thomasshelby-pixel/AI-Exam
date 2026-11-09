@@ -12,7 +12,7 @@ type FacultyMockTest = {
   id: string; faculty_id: string; faculty_name: string; course_level: CALevel; attempt: string;
   model_group?: string | null; subject_key: string; subject_name: string; paper: string;
   mock_number: number; title: string; maximum_marks: number; syllabus_version: string;
-  question_paper_file_name: string;
+  question_paper_file_name: string; access_type?: 'FREE' | 'PAID'; unlock_price_inr?: number;
 };
 
 interface FacultyMockRazorpayResponse {
@@ -174,8 +174,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       navigate(`/student/evaluations/${encodeURIComponent(reportId)}`);
     } catch (err) {
       const apiError = err as Error & { code?: string; data?: any };
-      if (!facultyMockPaymentOrderId && apiError?.code === 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED') {
-        setError('First copy already used. Complete the one-copy payment to evaluate this mock again.');
+      if (!facultyMockPaymentOrderId && ['FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED', 'FACULTY_MOCK_PAYMENT_REQUIRED'].includes(String(apiError?.code || ''))) {
+        setError(selectedTest.access_type === 'PAID'
+          ? `This is a paid faculty mock. Pay ₹${selectedTest.unlock_price_inr || 35} to unlock this evaluation.`
+          : `Your free copy has already been used. Pay ₹${selectedTest.unlock_price_inr || 35} to evaluate this mock again.`);
         await startRepeatCopyPayment();
       } else {
         setError(err instanceof Error ? err.message : 'Faculty mock submission failed.');
@@ -224,7 +226,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         amount: order.amountPaise,
         currency: order.currency,
         name: 'CA Exam Checker AI',
-        description: order.description || 'Faculty Mock Repeat Copy',
+        description: order.description || (selectedTest.access_type === 'PAID' ? 'Faculty Mock Unlock' : 'Faculty Mock Additional Copy'),
         order_id: order.razorpayOrderId,
         prefill: {
           name: user.fullName || '',
@@ -328,7 +330,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mock Number
                 <select value={testId} onChange={(e) => setTestId(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
-                  {subjectTests.map((item) => <option key={item.id} value={item.id}>Mock {String(item.mock_number).padStart(2, '0')} — {item.title}</option>)}
+                  {subjectTests.map((item) => <option key={item.id} value={item.id}>Mock {String(item.mock_number).padStart(2, '0')} — {item.title} ({String(item.access_type || 'FREE').toUpperCase() === 'PAID' ? `Unlock ₹${item.unlock_price_inr || 35}` : 'Free first copy'})</option>)}
                 </select>
               </label>
             </div>
@@ -342,7 +344,12 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                     <h3 className="mt-1 text-base font-black text-slate-900">{selectedTest.title}</h3>
                     <p className="mt-1 text-xs text-slate-600">{selectedTest.subject_name} · {selectedTest.paper} · {selectedTest.maximum_marks} marks</p>
                   </div>
-                  <span className="rounded-lg bg-indigo-600 px-3 py-2 font-mono text-sm font-black text-white">MOCK {String(selectedTest.mock_number).padStart(2, '0')}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-lg bg-indigo-600 px-3 py-2 font-mono text-sm font-black text-white">MOCK {String(selectedTest.mock_number).padStart(2, '0')}</span>
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                      {String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? `UNLOCK ₹${selectedTest.unlock_price_inr || 35}` : 'FREE'}
+                    </span>
+                  </div>
                 </div>
                 <button type="button" onClick={() => void downloadQuestionPaper()} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50"><Download className="h-4 w-4" />Download Question Paper</button>
               </div>
@@ -361,10 +368,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
               </label>
               {loadingFile && <p className="mt-2 text-xs text-blue-600">Reading your answer sheet…</p>}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />One free copy per student for this exact faculty mock. Further copies cost ₹35 each and do not use your general evaluation credits.</div>
+                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />{String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? `This mock requires ₹${selectedTest.unlock_price_inr || 35} per evaluation. Payment unlocks one copy and does not use general evaluation credits.` : `First copy is free for each student. Further copies cost ₹${selectedTest.unlock_price_inr || 35} each and do not use general evaluation credits.`}</div>
                 <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer} onClick={() => void handleSubmitClick()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                   {submitting || checkingDisclaimer ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                  {submitting ? 'Submitting…' : checkingDisclaimer ? 'Checking…' : 'Submit for AI Evaluation'}
+                  {submitting ? 'Submitting…' : checkingDisclaimer ? 'Checking…' : selectedTest.access_type === 'PAID' ? `Unlock ₹${selectedTest.unlock_price_inr || 35} & Submit` : 'Submit for AI Evaluation'}
                 </button>
               </div>
             </section>
