@@ -514,13 +514,13 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
 
   // Repeated parenthetical levels are captured as one identity path:
   // Q1(a)(i)(1), Question 2(IV), Q3(a)(ii), etc.
-  const partToken = '[a-zA-Z0-9]+(?:\\s*\\(\\s*[a-zA-Z0-9]+\\s*\\))*';
+  const partToken = '[a-zA-Z0-9]+(?:\\s*\\.\\s*[a-zA-Z0-9]+){0,4}(?:\\s*\\(\\s*[a-zA-Z0-9]+\\s*\\))*';
   const bracketPath = '(?:\\(\\s*' + partToken + '\\s*\\)|\\[\\s*' + partToken + '\\s*\\])+';
   const labelledPartPrefix = '(?:(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\\s*)?';
 
   const explicitRegex = new RegExp(
     '(?:QUESTION\\s*(?:NO\\.?\\s*)?|Q\\.?|Ans(?:wer)?\\.?)\\s*([0-9]+)\\s*' +
-    '(?:' + labelledPartPrefix + '(' + bracketPath + '|[a-zA-Z0-9]+[.)]?))?\\s*' +
+    '(?:' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]?))?\\s*' +
     '(?:[-–—:]|\\b|is|carries?|carrying|worth|allotted|\\.)\\s*' +
     '(?:(?:for|carrying|carries|worth|allotted|of)?\\s*)?(?:\\[\\s*|\\(\\s*)?([0-9]+(?:\\.[0-9]+)?)\\s*(?:Marks?|M)\\b',
     'gi',
@@ -533,7 +533,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   // Explicit labels with descriptive text before the marks allocation.
   const explicitPartRegex = new RegExp(
     '(?:QUESTION\\s*(?:NO\\.?\\s*)?|Q\\.?|Ans(?:wer)?\\.?)\\s*([0-9]+)\\s*' +
-    labelledPartPrefix + '(' + bracketPath + '|[a-zA-Z0-9]+[.)]?)([^\\r\\n]*)',
+    labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]?)([^\\r\\n]*)',
     'gi',
   );
   while ((match = explicitPartRegex.exec(text)) !== null) {
@@ -559,7 +559,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b|CLAUSE\b|ITEM\b|PARA\b))/i;
   const childSubQRegex = new RegExp(
     '^\\s*' + labelledPartPrefix +
-    '(' + bracketPath + '|[a-zA-Z0-9]+[.)]|[a-zA-Z0-9]+)' +
+    '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]|[a-zA-Z0-9]+)' +
     '(?:\\s*[-–—:]\\s*|\\s+|$)',
     'i',
   );
