@@ -11,6 +11,7 @@ import {
 } from './questionChunkEvaluator.js';
 import type { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
 import { toCanonicalQuestionId } from './canonicalQuestionService.js';
+import type { QuestionReferenceLockMetadata } from './questionReferenceLock.js';
 
 const MAX_CORRECTION_ROUNDS = 2;
 const MAX_PARALLEL_CORRECTIONS = 2;
@@ -48,6 +49,7 @@ export interface EvaluationSupervisorParams {
   paper?: string;
   subjectKey?: string;
   materialId?: string;
+  referenceMetadata?: QuestionReferenceLockMetadata;
   coverageMap?: AnswerCoverageMap | null;
 }
 
@@ -58,7 +60,8 @@ export interface EvaluationSupervisorDependencies {
     fullQuestionCode: string,
     questionPaperText: string,
     suggestedAnswersText: string,
-    markingSchemeText: string
+    markingSchemeText: string,
+    metadata?: QuestionReferenceLockMetadata
   ) => ExtractedReferenceSnippets;
 }
 
@@ -186,7 +189,8 @@ function auditEvaluation(
         authoritative.fullQuestionCode,
         params.questionPaperText || '',
         params.suggestedAnswersText || '',
-        params.markingSchemeText || ''
+        params.markingSchemeText || '',
+        params.referenceMetadata
       );
       const materialType = String(params.evaluationResult.materialType || '').trim().toUpperCase();
       const supportsAuthoritativeStructureAnchor = new Set([
@@ -430,6 +434,7 @@ export async function runEvaluationSupervisor(
           checkingMode: params.checkingMode,
           level: params.level,
           subjectName: params.subjectName,
+          referenceMetadata: params.referenceMetadata,
           supervisorIssues: target.issues,
           supervisorCorrectionAttempt: round,
         };
