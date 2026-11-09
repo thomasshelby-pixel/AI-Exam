@@ -512,7 +512,9 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
       questionNumber: parsed.questionNumber,
       subQuestionNumber: parsed.subQuestion,
       maximumMarks,
-      compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
+      // Generic paper parts are required by default. Only an explicit, parsed
+      // optional-selection rule may mark a parent and its leaf parts optional.
+      compulsory: true,
       isMcq: false,
       section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
       division: 'B',
@@ -921,17 +923,29 @@ function buildGenericPaperStructure(options: {
     baseQuestions.map((question) => question.questionNumber),
   );
   const optionalQuestionNumbers = new Set(attemptRule?.questionNumbers || []);
-  const questions = attemptRule
-    ? baseQuestions.map((question) => optionalQuestionNumbers.has(String(Number(question.questionNumber)))
-      ? { ...question, compulsory: false, choiceRule: attemptRule.choiceRule }
-      : question)
-    : baseQuestions;
+  const finalSubQuestions = subQuestions.map((subQuestion) => ({
+    ...subQuestion,
+    compulsory: !optionalQuestionNumbers.has(String(Number(subQuestion.questionNumber))),
+  }));
+  const questions = baseQuestions.map((question) => {
+    const isOptional = optionalQuestionNumbers.has(String(Number(question.questionNumber)));
+    return {
+      ...question,
+      compulsory: !isOptional,
+      ...(isOptional && attemptRule ? { choiceRule: attemptRule.choiceRule } : {}),
+      // Keep parent and leaf required/optional metadata in sync. The canonical
+      // score ledger consumes leaf entries, not only this parent summary.
+      subQuestions: finalSubQuestions.filter(
+        (subQuestion) => subQuestion.questionNumber === question.questionNumber,
+      ),
+    };
+  });
 
   return {
     paperTitle: 'Chartered Accountancy Examination',
     totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
     questions,
-    subQuestions,
+    subQuestions: finalSubQuestions,
     mcqs,
   };
 }
