@@ -469,9 +469,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             </div>
 
             <div className="flex shrink-0 flex-col gap-2">
-              {String(evaluationResult.materialType || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
-                !(evaluationResult as any).facultyMockReviewRetryEvaluationId &&
-                !(evaluationResult as any).retryOfEvaluationId && (
+              {(evaluationResult as any).facultyMockReviewRetryAvailable === true && (
                   <button
                     onClick={() => navigate(`/student/faculty-mock-evaluation?retryOfEvaluationId=${encodeURIComponent(evaluationResult.evaluationId)}`)}
                     className="px-4 py-2.5 bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 cursor-pointer transition"
