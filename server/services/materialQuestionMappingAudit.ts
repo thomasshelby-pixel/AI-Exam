@@ -29,10 +29,11 @@ export interface MaterialQuestionMappingAudit {
 
 const MCQ_ID_LINE = /^\s*(?:MCQ|OBJECTIVE)(?:\s*(?:NO\.?)?)?\s*(\d{1,2})\b/i;
 const QUESTION_LINE =
-  /^\s*(?:(?:QUESTION|Q\.?|ANS(?:WER)?\.?\s+TO\s+QUESTION)\s*)(\d{1,2})(?:\s*((?:(?:\([a-z0-9]+\)|\[[a-z0-9]+\]))+))?(?:\s*([.)\-:]))?\s*(.*)$/i;
+  /^\s*(?:(?:QUESTION|Q\.?|ANS(?:WER)?\.?\s+TO\s+QUESTION)\s*)(\d{1,2})(?:\s*((?:(?:\([a-z0-9]+\)|\[[a-z0-9]+\]))+|(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*[a-z0-9]+(?:\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*[a-z0-9]+)*|(?:\.[a-z0-9]+){1,4}))?(?:\s*([.)\-:]))?\s*(.*)$/i;
 const NUMBERED_QUESTION_LINE = /^\s*(\d{1,2})\s*[.)]\s+(.{6,})$/;
 const NUMBERED_ANSWER_KEY_LINE = /^\s*\d{1,2}\s*[.)]\s*(?:\([a-d]\)|[a-d]\b)/i;
-const SUBQUESTION_LINE = /^\s*((?:(?:\([a-z0-9]+\)|\[[a-z0-9]+\]))+|[a-z0-9]+[.)])\s+(.{4,})$/i;
+const SUBQUESTION_LINE =
+  /^\s*((?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*[a-z0-9]+(?:\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*[a-z0-9]+)*|(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*)?(?:(?:\([a-z0-9]+\)|\[[a-z0-9]+\])+|(?:\.?[a-z0-9]+)(?:\.[a-z0-9]+){1,4}|[a-z0-9]+[.)]))\s+(.{4,})$/i;
 const MCQ_OPTION_LINE = /^\s*(?:\(([a-d])\)|([a-d])[).])\s+\S+/i;
 const SECTION_BOUNDARY =
   /^(?:SECTION\s+[A-Z0-9]+|DIVISION\s+[A-Z0-9]+|PART\s+[IVX0-9]+|DESCRIPTIVE\s+QUESTIONS|OBJECTIVE\s+QUESTIONS)\b/i;
@@ -224,7 +225,7 @@ function extractExplicitSourceIds(text: string, allowNumberedHeadings: boolean):
     let match = trimmed.match(QUESTION_LINE);
     if (match) {
       const base = `Q${Number(match[1])}`;
-      ids.push(canonical(match[2] ? `${base}${match[2]}` : base));
+      ids.push(canonical(match[2] ? `${base} ${match[2]}` : base));
       continue;
     }
 
