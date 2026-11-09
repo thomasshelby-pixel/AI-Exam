@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { extractSubQuestionsFromText, getAuthoritativePaperStructure } from '../services/paperStructureService.js';
+import {
+  extractSubQuestionsFromText,
+  extractOptionalAttemptSelectionRule,
+  getAuthoritativePaperStructure,
+} from '../services/paperStructureService.js';
 import { deduplicateQuestionList, parseCanonicalQuestionIdentity, toCanonicalQuestionId, validateQuestionDeduplication } from '../services/canonicalQuestionService.js';
 import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import {
@@ -543,6 +547,18 @@ assert.ok(
     .every((item) => item.isRequiredOrOptional === 'OPTIONAL'),
   'Canonical leaf inventory must preserve optional selection metadata from the official source.',
 );
+for (const verb of ['Choose', 'Select']) {
+  const rule = extractOptionalAttemptSelectionRule(
+    `Instructions: ${verb} any one question from Q2, Q3 and Q4.`,
+    '',
+    ['1', '2', '3', '4'],
+  );
+  assert.deepEqual(
+    rule?.questionNumbers,
+    ['2', '3', '4'],
+    verb + ' any-one instruction must resolve the explicit allowed parent question set.',
+  );
+}
 const optionalOverAttemptGate = validatePreEvaluationGate({
   paperStructure: optionalFacultyMock,
   questionPaperText: 'Question Paper',
