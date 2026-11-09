@@ -656,36 +656,60 @@ function getFacultyMockMcqMaximumMarks(
   const sources = [options.questionPaperText, options.markingSchemeText]
     .map((value) => String(value || '').replace(/\r/g, ''))
     .filter((value) => value.trim().length > 0);
-  const labelPattern = new RegExp(
-    '^\\s*(?:(?:MCQ|MULTIPLE\\s+CHOICE\\s+QUESTION|QUESTION|Q\\.?)\\s*)?' +
-      qNum + '\\s*(?:[).:]|\\b)',
+
+  const objectiveHeading = /(?:MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\b)/i;
+  const descriptiveHeading = /(?:DIVISION\s+B\b|SECTION\s+B\b|DESCRIPTIVE\s+QUESTIONS?)/i;
+  const labelFor = (number: string) => new RegExp(
+    '^\\s*(?:(?:MCQ|QUESTION|Q\\.?)\\s*(?:NO\\.?\\s*)?)?' +
+      number + '\\s*(?:[).:]|[-–—])',
     'i',
   );
-  const nextQuestionPattern = /^\s*(?:(?:MCQ|MULTIPLE\s+CHOICE\s+QUESTION|QUESTION|Q\.?)\s*)?\d{1,2}\s*[).:]/i;
   const marksPattern = /(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i;
 
+  // First look only inside an explicitly-labelled objective section. This avoids
+  // confusing descriptive Q1's maximum with MCQ 1's maximum on the same paper.
   for (const source of sources) {
-    const lines = source.split('\n');
+    const heading = objectiveHeading.exec(source);
+    if (!heading) continue;
+
+    const objectiveText = source.slice(heading.index);
+    const endMatch = descriptiveHeading.exec(objectiveText.slice(heading[0].length));
+    const block = endMatch
+      ? objectiveText.slice(0, heading[0].length + endMatch.index)
+      : objectiveText;
+    const lines = block.split('\n');
+
     for (let index = 0; index < lines.length; index += 1) {
-      if (!labelPattern.test(lines[index])) continue;
+      if (!labelFor(qNum).test(lines[index])) continue;
 
       let end = Math.min(lines.length, index + 7);
       for (let next = index + 1; next < end; next += 1) {
-        if (nextQuestionPattern.test(lines[next])) {
+        if (labelFor('\\d{1,2}').test(lines[next])) {
           end = next;
           break;
         }
       }
-
-      const localMatch = lines.slice(index, end).join(' ').match(marksPattern);
-      if (localMatch) {
-        const marks = Number(localMatch[1]);
-        if (Number.isFinite(marks) && marks > 0) return marks;
-      }
+      const match = lines.slice(index, end).join(' ').match(marksPattern);
+      const marks = match ? Number(match[1]) : 0;
+      if (Number.isFinite(marks) && marks > 0) return marks;
     }
   }
 
-  // A source-backed per-question rule may define the same allocation for every MCQ.
+  // Explicit per-question MCQ allocations may also be recorded in the marking
+  // scheme without a separate Division/Section heading.
+  const explicitMcqLabel = new RegExp(
+    '^\\s*(?:MCQ|MULTIPLE\\s+CHOICE\\s+QUESTION)\\s*(?:NO\\.?\\s*)?' +
+      qNum + '\\b([^\\r\\n]*)',
+    'im',
+  );
+  for (const source of sources) {
+    const match = source.match(explicitMcqLabel);
+    const localMarks = match?.[1]?.match(marksPattern);
+    const marks = localMarks ? Number(localMarks[1]) : 0;
+    if (Number.isFinite(marks) && marks > 0) return marks;
+  }
+
+  // Source-backed rules can define a uniform allocation for all MCQs.
   const combined = sources.join('\n');
   const sharedRules = [
     /\b(?:each|every)\s+(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\s+(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
