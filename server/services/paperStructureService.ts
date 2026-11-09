@@ -475,8 +475,15 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const seen = new Set<string>();
   const addQuestion = (questionNumber: string, subQuestion: string | undefined, maximumMarks: number) => {
     if (!questionNumber || !Number.isFinite(maximumMarks) || maximumMarks <= 0) return;
-    const rawCode = subQuestion ? 'Q' + questionNumber + '(' + subQuestion + ')' : 'Q' + questionNumber;
-    const canonicalId = toCanonicalQuestionId(rawCode);
+    const label = String(subQuestion || '').trim();
+    let suffix = '';
+    if (label) {
+      if (/^[([]/.test(label)) suffix = label;
+      else if (/^[a-zA-Z0-9]+[.)]$/.test(label)) suffix = '(' + label.slice(0, -1) + ')';
+      else if (/^(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARA)\s+/i.test(label)) suffix = label;
+      else suffix = '(' + label + ')';
+    }
+    const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
     if (seen.has(canonicalId)) return;
     seen.add(canonicalId);
     const parsed = parseCanonicalQuestionIdentity(canonicalId);
@@ -505,55 +512,123 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     return Number.isFinite(marks) && marks > 0 ? marks : undefined;
   };
 
-  // Explicit parent/part labels, including "QUESTION NO. 1 (a) carries 5 marks".
-  const explicitRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\))?\s*(?:[-–—:]|\b|is|carries?|carrying|worth|allotted|\.)\s*(?:(?:for|carrying|carries|worth|allotted|of)?\s*)?(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  // Repeated parenthetical levels are captured as one identity path:
+  // Q1(a)(i)(1), Question 2(IV), Q3(a)(ii), etc.
+  const partToken = '[a-zA-Z0-9]+(?:\\s*\\(\\s*[a-zA-Z0-9]+\\s*\\))*';
+  const bracketPath = '(?:\\(\\s*' + partToken + '\\s*\\)|\\[\\s*' + partToken + '\\s*\\])+';
+  const labelledPartPrefix = '(?:(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\\s*)?';
+
+  const explicitRegex = new RegExp(
+    '(?:QUESTION\\s*(?:NO\\.?\\s*)?|Q\\.?|Ans(?:wer)?\\.?)\\s*([0-9]+)\\s*' +
+    '(?:' + labelledPartPrefix + '(' + bracketPath + '|[a-zA-Z0-9]+[.)]?))?\\s*' +
+    '(?:[-–—:]|\\b|is|carries?|carrying|worth|allotted|\\.)\\s*' +
+    '(?:(?:for|carrying|carries|worth|allotted|of)?\\s*)?(?:\\[\\s*|\\(\\s*)?([0-9]+(?:\\.[0-9]+)?)\\s*(?:Marks?|M)\\b',
+    'gi',
+  );
   let match: RegExpExecArray | null;
   while ((match = explicitRegex.exec(text)) !== null) {
     addQuestion(match[1], match[2], Number(match[3]));
   }
 
-  // Explicit Q1(a) lines can place the allocation after descriptive wording:
-  // "Q1(a) Calculate NPV — 5 marks" or "Question 1 Part (b): 4 marks".
-  const explicitPartRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)([^\r\n]*)/gi;
+  // Explicit labels with descriptive text before the marks allocation.
+  const explicitPartRegex = new RegExp(
+    '(?:QUESTION\\s*(?:NO\\.?\\s*)?|Q\\.?|Ans(?:wer)?\\.?)\\s*([0-9]+)\\s*' +
+    labelledPartPrefix + '(' + bracketPath + '|[a-zA-Z0-9]+[.)]?)([^\\r\\n]*)',
+    'gi',
+  );
   while ((match = explicitPartRegex.exec(text)) !== null) {
     const marks = extractMarks(match[3]);
     if (marks !== undefined) addQuestion(match[1], match[2], marks);
   }
 
-  // Numeric line labels: "4(b) - 3 Marks", "6(a)(2) [3 Marks]".
-  const numericRegex = /(?:^|\n)\s*([0-9]+)\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\)\s*[-–—:]?\s*(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  // Numeric question labels without a Q/Question prefix, including nested,
+  // dotted and Roman-numbered paths: 1(a)(ii), 2.1.3, 4(IV).
+  const numericRegex = new RegExp(
+    '(?:^|\\n)\\s*([0-9]+)\\s*(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)])' +
+    '\\s*[-–—:]?\\s*(?:\\[\\s*|\\(\\s*)?([0-9]+(?:\\.[0-9]+)?)\\s*(?:Marks?|M)\\b',
+    'gi',
+  );
   while ((match = numericRegex.exec(text)) !== null) {
-    addQuestion(match[1], match[2], Number(match[3]));
+    const suffix = match[2].startsWith('.') ? match[2].replace(/\./g, ')(').replace(/^/, '(').concat(')') : match[2];
+    addQuestion(match[1], suffix, Number(match[3]));
   }
 
-  // Contextual formats under a parent heading:
-  // "(a) Description [10 Marks]", "a) Description — 5 marks",
-  // "Part (b): Description (4 Marks)" and "Sub-part (i) — Marks: 2".
   const lines = text.split(/\r?\n/);
   let activeParentQNum: string | null = null;
-  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b))/i;
-  const childSubQRegex = /^\s*(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(?:\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)|\[\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\]|([a-zA-Z0-9]+)\s*[.)])(?:\s*[-–—:]\s*|\s+|$)/i;
+  let activeSubQuestionPath: string[] = [];
+  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b|CLAUSE\b|ITEM\b|PARA\b))/i;
+  const childSubQRegex = new RegExp(
+    '^\\s*' + labelledPartPrefix +
+    '(' + bracketPath + '|[a-zA-Z0-9]+[.)]|[a-zA-Z0-9]+)' +
+    '(?:\\s*[-–—:]\\s*|\\s+|$)',
+    'i',
+  );
+  const romanNumerals = new Set([
+    'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+    'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx',
+    'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxx', 'xl', 'l', 'lx', 'lxx', 'xc', 'c',
+  ]);
+  const numberingFamily = (token: string, depth: number): string => {
+    const value = String(token || '').toLowerCase();
+    if (/^\d+$/.test(value)) return 'numeric';
+    if (romanNumerals.has(value) && (value.length > 1 || depth > 0)) return 'roman';
+    if (/^[a-z]$/.test(value)) return 'alphabetic';
+    if (romanNumerals.has(value)) return 'roman';
+    return 'other:' + value;
+  };
+  const combineContextPath = (current: string[], incoming: string[]): string[] => {
+    if (!incoming.length) return current;
+    if (incoming.length > 1) return incoming;
+    if (!current.length) return incoming;
+    const token = incoming[0];
+    const last = current[current.length - 1];
+    const first = current[0];
+    const nextFamily = numberingFamily(token, current.length);
+    const lastFamily = numberingFamily(last, current.length - 1);
+    const firstFamily = numberingFamily(first, 0);
+
+    // Same numbering family means a sibling at that level. A change from the
+    // top-level alpha label to Roman/Arabic normally opens a nested level.
+    if (nextFamily === lastFamily || (last === 'i' && romanNumerals.has(token))) {
+      return current.slice(0, -1).concat(token);
+    }
+    if (current.length > 1 && (nextFamily === firstFamily || (first === 'i' && romanNumerals.has(token)))) {
+      return [token];
+    }
+    return current.concat(token);
+  };
 
   for (const line of lines) {
     if (/^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER|MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\s*[-–—:]?\s*(?:MCQ|OBJECTIVE))\b/i.test(line)) {
       activeParentQNum = null;
+      activeSubQuestionPath = [];
     }
 
     const parentMatch = line.match(parentHeaderRegex);
-    if (parentMatch) activeParentQNum = parentMatch[1];
+    if (parentMatch) {
+      activeParentQNum = parentMatch[1];
+      activeSubQuestionPath = [];
+    }
 
     if (!activeParentQNum) continue;
     const childMatch = line.match(childSubQRegex);
     if (!childMatch) continue;
 
-    const subQuestion = childMatch[1] || childMatch[2] || childMatch[3];
+    const label = childMatch[1];
+    const parsedLabel = parseCanonicalQuestionIdentity('Q' + activeParentQNum + label);
+    const incomingPath = parsedLabel.subQuestionPath || [];
+    activeSubQuestionPath = combineContextPath(activeSubQuestionPath, incomingPath);
     const remainder = line.slice(childMatch[0].length);
     const marks = extractMarks(remainder);
-    if (marks !== undefined) addQuestion(activeParentQNum, subQuestion, marks);
+    if (marks !== undefined) {
+      const suffix = activeSubQuestionPath.map((part) => '(' + part + ')').join('');
+      addQuestion(activeParentQNum, suffix, marks);
+    }
   }
 
   return deduplicateQuestionList(subQuestions);
 }
+
 interface OptionalAttemptSelectionRule {
   allowedCount: number;
   questionNumbers: string[];
