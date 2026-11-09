@@ -2,7 +2,7 @@ import {
   extractOfficialMcqKeysFromSuggestedAnswers,
   extractSubQuestionsFromText,
 } from './paperStructureService.js';
-import { toCanonicalQuestionId } from './canonicalQuestionService.js';
+import { toCanonicalQuestionId, parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 
 export type MaterialMappingAuditStatus =
   | 'MATCHED'
@@ -29,10 +29,10 @@ export interface MaterialQuestionMappingAudit {
 
 const MCQ_ID_LINE = /^\s*(?:MCQ|OBJECTIVE)(?:\s*(?:NO\.?)?)?\s*(\d{1,2})\b/i;
 const QUESTION_LINE =
-  /^\s*(?:(?:QUESTION|Q\.?|ANS(?:WER)?\.?\s+TO\s+QUESTION)\s*)(\d{1,2})(?:\s*\(([a-z0-9]+)\))?(?:\s*([.)\-:]))?\s*(.*)$/i;
+  /^\s*(?:(?:QUESTION|Q\.?|ANS(?:WER)?\.?\s+TO\s+QUESTION)\s*)(\d{1,2})(?:\s*((?:(?:\([a-z0-9]+\)|\[[a-z0-9]+\]))+))?(?:\s*([.)\-:]))?\s*(.*)$/i;
 const NUMBERED_QUESTION_LINE = /^\s*(\d{1,2})\s*[.)]\s+(.{6,})$/;
 const NUMBERED_ANSWER_KEY_LINE = /^\s*\d{1,2}\s*[.)]\s*(?:\([a-d]\)|[a-d]\b)/i;
-const SUBQUESTION_LINE = /^\s*\(([a-z])\)\s+(.{4,})$/i;
+const SUBQUESTION_LINE = /^\s*((?:(?:\([a-z0-9]+\)|\[[a-z0-9]+\]))+|[a-z0-9]+[.)])\s+(.{4,})$/i;
 const MCQ_OPTION_LINE = /^\s*(?:\(([a-d])\)|([a-d])[).])\s+\S+/i;
 const SECTION_BOUNDARY =
   /^(?:SECTION\s+[A-Z0-9]+|DIVISION\s+[A-Z0-9]+|PART\s+[IVX0-9]+|DESCRIPTIVE\s+QUESTIONS|OBJECTIVE\s+QUESTIONS)\b/i;
@@ -49,12 +49,13 @@ function uniqueSorted(values: Iterable<string>): string[] {
 
 function removeParentWhenChildrenExist(values: Iterable<string>): string[] {
   const ids = uniqueSorted(values);
-  const childParents = new Set<string>();
-  for (const id of ids) {
-    const match = id.match(/^(Q\d+)\(/i);
-    if (match) childParents.add(match[1].toUpperCase());
+  const parentIds = new Set<string>();
+  for (const parent of ids) {
+    if (ids.some((child) => child !== parent && child.toUpperCase().startsWith((parent + '(').toUpperCase()))) {
+      parentIds.add(parent.toUpperCase());
+    }
   }
-  return ids.filter((id) => !childParents.has(id.toUpperCase()));
+  return ids.filter((id) => !parentIds.has(id.toUpperCase()));
 }
 
 function extractQuestionPaperInventory(text: string): {
@@ -138,22 +139,52 @@ function extractQuestionPaperInventory(text: string): {
       );
 
     if (isMcq) {
-      mcqIds.push(canonical(`MCQ${candidate.questionNumber}`));
+      mcqIds.push(canonical('MCQ' + candidate.questionNumber));
       continue;
     }
 
-    if (candidate.inlineSub) {
-      descriptiveIds.push(canonical(`Q${candidate.questionNumber}(${candidate.inlineSub})`));
+    const initialPath = candidate.inlineSub
+      ? parseCanonicalQuestionIdentity('Q' + candidate.questionNumber + candidate.inlineSub).subQuestionPath || []
+      : [];
+    if (initialPath.length) {
+      const pathCode = initialPath.map((part) => '(' + part + ')').join('');
+      descriptiveIds.push(canonical('Q' + candidate.questionNumber + pathCode));
     } else {
-      descriptiveIds.push(canonical(`Q${candidate.questionNumber}`));
+      descriptiveIds.push(canonical('Q' + candidate.questionNumber));
     }
+
+    let partStack: Array<{ indent: number; parts: string[] }> = initialPath.length
+      ? [{ indent: -1, parts: initialPath }]
+      : [];
 
     for (const line of windowLines) {
       if (SECTION_BOUNDARY.test(line.trim())) break;
       const child = line.match(SUBQUESTION_LINE);
-      if (child) {
-        descriptiveIds.push(canonical(`Q${candidate.questionNumber}(${child[1]})`));
+      if (!child) continue;
+
+      const rawLabel = child[1].trim();
+      const normalizedLabel = /^[([{]/.test(rawLabel)
+        ? rawLabel
+        : '(' + rawLabel.replace(/[.)]$/, '') + ')';
+      const labelParts = parseCanonicalQuestionIdentity('Q' + candidate.questionNumber + normalizedLabel).subQuestionPath || [];
+      if (!labelParts.length) continue;
+
+      const indent = (line.match(/^\s*/) || [''])[0].length;
+      let fullParts: string[];
+      if (labelParts.length > 1) {
+        fullParts = labelParts;
+        partStack = [{ indent, parts: fullParts }];
+      } else {
+        while (partStack.length && partStack[partStack.length - 1].indent >= indent) {
+          partStack.pop();
+        }
+        const parentParts = partStack[partStack.length - 1]?.parts || [];
+        fullParts = [...parentParts, labelParts[0]];
+        partStack.push({ indent, parts: fullParts });
       }
+
+      const suffix = fullParts.map((part) => '(' + part + ')').join('');
+      descriptiveIds.push(canonical('Q' + candidate.questionNumber + suffix));
     }
   }
 
@@ -193,7 +224,7 @@ function extractExplicitSourceIds(text: string, allowNumberedHeadings: boolean):
     let match = trimmed.match(QUESTION_LINE);
     if (match) {
       const base = `Q${Number(match[1])}`;
-      ids.push(canonical(match[2] ? `${base}(${match[2]})` : base));
+      ids.push(canonical(match[2] ? `${base}${match[2]}` : base));
       continue;
     }
 
