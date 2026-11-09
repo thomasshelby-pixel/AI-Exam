@@ -539,8 +539,8 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     'gi',
   );
   while ((match = explicitPartRegex.exec(text)) !== null) {
-    const marks = extractMarks(match[3]);
-    if (marks !== undefined) addQuestion(match[1], match[2] || match[3], marks);
+    const marks = extractMarks(match[4]);
+    if (marks !== undefined) addQuestion(match[1], match[2], marks);
   }
 
   // Numeric question labels without a Q/Question prefix, including nested,
