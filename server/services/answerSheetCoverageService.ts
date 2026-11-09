@@ -402,7 +402,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
 
   const detectedDescriptiveCount = detectedQuestions.filter(
     (question) => String(question.subQuestion || '').toUpperCase() !== 'MCQ' &&
-      !/^MCQ\\s*\\d+$/i.test(String(question.questionNumber || ''))
+      !/^MCQ\s*\d+$/i.test(String(question.questionNumber || ''))
   ).length;
   const accountedAnswerBlocks = detectedDescriptiveCount +
     Object.keys(selections).length +
