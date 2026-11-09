@@ -18,7 +18,8 @@
 export interface CanonicalQuestionIdentity {
   canonicalId: string;       // e.g. 'Q3(b)', 'Q4(b)', 'Q1', 'MCQ1', 'Q6(a)(1)'
   questionNumber: string;    // e.g. '3', '4', '1', '6'
-  subQuestion?: string;      // e.g. 'b', 'a(1)'
+  subQuestion?: string;      // e.g. 'b', 'a(i)(1)'
+  subQuestionPath?: string[]; // Every numbering level, e.g. ['a', 'ii', '1']
   parentQuestionId: string;  // e.g. 'Q3', 'Q4', 'Q1', 'Q6'
   isMcq: boolean;
   isAlternative?: boolean;
@@ -47,90 +48,217 @@ export interface AuthoritativeSubQuestionReference {
  * - ('Q3(b)', 'b') -> 'Q3(b)' (prevents duplicate Q3(b)(b) concatenation!)
  * - ('Q4(b)', 'b') -> 'Q4(b)'
  */
+function findBalancedClosing(source: string, start: number, opening: '(' | '['): number {
+  const closing = opening === '(' ? ')' : ']';
+  let depth = 0;
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] === opening) depth += 1;
+    else if (source[index] === closing) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Extract every level of a question's numbering path. The tokens are deliberately
+ * opaque: letters, Arabic numerals, Roman numerals and future numbering systems
+ * are identities, not punctuation that may be discarded.
+ */
+function parseQuestionPartPath(source: string, allowBareToken = false): string[] {
+  let rest = String(source || '').trim();
+  if (!rest) return [];
+
+  const labelPrefix = rest.match(/^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*/i);
+  if (labelPrefix) {
+    rest = rest.slice(labelPrefix[0].length).trim();
+    allowBareToken = true;
+  }
+
+  const parts: string[] = [];
+  let guard = 0;
+  while (rest && guard++ < 12) {
+    rest = rest.replace(/^\s+/, '');
+    if (!rest) break;
+
+    if (rest[0] === '(' || rest[0] === '[') {
+      const opening = rest[0] as '(' | '[';
+      const closeAt = findBalancedClosing(rest, 0, opening);
+      if (closeAt < 0) break;
+      const inner = rest.slice(1, closeAt).trim();
+      const nested = parseQuestionPartPath(inner, true);
+      if (nested.length) parts.push(...nested);
+      rest = rest.slice(closeAt + 1);
+      continue;
+    }
+
+    // Dotted hierarchy: Q3.1.2 -> Q3(1)(2); Q3.b -> Q3(b).
+    const dotted = rest.match(/^[.]\s*([a-zA-Z0-9]+)(?:\s*[.]\s*([a-zA-Z0-9]+))*/);
+    if (dotted && (/[0-9]/.test(dotted[1]) || /^[a-z]$/i.test(dotted[1]))) {
+      const tokenText = dotted[0].replace(/^\./, '');
+      const tokens = tokenText.split('.').map((token) => token.trim()).filter(Boolean);
+      parts.push(...tokens.map((token) => token.toLowerCase()));
+      rest = rest.slice(dotted[0].length);
+      continue;
+    }
+
+    // Explicit bare labels such as "a)", "iv.", "2)" are unambiguous.
+    const punctuated = rest.match(/^([a-zA-Z0-9]+)\s*[.)](?=\s|$|[-–—:])/);
+    if (punctuated) {
+      parts.push(punctuated[1].toLowerCase());
+      rest = rest.slice(punctuated[0].length);
+      continue;
+    }
+
+    // A compact direct token is accepted only when it is a label or follows
+    // an explicit Part/Clause prefix, never from arbitrary answer prose.
+    const compact = rest.match(/^([a-zA-Z][a-zA-Z0-9]{0,3}|[0-9]{1,3})$/);
+    if (compact && (allowBareToken || (/^[a-zA-Z](?:[0-9]+)?$/.test(compact[1]) && compact[1].length <= 3))) {
+      parts.push(compact[1].toLowerCase());
+      break;
+    }
+
+    // Unlabelled answer wording is not a numbering token. Stop rather than
+    // guessing from the first word.
+    break;
+  }
+
+  // Collapse only accidental repeated echoes such as Q3(b)(b). Roman numeral
+  // and numeric levels are never collapsed merely because of their character set.
+  return parts.filter((part, index) => index === 0 || part !== parts[index - 1]);
+}
+
+function buildCanonicalQuestionCode(questionNumber: string, parts: string[]): string {
+  return 'Q' + questionNumber + parts.map((part) => '(' + part + ')').join('');
+}
+
+/**
+ * Normalizes questionNumber and subQuestion into a stable hierarchical ID.
+ * Every explicitly numbered level is retained: Q3(a)(i), Q3(a)(ii),
+ * Q3(a)(1), Q3(a)(2), Q3.1.2 and Q3(IV) remain distinct.
+ */
 export function toCanonicalQuestionId(
   questionNumberInput?: string | number | null,
   subQuestionInput?: string | null,
   paperStructureSubQuestions?: AuthoritativeSubQuestionReference[]
 ): string {
   const rawQ = String(questionNumberInput || '').trim();
-  const rawSub = subQuestionInput ? String(subQuestionInput).trim() : '';
+  const rawSub = String(subQuestionInput || '').trim();
 
-  // 1. MCQ Detection
   const isMcq =
     /^(?:MCQ|OBJECTIVE)/i.test(rawQ) ||
     /MCQ/i.test(rawQ) ||
     rawSub.toUpperCase() === 'MCQ';
-
   if (isMcq) {
     const num = rawQ.replace(/[^0-9]/g, '') || rawSub.replace(/[^0-9]/g, '') || '1';
-    return `MCQ${num}`;
+    return 'MCQ' + num;
   }
 
-  // 2. Parse rawQ first through canonical identity parser
   const parsedQ = parseCanonicalQuestionIdentity(rawQ);
-  if (parsedQ.isMcq) {
-    return parsedQ.canonicalId;
-  }
+  if (parsedQ.isMcq) return parsedQ.canonicalId;
 
-  let finalCanonId = parsedQ.canonicalId;
-
-  // If rawQ already contains a sub-question (e.g. 'Q3(b)', '3(b)', 'Q4(b)', 'Q6(a)(1)'):
-  if (parsedQ.subQuestion) {
-    const cleanRawSub = rawSub.toLowerCase().replace(/[^a-z0-9()]/g, '');
-    // If rawSub is empty, matches parsedQ.subQuestion, or is an inner clause/echo of parsedQ.subQuestion:
-    if (
-      !cleanRawSub ||
-      cleanRawSub === parsedQ.subQuestion ||
-      cleanRawSub.startsWith(parsedQ.subQuestion) ||
-      parsedQ.subQuestion.startsWith(cleanRawSub) ||
-      /^(?:[ivxlcdm]+|[0-9]+)$/i.test(cleanRawSub)
+  let parts = [...(parsedQ.subQuestionPath || [])];
+  if (rawSub && rawSub.toUpperCase() !== 'MCQ') {
+    const parsedSub = parseCanonicalQuestionIdentity('Q' + parsedQ.questionNumber + '(' + rawSub + ')');
+    const incoming = parsedSub.subQuestionPath || [];
+    if (!parts.length) {
+      parts = incoming;
+    } else if (
+      incoming.length >= parts.length &&
+      parts.every((part, index) => incoming[index] === part)
     ) {
-      finalCanonId = parsedQ.canonicalId;
+      // The sub-question field contains the full path as well as the Q code.
+      parts = incoming;
+    } else if (incoming.length <= parts.length &&
+      incoming.every((part, index) => parts[parts.length - incoming.length + index] === part)) {
+      // The sub-question field repeats the final leaf token already in the Q code.
+    } else if (incoming.length <= parts.length &&
+      incoming.every((part, index) => parts[index] === part)) {
+      // The sub-question field repeats an ancestor path already in the Q code.
     } else {
-      // Check if paperStructure explicitly has the nested form
-      const potentialNested = `Q${parsedQ.questionNumber}(${parsedQ.subQuestion}(${cleanRawSub}))`;
-      if (
-        Array.isArray(paperStructureSubQuestions) &&
-        paperStructureSubQuestions.some((s) => s.fullQuestionCode === potentialNested)
-      ) {
-        finalCanonId = potentialNested;
-      } else {
-        finalCanonId = parsedQ.canonicalId;
-      }
+      // A separate subQuestion field is the next level below the supplied Q code.
+      parts = parts.concat(incoming);
     }
-  } else if (rawSub) {
-    // If rawQ had no sub-question (e.g. '3', 'Q3', 'Question 4'), but rawSub is supplied:
-    const parsedCombined = parseCanonicalQuestionIdentity(`Q${parsedQ.questionNumber}(${rawSub})`);
-    finalCanonId = parsedCombined.canonicalId;
   }
 
-  // 3. Align against authoritative paper structure if provided
-  if (Array.isArray(paperStructureSubQuestions) && paperStructureSubQuestions.length > 0) {
-    // Check exact match
-    const exact = paperStructureSubQuestions.find(
-      (s) => s.fullQuestionCode.toLowerCase() === finalCanonId.toLowerCase()
-    );
-    if (exact) {
-      return exact.fullQuestionCode;
-    }
+  let finalCanonId = buildCanonicalQuestionCode(parsedQ.questionNumber, parts);
 
-    // Check same question number and sub-question letter
-    const parsedFinal = parseCanonicalQuestionIdentity(finalCanonId);
-    if (!parsedFinal.isMcq && parsedFinal.subQuestion) {
-      const baseLetter = parsedFinal.subQuestion.charAt(0).toLowerCase();
-      const match = paperStructureSubQuestions.find((s) => {
-        if (s.isMcq) return false;
-        if (s.questionNumber !== parsedFinal.questionNumber) return false;
-        const sSub = (s.subQuestionNumber || '').toLowerCase();
-        return sSub === baseLetter || s.fullQuestionCode.toLowerCase().includes(`(${baseLetter})`);
-      });
-      if (match) {
-        return match.fullQuestionCode;
-      }
-    }
+  // Align only on an exact normalized identity. Falling back to the first
+  // question with the same leading letter can silently map Q1(a)(iii) to
+  // Q1(a)(i), which is worse than leaving a genuinely unknown part unmapped.
+  if (Array.isArray(paperStructureSubQuestions) && paperStructureSubQuestions.length > 0) {
+    const exact = paperStructureSubQuestions.find((question) => {
+      const sourceCode = question.fullQuestionCode || question.questionNumber;
+      const normalized = parseCanonicalQuestionIdentity(sourceCode).canonicalId;
+      return normalized.toLowerCase() === finalCanonId.toLowerCase();
+    });
+    if (exact) finalCanonId = parseCanonicalQuestionIdentity(exact.fullQuestionCode).canonicalId;
   }
 
   return finalCanonId;
+}
+
+/**
+ * Parses any arbitrary question string into a complete CanonicalQuestionIdentity.
+ * Handles alphabetic, Arabic, Roman-numeral, dotted and arbitrarily nested part
+ * labels while retaining each level as a separate canonical path segment.
+ */
+export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuestionIdentity {
+  let trimmed = String(rawCode || '').trim();
+
+  const isMcq = /^(?:MCQ|OBJECTIVE)/i.test(trimmed) || /MCQ/i.test(trimmed);
+  if (isMcq) {
+    const num = trimmed.replace(/[^0-9]/g, '') || '1';
+    return {
+      canonicalId: 'MCQ' + num,
+      questionNumber: num,
+      subQuestion: 'MCQ',
+      subQuestionPath: ['MCQ'],
+      parentQuestionId: 'MCQ' + num,
+      isMcq: true,
+      isAlternative: false,
+    };
+  }
+
+  let isAlternative = false;
+  const altRegex = /(?:[\(\[\{]\s*(?:OR|ALT|ALTERNATIVE|OPTION\s*[0-9]+|CHOICE\s*[0-9]+)\s*[\)\]\}]|\b(?:OR|ALT|ALTERNATIVE|OPTION\s*[0-9]+|CHOICE\s*[0-9]+)\b)/gi;
+  if (altRegex.test(trimmed)) {
+    isAlternative = true;
+    trimmed = trimmed.replace(altRegex, ' ').trim();
+  }
+
+  const qMatch = trimmed.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(.*)$/i);
+  if (qMatch) {
+    const qNum = qMatch[1];
+    const rest = (qMatch[2] || '').trim();
+    const parts = parseQuestionPartPath(rest);
+    const canonicalId = buildCanonicalQuestionCode(qNum, parts);
+    const parentQuestionId = buildCanonicalQuestionCode(qNum, parts.slice(0, -1));
+    const subQuestion = parts.length
+      ? parts.map((part, index) => index === 0 ? part : '(' + part + ')').join('')
+      : undefined;
+    return {
+      canonicalId,
+      questionNumber: qNum,
+      subQuestion,
+      subQuestionPath: parts,
+      parentQuestionId,
+      isMcq: false,
+      isAlternative,
+    };
+  }
+
+  const digits = trimmed.replace(/[^0-9]/g, '') || '1';
+  return {
+    canonicalId: 'Q' + digits,
+    questionNumber: digits,
+    subQuestion: undefined,
+    subQuestionPath: [],
+    parentQuestionId: 'Q' + digits,
+    isMcq: false,
+    isAlternative,
+  };
 }
 
 /**
@@ -330,15 +458,26 @@ export function deduplicateQuestionList<T extends {
     }
   }
   // Also collect main questions where children exist
-  for (const m of mapped) {
-    if (!m.isMcq && m.subQuestion) {
-      parentContainerIds.add(`Q${m.questionNumber}`);
+  const addAllAncestors = (canonicalId: string) => {
+    const current = parseCanonicalQuestionIdentity(canonicalId);
+    let parent = current.parentQuestionId;
+    const seenParents = new Set<string>();
+    while (parent && parent !== current.canonicalId && !seenParents.has(parent)) {
+      seenParents.add(parent);
+      parentContainerIds.add(parent);
+      const parsedParent = parseCanonicalQuestionIdentity(parent);
+      if (parsedParent.parentQuestionId === parent) break;
+      parent = parsedParent.parentQuestionId;
     }
+  };
+  for (const m of mapped) {
+    if (!m.isMcq && m.subQuestion) addAllAncestors(m.canonicalId);
   }
   if (Array.isArray(paperStructureSubQuestions)) {
     for (const sq of paperStructureSubQuestions) {
       if (!sq.isMcq && sq.subQuestionNumber) {
-        parentContainerIds.add(`Q${sq.questionNumber}`);
+        const code = parseCanonicalQuestionIdentity(sq.fullQuestionCode || sq.questionNumber).canonicalId;
+        addAllAncestors(code);
       }
     }
   }
