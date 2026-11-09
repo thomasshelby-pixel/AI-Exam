@@ -1354,7 +1354,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       if (requestedReviewRetryId) {
         const previousEvaluation = db.prepare(`
           SELECT id, student_id, status, evaluation_source, material_type, faculty_mock_test_id,
-                 answer_sheet_sha256, faculty_mock_review_retry_evaluation_id
+                 answer_sheet_sha256, retry_of_evaluation_id, faculty_mock_review_retry_evaluation_id
           FROM evaluations
           WHERE id = ? AND student_id = ?
           LIMIT 1
