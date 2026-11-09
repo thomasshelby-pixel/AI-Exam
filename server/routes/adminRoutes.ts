@@ -1219,6 +1219,16 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     let markingText: ReturnType<typeof readOptionalText>;
     try { qpText = readOptionalText(body.questionPaperReferenceFile, 'Question Paper Text'); answersText = readOptionalText(body.suggestedAnswersFile, 'Suggested Answers'); markingText = readOptionalText(body.markingSchemeFile, 'Marking Scheme'); }
     catch (fileError) { return res.status(400).json({ error: fileError instanceof Error ? fileError.message : 'A replacement TXT file is invalid.', code: 'FACULTY_MOCK_REPLACEMENT_FILE_INVALID' }); }
+    const hasHistoricalEvaluations = sharedEvaluations.length > 0 ||
+      Boolean(db.prepare('SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ? LIMIT 1').get(testId));
+    const scoringInputsChanged = Number(existing.maximum_marks || 100) !== maximumMarks ||
+      Boolean(pdf || qpText || answersText || markingText);
+    if (hasHistoricalEvaluations && scoringInputsChanged) {
+      return res.status(409).json({
+        error: 'This mock already has student evaluation history. Its maximum marks and scoring source files are locked to protect previous reports and future rechecks. You can still edit the title, or publish a new mock for the corrected paper and marking scheme.',
+        code: 'FACULTY_MOCK_SCORING_SOURCES_LOCKED',
+      });
+    }
     let parsedReference;
     try { parsedReference = validateFacultyMockReferenceSections({ questionPaperText: qpText?.text ?? String(existing.question_paper_text || ''), suggestedAnswersText: answersText?.text ?? String(existing.suggested_answers_text || ''), markingSchemeText: markingText?.text ?? String(existing.marking_scheme_text || '') }); }
     catch (referenceError) { return res.status(422).json({ error: referenceError instanceof Error ? referenceError.message : 'The mock reference TXT package is invalid.', code: 'FACULTY_MOCK_REFERENCE_TXT_INVALID' }); }
@@ -1254,8 +1264,7 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     db.prepare(`INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details) VALUES (?, ?, 'FACULTY_MOCK_TEST_UPDATED', 'FACULTY_MOCK_TEST', ?, ?)`).run(`aud_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, testId, `Updated faculty mock "${title}". Replaced ${[pdf && 'Question Paper PDF', qpText && 'Question Paper Text', answersText && 'Suggested Answers', markingText && 'Marking Scheme'].filter(Boolean).join(', ') || 'no source files'}; maximum marks=${maximumMarks}; student access=${accessType}. Past entitlement records were preserved.`);
     // Superseded source files are deliberately retained. They may be referenced by
     // a historical evaluation package even when this instance's SQLite cache is stale.
-    const hasEvaluationHistory = Boolean(db.prepare('SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ? LIMIT 1').get(testId));
-    return res.json({ success: true, test: { ...updated, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined, question_paper_reference_file_id: undefined, suggested_answer_file_id: undefined, marking_scheme_file_id: undefined }, retainedHistoricalSourceFiles: hasEvaluationHistory || uploadedFileIds.length > 0 });
+    return res.json({ success: true, test: { ...updated, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined, question_paper_reference_file_id: undefined, suggested_answer_file_id: undefined, marking_scheme_file_id: undefined }, retainedHistoricalSourceFiles: hasHistoricalEvaluations || uploadedFileIds.length > 0 });
   } catch (error) {
     if (!sharedRecordSaved) for (const fileId of uploadedFileIds) await deletePersistentFile(fileId).catch(() => {});
     console.error('[FacultyMocks] Edit test error:', error);
