@@ -768,7 +768,8 @@ router.delete('/faculty-mocks/faculties/:id', async (req: AuthRequest, res: Resp
 
     // Delete catalogue and local entitlement cache atomically. Historical
     // evaluations and payment_transactions intentionally remain untouched.
-    const removeLocalRows = db.transaction(() => {
+    db.exec('BEGIN IMMEDIATE');
+    try {
       if (testIdList.length) {
         const placeholders = testIdList.map(() => '?').join(',');
         db.prepare(`DELETE FROM faculty_mock_free_uses WHERE faculty_mock_test_id IN (${placeholders})`).run(...testIdList);
@@ -785,8 +786,15 @@ router.delete('/faculty-mocks/faculties/:id', async (req: AuthRequest, res: Resp
         facultyId,
         `Deleted faculty mock catalogue "${String(faculty.name || facultyId)}" with ${testIdList.length} mock(s) and ${fileIds.size} stored source file(s). Evaluation reports and payment transaction history were retained.`,
       );
-    });
-    removeLocalRows();
+      db.exec('COMMIT');
+    } catch (localDeleteError) {
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // Keep the original deletion error; rollback is best-effort.
+      }
+      throw localDeleteError;
+    }
 
     if (!await deleteFirestoreDoc('faculty_mock_faculties', facultyId)) {
       return res.status(502).json({
