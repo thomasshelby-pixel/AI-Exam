@@ -1188,8 +1188,12 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     if (accessTypeChanged || scoringInputsRequested) {
       try {
         [sharedFreeLedgers, sharedPaidLedgers] = await Promise.all([
-          getAllFirestoreDocs<any>('faculty_mock_free_uses', { failOnError: true }),
-          getAllFirestoreDocs<any>('faculty_mock_paid_copy_ledgers', { failOnError: true }),
+          queryFirestoreDocs<any>('faculty_mock_free_uses', [
+            { field: 'facultyMockTestId', op: '==', value: testId },
+          ], { failOnError: true }),
+          queryFirestoreDocs<any>('faculty_mock_paid_copy_ledgers', [
+            { field: 'facultyMockTestId', op: '==', value: testId },
+          ], { failOnError: true }),
         ]);
       } catch (ledgerError) {
         console.error('[FacultyMocks] Could not verify shared entitlements:', ledgerError);
@@ -1199,11 +1203,8 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
         });
       }
     }
-    const hasSharedFreeClaim = sharedFreeLedgers.some((entry: any) =>
-      String(entry.facultyMockTestId || entry.faculty_mock_test_id || '') === testId
-    );
+    const hasSharedFreeClaim = sharedFreeLedgers.length > 0;
     const hasSharedPaidCopy = sharedPaidLedgers.some((entry: any) =>
-      String(entry.facultyMockTestId || entry.faculty_mock_test_id || '') === testId &&
       Object.values(entry.copies || {}).some((copy: any) =>
         ['AVAILABLE', 'CONSUMED', 'PENDING'].includes(String(copy?.status || '').toUpperCase())
       )
