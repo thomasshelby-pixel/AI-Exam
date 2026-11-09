@@ -126,7 +126,7 @@ function parseLeadingSubQuestionPath(input: string): string[] {
     if (!direct) break;
     const token = direct[0].normalize('NFKC').toLowerCase();
     const tail = rest.slice(direct[0].length);
-    const hasBoundary = !tail || /^[\s).:\-–—/]/u.test(tail) || /^[([{]/u.test(tail);
+    const hasBoundary = !tail || /^[\s).:\-–—/_]/u.test(tail) || /^[([{]/u.test(tail);
     const hasExplicitPartPrefix = first && /^(?:SUB[- ]?PART|SUBQUESTION|SUB QUESTION|PART)\b/i.test(input.trim());
     // Do not mistake the first word of ordinary question text ("Calculate…")
     // for a part label. Direct labels are accepted only with a numbering
