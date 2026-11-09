@@ -99,6 +99,11 @@ export const FacultyMockEvaluationPage: React.FC = () => {
 
   // Resume this student's own Faculty Mock evaluation after a refresh.
   useEffect(() => {
+    // Clear any previous account's progress before restoring the current account's job.
+    setActiveEvaluationId(null);
+    setEvaluationStartedAt(null);
+    setElapsedSeconds(0);
+    setSubmitting(false);
     if (!activeEvaluationStorageKey || !activeEvaluationStartStorageKey) return;
     const savedId = localStorage.getItem(activeEvaluationStorageKey);
     if (!savedId) return;
@@ -106,8 +111,9 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     setActiveEvaluationId(savedId);
     setEvaluationStartedAt(Number.isFinite(savedStart) ? savedStart : Date.now());
     setEvaluationProgressStage('QUEUED');
+    setEvaluationProgressPercentage(5);
     setEvaluationProgressMessage('Reconnecting to your evaluation progress…');
-  }, [activeEvaluationStorageKey, activeEvaluationStartStorageKey]);
+  }, [user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey]);
 
   useEffect(() => {
     if (!activeEvaluationId || !evaluationStartedAt) return;
