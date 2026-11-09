@@ -86,13 +86,14 @@ export function getAuthoritativePaperStructure(options: {
 
   const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
   const isFacultyMock = String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
+  const normalizedLevel = String(level || '').trim().toUpperCase();
+  const normalizedPaperIdentity = `${subjectName} ${paper}`.trim().toLowerCase();
+  // This preconfigured template is specifically CA Intermediate Paper 3:
+  // Taxation. Never select it merely because a CA Final paper mentions tax,
+  // GST, or taxation in its subject title or answer text.
   const isTaxationPaper =
-    subjectName.toLowerCase().includes('tax') ||
-    paper.toLowerCase().includes('tax') ||
-    textCombined.includes('income tax law') ||
-    textCombined.includes('goods and services tax') ||
-    textCombined.includes('rudra') ||
-    textCombined.includes('dharani');
+    normalizedLevel === 'INTERMEDIATE' &&
+    /\btaxation\b/.test(normalizedPaperIdentity);
 
   // Faculty Mock references are independently authored. Never substitute a
   // preconfigured taxation/PYQ structure; the exact selected mock's private TXT
