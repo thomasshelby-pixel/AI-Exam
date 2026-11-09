@@ -190,13 +190,16 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       let questionNumber = '';
       let inferredSubQuestion = '';
       const mcqMatch = rawQuestionNumber.match(/^(?:MCQ|OBJECTIVE)\s*(\d+)$/i);
-      const questionMatch = rawQuestionNumber.match(/^\s*(?:(?:QUESTION|Q|ANSWER|ANS)\.?\s*)?(\d+)\s*((?:\([a-z0-9]+\))*)\s*$/i);
+      const questionMatch = rawQuestionNumber.match(/^\s*(?:(?:QUESTION|Q|ANSWER|ANS)\.?\s*)?(\d+)(.*)\s*$/i);
       if (mcqMatch) {
         questionNumber = mcqMatch[1];
         inferredSubQuestion = 'MCQ';
       } else if (questionMatch) {
-        questionNumber = questionMatch[1];
-        inferredSubQuestion = (questionMatch[2] || '').replace(/[()]/g, '');
+        // Keep every parenthesized/bracketed level. Stripping the brackets from
+        // Q1(a)(ii) used to turn it into the ambiguous label "aii".
+        const identity = parseCanonicalQuestionIdentity(rawQuestionNumber);
+        questionNumber = identity.questionNumber;
+        inferredSubQuestion = identity.subQuestion || '';
       } else if (rawQuestionNumber) {
         warnings.push('A detected answer contained a question label that could not be safely normalized.');
         continue;
