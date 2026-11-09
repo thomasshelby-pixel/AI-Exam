@@ -263,7 +263,7 @@ export function extractLockedQuestionSlice(
     if (path.length) {
       // Path tokens are normalized alphanumeric identifiers, so this is safe
       // to interpolate into a question-heading matcher without regex syntax.
-      const escapeRegex = (value: string) => value.replace(/[^a-z0-9]/gi, '');
+      const escapeRegex = (value: string) => value; // Canonical tokens are Unicode letters/numbers only.
       const group = (value: string) => '\\s*[([{]\\s*' + escapeRegex(value) + '\\s*[)\\]}]';
       const expandedSuffix = path.map(group).join('');
       const compactSuffix = '\\s*\\(\\s*' + escapeRegex(path[0]) +
