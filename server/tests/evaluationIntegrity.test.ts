@@ -806,17 +806,49 @@ Section B - Division A: Multiple Choice Questions
 Section B - Division B: Descriptive Questions
 `;
 
+  const selectedQuestionPaper = [
+    'CA Intermediate Paper 3: Taxation - Selected MTP Question Paper',
+    'SECTION A - MULTIPLE CHOICE QUESTIONS',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 1} - 2 Marks`),
+    'MCQ 8 - 1 Mark',
+    'SECTION B - DESCRIPTIVE QUESTIONS',
+    'SECTION C - MULTIPLE CHOICE QUESTIONS',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 9} - 2 Marks`),
+    'MCQ 16 - 1 Mark',
+    'SECTION D - DESCRIPTIVE QUESTIONS',
+  ].join('\\n');
+  const selectedMarkingScheme = [
+    'Selected MTP Question-wise MCQ Marking Scheme',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 1} - 2 Marks`),
+    'MCQ 8 - 1 Mark',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 9} - 2 Marks`),
+    'MCQ 16 - 1 Mark',
+  ].join('\\n');
+
   const paperStructure = getAuthoritativePaperStructure({
     subjectName: 'Taxation',
     paper: 'Paper 3: Taxation',
     level: 'INTERMEDIATE',
+    materialType: 'MTP',
+    questionPaperText: selectedQuestionPaper,
     suggestedAnswersText: selectedSuggestedAnswers,
+    markingSchemeText: selectedMarkingScheme,
     officialPaperMaxMarks: 100,
   });
 
   assert(
     paperStructure.mcqs.length === 16,
-    'TEST R.1: Authoritative Taxation paper has all 16 official MCQs (8 Income Tax + 8 GST)'
+    'TEST R.1: All 16 MCQs must be extracted from the selected MTP Suggested Answers.',
+  );
+  assert.notEqual(
+    paperStructure.paperTitle,
+    'CA Intermediate – Paper 3: Taxation',
+    'An explicit MTP must not use the legacy subject-specific Taxation template.',
+  );
+  assert.deepEqual(
+    paperStructure.mcqs.map((question) => question.maximumMarks),
+    [2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1],
+    'Each MTP MCQ maximum must come from the exact selected Question Paper / Marking Scheme.',
   );
 
   // Candidate selections for the regression test
