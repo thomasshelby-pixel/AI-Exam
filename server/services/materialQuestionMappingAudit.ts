@@ -36,7 +36,7 @@ const SUBQUESTION_LINE =
   /^\s*((?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*[a-z0-9]+(?:\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*[a-z0-9]+)*|(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*)?(?:(?:\([a-z0-9]+\)|\[[a-z0-9]+\])+|(?:\.?[a-z0-9]+)(?:\.[a-z0-9]+){1,4}|[a-z0-9]+[.)]))\s+(.{4,})$/i;
 const MCQ_OPTION_LINE = /^\s*(?:\(([a-d])\)|([a-d])[).])\s+\S+/i;
 const SECTION_BOUNDARY =
-  /^(?:SECTION\s+[A-Z0-9]+|DIVISION\s+[A-Z0-9]+|PART\s+[IVX0-9]+|DESCRIPTIVE\s+QUESTIONS|OBJECTIVE\s+QUESTIONS)\b/i;
+  /^(?:SECTION\s+[A-Z0-9]+|DIVISION\s+[A-Z0-9]+|PART\s+[IVX0-9]+(?:\s*[-–—:]\s*(?:OBJECTIVE(?:\s+TYPE)?|DESCRIPTIVE|GENERAL)\s+QUESTIONS?)?|DESCRIPTIVE\s+QUESTIONS|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS)\s*$/i;
 
 function canonical(raw: string): string {
   // Preserve the canonical service's public casing (Q5(a), MCQ1).
