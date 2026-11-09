@@ -831,7 +831,7 @@ console.log('\n--- TEST RT.12: Faculty Mock Uses Only Its Uploaded Paper Structu
       Part (a): Compute taxable income under the given facts [3 Marks]
       Part (b): State the applicable disclosure requirement [2 Marks]
       MULTIPLE CHOICE QUESTIONS
-      MCQ 1: Select the correct GST treatment [1 Mark]
+      1. Select the correct GST treatment [1 Mark]
     `,
     suggestedAnswersText: `
       Suggested Answers
@@ -846,6 +846,7 @@ console.log('\n--- TEST RT.12: Faculty Mock Uses Only Its Uploaded Paper Structu
   assert(facultyCodes.includes('Q1(a)'), `TEST RT.12.1: Faculty Taxation mock retains its uploaded Q1(a) (got ${facultyCodes.join(', ')})`);
   assert(facultyCodes.includes('Q1(b)'), `TEST RT.12.2: Faculty Taxation mock retains its uploaded Q1(b) (got ${facultyCodes.join(', ')})`);
   assert(!facultyCodes.includes('Q5(a)'), 'TEST RT.12.3: Preconfigured Taxation Q5(a) is not injected into the Faculty Mock');
+  assert(!facultyCodes.includes('Q1(1)'), 'TEST RT.12.3a: MCQ numbering is not misread as a descriptive child part');
   assert(facultyTaxStructure.mcqs.length === 1, `TEST RT.12.4: Only the uploaded mock MCQ is retained (got ${facultyTaxStructure.mcqs.length})`);
   assert(facultyTaxStructure.mcqs[0]?.maximumMarks === 1, `TEST RT.12.5: Faculty Mock MCQ maximum comes from its own source (got ${facultyTaxStructure.mcqs[0]?.maximumMarks})`);
 }
