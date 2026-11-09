@@ -112,4 +112,81 @@ assert.equal(missingMarkingScheme.status, 'PARTIAL');
 assert.equal(missingMarkingScheme.markingSchemeIndexed, false);
 assert.equal(missingMarkingScheme.markingSchemeCoveragePercent, null);
 
+const nestedQuestionPaper = [
+  'CA INTERMEDIATE - ADVANCED ACCOUNTING',
+  'PART II - DESCRIPTIVE QUESTIONS',
+  'Question 3. Prepare the required statement and supporting calculations.',
+  '(a) First-level requirement.',
+  '    (i) First nested requirement with its own answer.',
+  '    (ii) Second nested requirement with its own answer.',
+  '(b) Another independently marked first-level requirement.',
+].join('\n');
+const nestedSuggestedAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 3(a) - First-level suggested answer container.',
+  'Question 3(a)(i) - First nested answer and working.',
+  'Question 3(a)(ii) - Second nested answer and working.',
+  'Question 3(b) - Separate first-level answer.',
+].join('\n');
+const nestedMarkingScheme = [
+  'MARKING SCHEME',
+  'Question 3(a) - 5 Marks',
+  'Question 3(a)(i) - 2 Marks',
+  'Question 3(a)(ii) - 3 Marks',
+  'Question 3(b) - 4 Marks',
+].join('\n');
+
+const nestedAudit = buildMaterialQuestionMappingAudit({
+  questionPaperText: nestedQuestionPaper,
+  suggestedAnswersText: nestedSuggestedAnswers,
+  markingSchemeText: nestedMarkingScheme,
+});
+assert.equal(nestedAudit.status, 'MATCHED', JSON.stringify(nestedAudit, null, 2));
+assert.deepEqual(nestedAudit.questionPaperIds, ['Q3(a(i))', 'Q3(a(ii))', 'Q3(b)']);
+assert.deepEqual(nestedAudit.suggestedAnswerIds, ['Q3(a(i))', 'Q3(a(ii))', 'Q3(b)']);
+assert.deepEqual(nestedAudit.markingSchemeIds, ['Q3(a(i))', 'Q3(a(ii))', 'Q3(b)']);
+assert.deepEqual(nestedAudit.missingFromSuggestedAnswers, []);
+assert.deepEqual(nestedAudit.missingFromMarkingScheme, []);
+
+const namedAndDottedQuestionPaper = [
+  'PART II - DESCRIPTIVE QUESTIONS',
+  'Question 10. Apply the accounting requirements to the following facts.',
+  'Part IV Interpretation of the applicable standard.',
+  '  Clause 1 First independently scorable requirement.',
+  '  Clause 2 Second independently scorable requirement.',
+  'Question 11.1.1 First dotted sub-part requirement.',
+  'Question 11.1.2 Second dotted sub-part requirement.',
+].join('\n');
+const namedAndDottedSuggestedAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 10 Part IV Clause 1 - First separate answer and working.',
+  'Question 10 Part IV Clause 2 - Second separate answer and working.',
+  'Question 11.1.1 - First dotted answer.',
+  'Question 11.1.2 - Second dotted answer.',
+].join('\n');
+const namedAndDottedMarkingScheme = [
+  'MARKING SCHEME',
+  'Question 10 Part IV Clause 1 - 2 Marks',
+  'Question 10 Part IV Clause 2 - 3 Marks',
+  'Question 11.1.1 - 1 Mark',
+  'Question 11.1.2 - 2 Marks',
+].join('\n');
+const namedAndDottedAudit = buildMaterialQuestionMappingAudit({
+  questionPaperText: namedAndDottedQuestionPaper,
+  suggestedAnswersText: namedAndDottedSuggestedAnswers,
+  markingSchemeText: namedAndDottedMarkingScheme,
+});
+assert.equal(namedAndDottedAudit.status, 'MATCHED', JSON.stringify(namedAndDottedAudit, null, 2));
+assert.deepEqual(namedAndDottedAudit.questionPaperIds, [
+  'Q10(iv(1))', 'Q10(iv(2))', 'Q11(1(1))', 'Q11(1(2))',
+]);
+assert.deepEqual(namedAndDottedAudit.suggestedAnswerIds, [
+  'Q10(iv(1))', 'Q10(iv(2))', 'Q11(1(1))', 'Q11(1(2))',
+]);
+assert.deepEqual(namedAndDottedAudit.markingSchemeIds, [
+  'Q10(iv(1))', 'Q10(iv(2))', 'Q11(1(1))', 'Q11(1(2))',
+]);
+assert.deepEqual(namedAndDottedAudit.missingFromSuggestedAnswers, []);
+assert.deepEqual(namedAndDottedAudit.missingFromMarkingScheme, []);
+
 console.log('Material question mapping audit tests passed.');

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
+import { extractSubQuestionsFromText, getAuthoritativePaperStructure } from '../services/paperStructureService.js';
+import { deduplicateQuestionList, parseCanonicalQuestionIdentity, toCanonicalQuestionId, validateQuestionDeduplication } from '../services/canonicalQuestionService.js';
 import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import { buildCanonicalQuestionInventory } from '../services/canonicalQuestionInventoryService.js';
 
@@ -159,4 +160,106 @@ const unparseableGate = validatePreEvaluationGate({
 assert.equal(unparseableGate.passed, false);
 assert.ok(unparseableGate.failedInvariants.some((message) => message.includes('QUESTION_PAPER_NOT_PARSED')));
 
-console.log('Model Test shared PYQ/MTP parser contract tests passed.');
+
+// Universal hierarchical sub-part recognition. The numbering style is opaque:
+// letters, Roman numerals, Arabic numerals, dotted paths and mixed nesting all
+// remain separate authoritative identities with their own maximum marks.
+const universalPartSource = [
+  'Question 1(a) - 10 Marks',
+  'Question 1(a)(i) - 2 Marks',
+  'Question 1(a)(ii) - 3 Marks',
+  'Question 1(a)(1) - 1 Mark',
+  'Question 1(a)(2) - 4 Marks',
+  'Question 1(b) - 5 Marks',
+  'Question 2 Part IV - 3 Marks',
+  'Question 2 Clause 2 - 4 Marks',
+  'Question 3.1.1 - 1 Mark',
+  'Question 3.1.2 - 2 Marks',
+  'Question 4.iv.1 - 2 Marks',
+  'Question 4.iv.2 - 3 Marks',
+].join('\n');
+const universalParts = extractSubQuestionsFromText(universalPartSource);
+const universalMaxima = new Map(universalParts.map((part) => [part.fullQuestionCode, part.maximumMarks]));
+for (const [code, marks] of [
+  ['Q1(a(i))', 2],
+  ['Q1(a(ii))', 3],
+  ['Q1(a(1))', 1],
+  ['Q1(a(2))', 4],
+  ['Q1(b)', 5],
+  ['Q2(iv)', 3],
+  ['Q2(2)', 4],
+  ['Q3(1(1))', 1],
+  ['Q3(1(2))', 2],
+  ['Q4(iv(1))', 2],
+  ['Q4(iv(2))', 3],
+] as const) {
+  assert.equal(universalMaxima.get(code), marks, code + ' must retain its own official maximum marks.');
+}
+assert.equal(universalMaxima.has('Q1(a)'), false, 'A parent with separately-marked children must be removed from scorable leaf IDs.');
+assert.equal(
+  toCanonicalQuestionId('Q1(a(iii))', undefined, universalParts),
+  'Q1(a(iii))',
+  'An unknown nested part must not be fuzzy-mapped to another part with the same leading letter.',
+);
+assert.notEqual(
+  toCanonicalQuestionId('Q1(a(i))'),
+  toCanonicalQuestionId('Q1(a(ii))'),
+  'Roman-numeral siblings must have independent canonical identities.',
+);
+assert.notEqual(
+  toCanonicalQuestionId('Q1(a(1))'),
+  toCanonicalQuestionId('Q1(a(2))'),
+  'Arabic-numbered siblings must have independent canonical identities.',
+);
+assert.equal(
+  parseCanonicalQuestionIdentity('Question 4 Part IV Clause 2').canonicalId,
+  'Q4(iv(2))',
+  'Named Part/Clause prefixes must produce a reusable hierarchical identity.',
+);
+const nestedParentDedup = deduplicateQuestionList([
+  { fullQuestionCode: 'Q7(a)', questionNumber: '7', subQuestion: 'a', maximumMarks: 10 },
+  { fullQuestionCode: 'Q7(a(i))', questionNumber: '7', subQuestion: 'a(i)', maximumMarks: 4 },
+  { fullQuestionCode: 'Q7(a(ii))', questionNumber: '7', subQuestion: 'a(ii)', maximumMarks: 6 },
+]);
+assert.deepEqual(
+  nestedParentDedup.map((item) => item.fullQuestionCode).sort(),
+  ['Q7(a(i))', 'Q7(a(ii))'],
+  'Deduplication must remove both intermediate and root containers while preserving nested leaf parts.',
+);
+
+// The integrity validator must catch intermediate nested parents too.
+const nestedParentValidation = validateQuestionDeduplication([
+  { fullQuestionCode: 'Q8', questionNumber: '8' },
+  { fullQuestionCode: 'Q8(a)', questionNumber: '8', subQuestion: 'a' },
+  { fullQuestionCode: 'Q8(a(i))', questionNumber: '8', subQuestion: 'a(i)' },
+  { fullQuestionCode: 'Q8(a(ii))', questionNumber: '8', subQuestion: 'a(ii)' },
+]);
+assert.equal(nestedParentValidation.isValid, false);
+assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8'));
+assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8(a)'),
+  'A nested leaf must flag its immediate parent container, not only the root question.');
+
+// Contextual numbering under a single parent header must also retain each level.
+const contextualParts = extractSubQuestionsFromText([
+  'Question 9',
+  '(a) Parent part - 5 Marks',
+  '(i) First roman clause - 2 Marks',
+  '(ii) Second roman clause - 3 Marks',
+].join('\n'));
+assert.deepEqual(
+  contextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  [['Q9(a(i))', 2], ['Q9(a(ii))', 3]],
+  'Bare contextual sub-part labels must be attached to the active parent and retained as separate leaves.',
+);
+const namedContextualParts = extractSubQuestionsFromText([
+  'Question 10 Part IV',
+  'Clause 1 - 2 Marks',
+  'Clause 2 - 3 Marks',
+].join('\n'));
+assert.deepEqual(
+  namedContextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  [['Q10(iv(1))', 2], ['Q10(iv(2))', 3]],
+  'A named parent heading and its named child clauses must create separately marked nested leaves.',
+);
+
+console.log('Model Test shared PYQ/MTP parser and universal sub-part contract tests passed.');
