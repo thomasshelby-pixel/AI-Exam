@@ -578,8 +578,15 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   };
   const combineContextPath = (current: string[], incoming: string[]): string[] => {
     if (!incoming.length) return current;
-    if (incoming.length > 1) return incoming;
     if (!current.length) return incoming;
+    if (incoming.length > 1) {
+      if (incoming[0].toLowerCase() === current[0]?.toLowerCase()) return incoming;
+      let overlap = Math.min(current.length, incoming.length);
+      while (overlap > 0 && !current.slice(-overlap).every((part, index) =>
+        part.toLowerCase() === incoming[index].toLowerCase()
+      )) overlap -= 1;
+      return current.concat(incoming.slice(overlap));
+    }
     const token = incoming[0];
     const last = current[current.length - 1];
     const first = current[0];
