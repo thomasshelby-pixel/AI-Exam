@@ -148,4 +148,45 @@ assert.deepEqual(nestedAudit.markingSchemeIds, ['Q3(a(i))', 'Q3(a(ii))', 'Q3(b)'
 assert.deepEqual(nestedAudit.missingFromSuggestedAnswers, []);
 assert.deepEqual(nestedAudit.missingFromMarkingScheme, []);
 
+const namedAndDottedQuestionPaper = [
+  'PART II - DESCRIPTIVE QUESTIONS',
+  'Question 10. Apply the accounting requirements to the following facts.',
+  'Part IV Interpretation of the applicable standard.',
+  '  Clause 1 First independently scorable requirement.',
+  '  Clause 2 Second independently scorable requirement.',
+  'Question 11.1.1 First dotted sub-part requirement.',
+  'Question 11.1.2 Second dotted sub-part requirement.',
+].join('\n');
+const namedAndDottedSuggestedAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 10 Part IV Clause 1 - First separate answer and working.',
+  'Question 10 Part IV Clause 2 - Second separate answer and working.',
+  'Question 11.1.1 - First dotted answer.',
+  'Question 11.1.2 - Second dotted answer.',
+].join('\n');
+const namedAndDottedMarkingScheme = [
+  'MARKING SCHEME',
+  'Question 10 Part IV Clause 1 - 2 Marks',
+  'Question 10 Part IV Clause 2 - 3 Marks',
+  'Question 11.1.1 - 1 Mark',
+  'Question 11.1.2 - 2 Marks',
+].join('\n');
+const namedAndDottedAudit = buildMaterialQuestionMappingAudit({
+  questionPaperText: namedAndDottedQuestionPaper,
+  suggestedAnswersText: namedAndDottedSuggestedAnswers,
+  markingSchemeText: namedAndDottedMarkingScheme,
+});
+assert.equal(namedAndDottedAudit.status, 'MATCHED', JSON.stringify(namedAndDottedAudit, null, 2));
+assert.deepEqual(namedAndDottedAudit.questionPaperIds, [
+  'Q10(iv(1))', 'Q10(iv(2))', 'Q11(1(1))', 'Q11(1(2))',
+]);
+assert.deepEqual(namedAndDottedAudit.suggestedAnswerIds, [
+  'Q10(iv(1))', 'Q10(iv(2))', 'Q11(1(1))', 'Q11(1(2))',
+]);
+assert.deepEqual(namedAndDottedAudit.markingSchemeIds, [
+  'Q10(iv(1))', 'Q10(iv(2))', 'Q11(1(1))', 'Q11(1(2))',
+]);
+assert.deepEqual(namedAndDottedAudit.missingFromSuggestedAnswers, []);
+assert.deepEqual(namedAndDottedAudit.missingFromMarkingScheme, []);
+
 console.log('Material question mapping audit tests passed.');
