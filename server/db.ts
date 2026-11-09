@@ -1131,6 +1131,9 @@ function runMigrations() {
       question_paper_file_id TEXT NOT NULL,
       question_paper_file_name TEXT,
       question_paper_file_size INTEGER,
+      question_paper_reference_file_id TEXT,
+      question_paper_reference_file_name TEXT,
+      question_paper_reference_file_size INTEGER,
       suggested_answer_file_id TEXT NOT NULL,
       suggested_answer_file_name TEXT,
       suggested_answer_file_size INTEGER,
@@ -1175,6 +1178,11 @@ function runMigrations() {
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_id', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_name', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'marking_scheme_file_size', 'INTEGER');
+  // Private evaluation Question Paper TXT is stored separately from the original
+  // student-download PDF. Existing faculty mocks remain valid with NULL metadata.
+  addColumnIfNotExists('faculty_mock_tests', 'question_paper_reference_file_id', 'TEXT');
+  addColumnIfNotExists('faculty_mock_tests', 'question_paper_reference_file_name', 'TEXT');
+  addColumnIfNotExists('faculty_mock_tests', 'question_paper_reference_file_size', 'INTEGER');
   addColumnIfNotExists('evaluations', 'faculty_mock_test_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'faculty_mock_payment_order_id', 'TEXT');
 
