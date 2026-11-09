@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { extractSubQuestionsFromText, getAuthoritativePaperStructure } from '../services/paperStructureService.js';
-import { deduplicateQuestionList, parseCanonicalQuestionIdentity, toCanonicalQuestionId } from '../services/canonicalQuestionService.js';
+import { deduplicateQuestionList, parseCanonicalQuestionIdentity, toCanonicalQuestionId, validateQuestionDeduplication } from '../services/canonicalQuestionService.js';
 import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import { buildCanonicalQuestionInventory } from '../services/canonicalQuestionInventoryService.js';
 
