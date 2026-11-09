@@ -400,11 +400,13 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     }
   }
 
-  const detectedDescriptiveCount = detectedQuestions.filter(
-    (question) => String(question.subQuestion || '').toUpperCase() !== 'MCQ' &&
-      !/^MCQ\s*\d+$/i.test(String(question.questionNumber || ''))
+  const detectedMcqCount = detectedQuestions.filter(
+    (question) => String(question.subQuestion || '').toUpperCase() === 'MCQ' ||
+      /^MCQ\s*\d+$/i.test(String(question.questionNumber || ''))
   ).length;
+  const detectedDescriptiveCount = detectedQuestions.length - detectedMcqCount;
   const accountedAnswerBlocks = detectedDescriptiveCount +
+    detectedMcqCount +
     Object.keys(selections).length +
     mcqNeedsReview.length +
     unresolvedAnswerBlocks.length;
@@ -1354,6 +1356,7 @@ async function analyzeSinglePageCoverage(
       : undefined;
     let pageActiveQuestionContext = previousActiveQuestion;
     const mappedMcqNeedsReview = new Set<string>();
+    const detectedMcqAttempts = new Set<string>();
     for (const rawLabel of raw.mcqNeedsReview) {
       const number = resolveMcqSelectionNumber(rawLabel, paperStructure.mcqs || []);
       if (!number) {
@@ -1396,6 +1399,13 @@ async function analyzeSinglePageCoverage(
         const parsed = parseCanonicalQuestionIdentity(canonId);
         if (!parsed.questionNumber) continue;
 
+        if (parsed.isMcq) {
+          // A question-level MCQ detection with no explicit option still proves
+          // an attempt. Wait for the option map below; if it is absent, hold the
+          // MCQ for human review instead of letting it become an unattempted 0.
+          detectedMcqAttempts.add(parsed.questionNumber);
+          continue;
+        }
         detectedQuestions.push({
           fullQuestionCode: parsed.canonicalId,
           questionNumber: parsed.questionNumber,
@@ -1407,7 +1417,7 @@ async function analyzeSinglePageCoverage(
           ...(dq.mappingBasis && dq.mappingBasis !== 'UNCERTAIN' ? { mappingBasis: dq.mappingBasis } : {}),
           ...(dq.labelMismatch !== undefined ? { labelMismatch: dq.labelMismatch } : {}),
         });
-        pageActiveQuestionContext = parsed.isMcq ? pageActiveQuestionContext : parsed.canonicalId;
+        pageActiveQuestionContext = parsed.canonicalId;
       }
     }
 
@@ -1447,6 +1457,12 @@ async function analyzeSinglePageCoverage(
           isMcq: true,
         });
       }
+    }
+
+    // If a page-level detection identifies an objective question but returns
+    // no selected option, retain it as an attempted MCQ requiring review.
+    for (const num of detectedMcqAttempts) {
+      if (!mappedSelections.has(num)) mappedMcqNeedsReview.add(num);
     }
 
     // A visible MCQ response whose option is unreadable is an attempted answer,
