@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { db, hashPassword, verifyPassword, loadEvaluationRunPackage } from '../db.js';
-import { authenticateToken, authenticateSelfDeleteToken, AuthRequest, getStudentEntitlement } from '../auth.js';
+import { authenticateToken, authenticateSelfDeleteToken, AuthRequest, getStudentEntitlement, checkPermanentFreeAccess } from '../auth.js';
 import { validateAnswerSheetDocument, evaluateCAAnswerSheet } from '../gemini.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
 import {
@@ -69,6 +69,20 @@ import {
 } from '../services/notificationService.js';
 
 const router = Router();
+
+function getStudentCreditSummaryForAccess(userId: string, hasPermanentFreeAccess: boolean) {
+  const currentSummary = getStudentCreditDetailedSummary(userId);
+  if (!hasPermanentFreeAccess) return currentSummary;
+  return {
+    ...currentSummary,
+    monthlyFreeEvaluationsUsed: 0,
+    monthlyFreeEvaluationsLimit: 9999,
+    freeEvaluationsRemaining: 9999,
+    totalAvailable: 9999 + currentSummary.paidCredits,
+    canEvaluate: true,
+    statusMessage: 'Permanent free access is active. Unlimited evaluations are available at no cost.',
+  };
+}
 
 function isProductionSharedDataRuntime(): boolean {
   return process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE || process.env.K_REVISION);
@@ -429,6 +443,7 @@ router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) =
     }
     const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user!.id) as { ca_level?: string } | undefined;
     const courseLevel = String(profile?.ca_level || '').trim().toUpperCase();
+    const permanentFreeAccess = checkPermanentFreeAccess(req.user!.email || '');
     if (!['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(courseLevel)) {
       return res.status(403).json({ error: 'Complete your CA course profile before viewing faculty mock tests.', code: 'PROFILE_COMPLETION_REQUIRED' });
     }
@@ -478,7 +493,7 @@ router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) =
         attempts: [...new Set(tests.filter((t) => t.faculty_id === f.id).map((t) => String(t.attempt)))].sort(),
       }))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    return res.json({ courseLevel, faculties, tests });
+    return res.json({ courseLevel, faculties, tests, permanentFreeAccess });
   } catch (error) {
     console.error('[FacultyMocks] Student catalogue error:', error);
     return res.status(503).json({ error: 'Faculty mock catalogue is temporarily unavailable. Please retry.' });
@@ -505,7 +520,7 @@ router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, r
     if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
       return res.status(404).json({ error: 'This faculty mock is not currently available.' });
     }
-    if (String(test.access_type || 'FREE').toUpperCase() === 'PAID') {
+    if (String(test.access_type || 'FREE').toUpperCase() === 'PAID' && !checkPermanentFreeAccess(req.user!.email || '')) {
       const availablePaidCopy = await findAvailableFacultyMockPaidCopy(req.user!.id, testId);
       if (!availablePaidCopy) {
         return res.status(402).json({
@@ -650,14 +665,14 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
       profile,
       enrolledInstitutes,
       creditStatus,
-      creditSummary: getStudentCreditDetailedSummary(studentId),
+      creditSummary: getStudentCreditSummaryForAccess(studentId, entitlement.hasPermanentFreeAccess),
       metrics: {
         totalEvaluations: totalCount,
         freeEvaluationsRemaining: entitlement.freeEvaluationsRemaining,
         purchasedCredits: creditStatus.totalValidCredits,
         paidCredits: creditStatus.totalValidCredits,
         monthlyFreeEvaluationsUsed: entitlement.monthlyFreeEvaluationsUsed ?? 0,
-        monthlyFreeEvaluationsLimit: entitlement.monthlyFreeEvaluationsLimit ?? 2,
+        monthlyFreeEvaluationsLimit: entitlement.hasPermanentFreeAccess ? 9999 : entitlement.monthlyFreeEvaluationsLimit ?? 2,
         freeEvaluationResetMonth: entitlement.freeEvaluationResetMonth,
         expiringSoonCredits: creditStatus.expiringSoonCredits,
         earliestExpiryDate: creditStatus.earliestExpiryDate,
@@ -1161,6 +1176,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     // Step 0: Check mandatory evaluation disclaimer acknowledgement
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
+    const isPermanentFreeStudent = checkPermanentFreeAccess(studentEmail);
     if (!isStudentDisclaimerAcknowledged(studentId, studentEmail)) {
       return res.status(403).json({
         error: 'Mandatory evaluation disclaimer must be acknowledged before submitting answer sheets for evaluation.',
@@ -1285,7 +1301,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     let resolvedSponsoringEnrollmentId: string | null = null;
     let resolvedSponsoringBatchId: string | null = null;
     let resolvedInstituteName: string | null = null;
-    entitlementSource = isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
+    entitlementSource = isPermanentFreeStudent ? 'PERMANENT_FREE' : isFacultyMockMode ? 'FACULTY_MOCK_SPONSORED' : 'PERSONAL_FREE';
     let personalEntitlement: any = null;
     let preloadedMat: any = null;
     let facultyMockRecord: any = null;
@@ -1326,29 +1342,13 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
       }
 
-      const mockAccessType = String(facultyMockRecord.access_type || 'FREE').trim().toUpperCase() === 'PAID'
-        ? 'PAID'
-        : 'FREE';
-      if (mockAccessType === 'PAID') {
-        // Paid mocks never receive a first-copy free claim. Every submission
-        // must have its own verified single-copy Razorpay entitlement.
-        const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
-          studentId,
-          selectedTestId,
-          resolvedFacultyMockPaymentOrderId || undefined,
-        );
-        if (!suppliedPaidOrderId) {
-          return res.status(402).json({
-            error: `This faculty mock requires payment of ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to unlock one evaluation.`,
-            code: 'FACULTY_MOCK_PAYMENT_REQUIRED',
-            amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
-            facultyMockTestId: selectedTestId,
-          });
-        }
-        resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
-      } else {
-        const existingFreeCopy = await getFacultyMockFreeCopyClaim(studentId, selectedTestId);
-        if (existingFreeCopy && existingFreeCopy.evaluationId !== evaluationId) {
+      if (!isPermanentFreeStudent) {
+        const mockAccessType = String(facultyMockRecord.access_type || 'FREE').trim().toUpperCase() === 'PAID'
+          ? 'PAID'
+          : 'FREE';
+        if (mockAccessType === 'PAID') {
+          // Paid mocks require a verified one-copy Razorpay entitlement for
+          // ordinary accounts. Permanent-free accounts bypass this whole block.
           const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
             studentId,
             selectedTestId,
@@ -1356,16 +1356,33 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           );
           if (!suppliedPaidOrderId) {
             return res.status(402).json({
-              error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
-              code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
+              error: `This faculty mock requires payment of ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to unlock one evaluation.`,
+              code: 'FACULTY_MOCK_PAYMENT_REQUIRED',
               amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
               facultyMockTestId: selectedTestId,
             });
           }
           resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
+        } else {
+          const existingFreeCopy = await getFacultyMockFreeCopyClaim(studentId, selectedTestId);
+          if (existingFreeCopy && existingFreeCopy.evaluationId !== evaluationId) {
+            const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
+              studentId,
+              selectedTestId,
+              resolvedFacultyMockPaymentOrderId || undefined,
+            );
+            if (!suppliedPaidOrderId) {
+              return res.status(402).json({
+                error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
+                code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
+                amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+                facultyMockTestId: selectedTestId,
+              });
+            }
+            resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
+          }
         }
       }
-
       if (
         String(facultyMockRecord.question_paper_text || '').trim().length < 50 ||
         String(facultyMockRecord.suggested_answers_text || '').trim().length < 50 ||
@@ -1438,7 +1455,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         LIMIT 1
       `).get(chosenInst.institute_id) as { evaluations_remaining: number } | undefined;
 
-      if (sub && sub.evaluations_remaining <= 0) {
+      if (!isPermanentFreeStudent && sub && sub.evaluations_remaining <= 0) {
         return res.status(402).json({
           error: `Coaching institute evaluation quota for ${chosenInst.institute_name} is exhausted. Please contact institute administration.`,
         });
@@ -1448,7 +1465,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       resolvedSponsoringEnrollmentId = chosenInst.membership_id;
       resolvedSponsoringBatchId = chosenInst.batch_id || null;
       resolvedInstituteName = chosenInst.institute_name;
-      entitlementSource = 'INSTITUTE_ALLOCATION';
+      entitlementSource = isPermanentFreeStudent ? 'PERMANENT_FREE' : 'INSTITUTE_ALLOCATION';
     } else {
       // Student has NO active institute enrollment
       if (isInstituteMode) {
@@ -1813,9 +1830,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     // Faculty Mock copy policy:
     // FREE mocks grant one first copy per student + exact mock; PAID mocks
-    // require a captured one-copy purchase for every evaluation. Neither path
-    // consumes general evaluation credits or institute quotas.
-    if (isFacultyMockMode) {
+    // require a captured one-copy purchase for every evaluation. Accounts with
+    // a permanent-free entitlement bypass both copy-payment paths entirely.
+    if (isFacultyMockMode && !isPermanentFreeStudent) {
       const selectedMockId = String(facultyMockRecord?.id || '').trim();
       const mockAccessType = String(facultyMockRecord?.access_type || 'FREE').trim().toUpperCase() === 'PAID'
         ? 'PAID'
@@ -3549,7 +3566,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
         avatarUrl: profile?.avatar_url || '',
         freeEvaluationsUsed: profile?.free_evaluations_used || 0,
         monthlyFreeEvaluationsUsed: entitlement.monthlyFreeEvaluationsUsed ?? 0,
-        monthlyFreeEvaluationsLimit: entitlement.monthlyFreeEvaluationsLimit ?? 2,
+        monthlyFreeEvaluationsLimit: entitlement.hasPermanentFreeAccess ? 9999 : entitlement.monthlyFreeEvaluationsLimit ?? 2,
         freeEvaluationResetMonth: entitlement.freeEvaluationResetMonth,
         freeEvaluationsRemaining: entitlement.freeEvaluationsRemaining,
         purchasedCredits: creditStatus.totalValidCredits,
@@ -3564,7 +3581,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
       enrolledInstitutes,
       entitlement,
       creditStatus,
-      creditSummary: getStudentCreditDetailedSummary(studentId),
+      creditSummary: getStudentCreditSummaryForAccess(studentId, entitlement.hasPermanentFreeAccess),
       activePromo: activePromo ? {
         id: activePromo.id,
         referralCode: activePromo.referral_code,
@@ -4935,6 +4952,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
+    const isPermanentFreeStudent = checkPermanentFreeAccess(req.user!.email || '');
     const testId = req.params.id;
     const { fileBase64, mimeType, checkingMode } = req.body;
 
@@ -5088,7 +5106,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       referenceMaterialVersion: 'Institute Test Series',
       referenceMaterialId: test.id,
       officialPaperMaxMarks: test.total_marks || 100,
-      entitlementSource: 'INSTITUTE_ALLOCATION',
+      entitlementSource: isPermanentFreeStudent ? 'PERMANENT_FREE' : 'INSTITUTE_ALLOCATION',
       resolvedSponsoringInstituteId: test.institute_id,
       resolvedInstituteName: null,
       requestedEvalSource: 'INSTITUTE',
@@ -5127,6 +5145,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
+    const isPermanentFreeStudent = checkPermanentFreeAccess(req.user!.email || '');
     const materialId = req.params.id;
     const { fileBase64, mimeType, checkingMode } = req.body;
 
@@ -5248,7 +5267,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       referenceMaterialVersion: 'Institute Material',
       referenceMaterialId: material.id,
       officialPaperMaxMarks: material.total_marks || 100,
-      entitlementSource: 'INSTITUTE_ALLOCATION',
+      entitlementSource: isPermanentFreeStudent ? 'PERMANENT_FREE' : 'INSTITUTE_ALLOCATION',
       resolvedSponsoringInstituteId: material.institute_id,
       resolvedInstituteName: material.institute_name,
       requestedEvalSource: 'INSTITUTE',

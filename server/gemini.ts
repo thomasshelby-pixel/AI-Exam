@@ -46,6 +46,7 @@ import { calculateDynamicAiConfidence } from './services/dynamicConfidenceEngine
 import { AnswerCoverageMap, AttemptedQuestionMapping } from './services/answerSheetCoverageService.js';
 import { PDFDocument } from 'pdf-lib';
 import { validateBase64Upload } from './utils/fileValidation.js';
+import { normalizeAiAnswerSheetDocumentValidation } from './services/answerSheetDocumentPolicy.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -411,22 +412,39 @@ export async function validateAnswerSheetDocument(
   const ai = getGemini();
 
   const validationPrompt = `
-You are a strict ICAI Exam Document Verification Officer.
-Analyze the attached file (${filename}) to determine whether it is genuinely a student's handwritten CA (Chartered Accountancy) Answer Sheet.
+You are a document-authenticity verifier for CA (Chartered Accountancy) student answer sheets.
+Analyze the attached file (${filename}) to decide whether it contains a student's examination answer work.
 
-STRICT REJECTION CRITERIA:
-You MUST reject and flag the document as INVALID if it is any of the following:
-- Admit Card / Hall Ticket
-- Registration Form / Examination Application Form
-- Student ID Card / Membership Card
-- Marksheet / Scorecard / Certificate / Degree
-- Blank PDF or Blank Image (no readable content)
-- Question Paper only (without any student written answers/workings)
-- Unrelated document (resume, invoice, book chapter, random notes, non-CA material)
-- Typed textbook / promotional brochure without student handwritten solution work
+YOUR TASK IS DOCUMENT CLASSIFICATION ONLY — NOT HANDWRITING-STYLE POLICING OR ANSWER GRADING.
+A valid submission can use ANY genuine student handwriting style, including:
+- Connected cursive / joined-up handwriting.
+- Separated print or block letters.
+- Slanted, upright, right-leaning or left-leaning writing.
+- Mixed cursive and print in the same answer or on different pages.
+- Different letter shapes, loops, variable size, spacing, alignment, baselines, pen pressure or ink darkness.
+- Overwritten corrections, crossed-out workings, abbreviations, symbols, calculations, tables, ledger formats and journal entries.
 
-A VALID CA Answer Sheet MUST contain:
-- Student handwritten answers, workings, ledger formats, journal entries, legal provision explanations, or step-by-step calculations answering examination questions.
+ABSOLUTE HANDWRITING FAIRNESS RULE:
+- Cursive handwriting is NOT illegal, invalid, disallowed or a reason to reject a submission.
+- Never reject an answer sheet because the writing is cursive, joined, slanted, uneven, non-standard or visually different from textbook handwriting.
+- Do not require a conventional print style or a single expected letter shape.
+- Do not make a final legibility decision for individual answers at this document-authenticity stage.
+- If student answer work is visibly present but some words, figures or lines are hard to read, accept the document and let the page-level reader localize uncertainty. Do not reject the entire upload.
+- A genuine handwritten answer sheet remains valid even when it is only partially readable. The evaluator must preserve readable portions and must not invent unreadable content.
+
+STRICT REJECTION CRITERIA — reject only when the document itself is clearly one of these:
+- Admit Card / Hall Ticket.
+- Registration Form / Examination Application Form.
+- Student ID Card / Membership Card.
+- Marksheet / Scorecard / Certificate / Degree.
+- Blank PDF or Blank Image with no student answer work.
+- Question Paper only, without student written answers or workings.
+- Clearly unrelated document such as a resume, invoice, unrelated book chapter or non-CA material.
+- Typed textbook or promotional brochure without student solution work.
+
+A VALID CA ANSWER SHEET includes student-written examination responses or workings, whether cursive, print, mixed, slanted, faint or partially readable.
+Set isHandwritten=true when there is evidence of student-written answer work in ANY handwriting style. Set isValidAnswerSheet=true when such answer work is present, even if detailed reading must happen later.
+Use rejectionReason only to describe a clearly invalid document type — never to criticize cursive style, letter shapes or partial legibility.
 
 Return JSON in the exact specified schema.
 `;
@@ -449,7 +467,7 @@ Return JSON in the exact specified schema.
           properties: {
             isValidAnswerSheet: {
               type: Type.BOOLEAN,
-              description: 'True ONLY if the file contains genuine student handwritten CA exam answers and workings.',
+              description: 'True when genuine student CA answer work is present in ANY handwriting style; do not reject cursive, print, mixed, slanted, uneven or partially readable writing.',
             },
             documentTypeDetected: {
               type: Type.STRING,
@@ -457,7 +475,7 @@ Return JSON in the exact specified schema.
             },
             isHandwritten: {
               type: Type.BOOLEAN,
-              description: 'Whether student handwriting is clearly visible on the pages.',
+              description: 'Whether there is evidence of student-written answer work, regardless of cursive, print, mixed, slanted or other handwriting styles. Do not require clear penmanship.',
             },
             rejectionReason: {
               type: Type.STRING,
@@ -481,20 +499,12 @@ Return JSON in the exact specified schema.
       rejectionReason?: string;
     };
 
-    if (!parsed.isValidAnswerSheet) {
-      return {
-        isValidAnswerSheet: false,
-        documentTypeDetected: parsed.documentTypeDetected || 'Invalid Document',
-        isHandwritten: parsed.isHandwritten || false,
-        rejectionReason: parsed.rejectionReason || 'This file does not appear to be a valid CA answer sheet. Please upload your handwritten CA answer sheet.',
-      };
-    }
-
-    return {
-      isValidAnswerSheet: true,
-      documentTypeDetected: parsed.documentTypeDetected || 'Handwritten CA Answer Sheet',
+    return normalizeAiAnswerSheetDocumentValidation({
+      isValidAnswerSheet: parsed.isValidAnswerSheet,
+      documentTypeDetected: parsed.documentTypeDetected,
       isHandwritten: parsed.isHandwritten,
-    };
+      rejectionReason: parsed.rejectionReason,
+    });
   } catch (error: any) {
     const errStr = error?.message || String(error);
     const isQuotaOrPrepayment =

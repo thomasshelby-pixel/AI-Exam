@@ -1034,6 +1034,23 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
   a stronger match against the selected Question Paper / Suggested Answer.
 
 ${recoveryModeInstruction}
+HANDWRITING STYLE FAIRNESS — MANDATORY:
+- Students use genuinely different handwriting styles. Read connected cursive / joined-up writing,
+  separated print or block letters, mixed cursive and print, upright or slanted writing, right- or
+  left-leaning letters, variable letter shapes, loops, size, spacing, baselines, pen pressure and ink.
+- NO handwriting style is illegal or invalid. Never reject, downgrade, skip or mark a page unclear
+  merely because its writing is cursive, joined, slanted, uneven, non-standard or unlike textbook print.
+- Do not assume a student has written incorrectly because a letter looks different from a familiar
+  schoolbook form. Interpret characters using the whole word, surrounding sentence, accounting/legal
+  context, calculations and the selected question — but do not invent a number, word, section or formula.
+- Preserve every readable word, digit, symbol, calculation and working. If only one word, digit or
+  line is uncertain, localize the uncertainty to that fragment; do not discard the entire answer or page.
+- If useful content is visible but partly difficult to decipher, return ATTEMPTED_PARTIALLY_READABLE
+  and retain the evidence. Use ATTEMPTED_UNCLEAR only when the actual answer content cannot be read
+  sufficiently to identify or assess it, not as a handwriting-style label.
+- A style difference is never evidence of cheating, document fraud or an invalid answer sheet.
+- The page reader, not the upload-authenticity check, decides which specific answer fragments are readable.
+
 HANDWRITING AND MAPPING:
 - Inspect the whole page, especially top/bottom and left/right margins, answer-block starts,
   circles, underlines and headings. Labels may be faint, cursive, slanted, overwritten or in margins.
@@ -1065,8 +1082,9 @@ HANDWRITING AND MAPPING:
 - Never infer identity from PDF page index, sequence, marks or subject stereotypes. Never invent IDs.
 - If both exact QP wording and Suggested Answer reference are unavailable for a question, do not guess
   its identity from subject stereotypes or a generic topic; require a clear visible label or mark UNCERTAIN.
-- Poor handwriting alone is not a reason to discard identifiable work. Preserve partially readable
-  attempts; do not guess unreadable figures, words, dates, sections or formulas.
+- Poor or unusual handwriting alone is not a reason to discard identifiable work. Preserve
+  partially readable attempts and award the credit supported by readable evidence. Do not guess
+  unreadable figures, words, dates, sections or formulas; localize uncertainty to the affected fragment.
 
 TASK:
 1. Identify every attempted question/sub-question and any visible MCQ selections.
@@ -1130,7 +1148,7 @@ async function analyzeSinglePageCoverage(
       pdfBase64: pageBase64,
       mimeType: 'application/pdf',
       responseMimeType: 'application/json',
-      thinkingLevel: 'LOW',
+      thinkingLevel: recoveryMode ? 'HIGH' : 'MEDIUM',
       validateOutput: (rawText) => {
         parseAndValidatePageCoverageOutput(rawText);
       },
