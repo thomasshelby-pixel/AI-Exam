@@ -720,7 +720,8 @@ export interface AnswerCoverageMap {
   coveredPages?: number[];
   is100PercentCovered: boolean;
   mcqSelections: Record<string, string>; // e.g. { '1': 'C', '9': 'A' }
-  mcqNeedsReview: string[];
+  /** Present on current results; optional for backwards-compatible callers and fixtures. */
+  mcqNeedsReview?: string[];
 }
 
 /**
