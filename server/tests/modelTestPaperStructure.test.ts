@@ -139,7 +139,7 @@ const taxationSourceBundle = {
     'Question 1(b) - 6 Marks',
     'Question 2(a)(i) - 2 Marks',
     'Question 2(a)(ii) - 3 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   suggestedAnswersText: [
     'Taxation Suggested Answers',
     'SECTION A - MULTIPLE CHOICE QUESTIONS',
@@ -150,14 +150,14 @@ const taxationSourceBundle = {
     'Question 1(b) - Official answer for Taxation sub-part 1(b).',
     'Question 2(a)(i) - Official answer for the first nested clause.',
     'Question 2(a)(ii) - Official answer for the second nested clause.',
-  ].join('\\n'),
+  ].join('\n'),
   markingSchemeText: [
     'Taxation Marking Scheme',
     'Question 1(a) - 4 Marks',
     'Question 1(b) - 6 Marks',
     'Question 2(a)(i) - 2 Marks',
     'Question 2(a)(ii) - 3 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   officialPaperMaxMarks: 100,
 };
 const taxationStructures = Object.fromEntries(materialTypes.map((materialType) => [
