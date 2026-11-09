@@ -480,7 +480,7 @@ export function extractLockedQuestionSlice(
     }
     const token = incoming[0];
     const last = current[current.length - 1];
-    if (pathFamily(token, current.length) === pathFamily(last, current.length - 1)) {
+    if (pathFamily(token, current.length) === pathFamily(last, current.length - 1) || (last.toLowerCase() === 'i' && romanTokens.has(token.toLowerCase()))) {
       return current.slice(0, -1).concat(token);
     }
     if (current.length > 1 && pathFamily(token, current.length) === pathFamily(current[0], 0)) {
