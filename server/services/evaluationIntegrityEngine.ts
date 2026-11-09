@@ -1038,6 +1038,15 @@ export function processEvaluationIntegrity(
       ? Math.max(0, Math.min(maxMarks > 0 ? maxMarks : 0, rawInitialAwarded))
       : 0;
 
+    const canonicalQuestionId = toCanonicalQuestionId(qNum, subQ, authoritativeSubQs);
+    const detectedAttempt = (options.coverageMap?.attemptedQuestions || []).find((attempt: any) =>
+      toCanonicalQuestionId(
+        attempt.fullQuestionCode || attempt.questionNumber,
+        attempt.subQuestionNumber,
+        authoritativeSubQs,
+      ).toLowerCase() === canonicalQuestionId.toLowerCase()
+    );
+
     const isMcq =
       isMcqOnly ||
       Boolean(qNum.toLowerCase().includes('mcq')) ||
@@ -1066,12 +1075,14 @@ export function processEvaluationIntegrity(
       Boolean(rawQ.detailedFeedback && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.detailedFeedback)) ||
       Boolean(rawQ.technicalEvaluation && /illegible|unreadable|poor scan|blurry|cannot decipher/i.test(rawQ.technicalEvaluation));
     const isHandwritingUnclear = hasHandwritingEvidence && !isTechnicalFailure;
+    const attemptDetectedButClassifiedBlank = Boolean(detectedAttempt) && rawQ.status === 'not_attempted';
     const needsHumanReview =
       rawQ.status === 'unclear' ||
       isTechnicalFailure ||
       isModelUncertain ||
       questionFlags.includes('REVIEW_REQUIRED') ||
-      isHandwritingUnclear;
+      isHandwritingUnclear ||
+      attemptDetectedButClassifiedBlank;
 
     // Step C: Run the Zero-Mark Safety Gate only for academically scorable answers.
     // Technical failure / uncertainty must never be converted into a guessed academic score.
@@ -1099,7 +1110,24 @@ export function processEvaluationIntegrity(
           applicableProvisions: rawQ.applicableProvisions,
         });
 
-    let finalAwarded = needsHumanReview
+    const unsupportedZeroNeedsReview = Boolean(
+      !needsHumanReview &&
+      !isMcq &&
+      detectedAttempt &&
+      initialAwarded <= 0 &&
+      zeroValidation.isZeroAllowed &&
+      !hasSpecificZeroMarkJustification(rawQ, components)
+    );
+    const finalNeedsHumanReview = needsHumanReview || unsupportedZeroNeedsReview;
+
+    if (attemptDetectedButClassifiedBlank && !questionFlags.includes('ATTEMPTED_ANSWER_CLASSIFIED_UNATTEMPTED')) {
+      questionFlags.push('ATTEMPTED_ANSWER_CLASSIFIED_UNATTEMPTED');
+    }
+    if (unsupportedZeroNeedsReview) {
+      questionFlags.push('UNSUPPORTED_ZERO_REQUIRES_REVIEW', 'REVIEW_REQUIRED');
+    }
+
+    let finalAwarded = finalNeedsHumanReview
       ? Math.max(0, Math.min(maxMarks, Number.isFinite(initialAwarded) ? initialAwarded : 0))
       : initialAwarded;
     // Preserve the established diagnostic classification for illegible handwriting,
@@ -1111,16 +1139,16 @@ export function processEvaluationIntegrity(
       ? 'Candidate script appears attempted, but handwriting or scan clarity prevented automated optical verification. Preserved for recheck review.'
       : undefined;
 
-    if (!needsHumanReview && !zeroValidation.isZeroAllowed && (zeroValidation.suggestedAwardedMarks ?? 0) > 0) {
+    if (!finalNeedsHumanReview && !zeroValidation.isZeroAllowed && (zeroValidation.suggestedAwardedMarks ?? 0) > 0) {
       finalAwarded = zeroValidation.suggestedAwardedMarks!;
-    } else if (!needsHumanReview && finalAwarded === 0) {
+    } else if (!finalNeedsHumanReview && finalAwarded === 0) {
       zeroScoreReason = zeroValidation.zeroScoreReason;
       zeroScoreEvidence = zeroValidation.zeroScoreEvidence;
     }
 
     // Step D: Do not fabricate component breakdowns for unresolved questions.
     const balancedComponents = maxMarks > 0
-      ? (needsHumanReview && components.length === 0
+      ? (finalNeedsHumanReview && components.length === 0
           ? []
           : normalizeQuestionComponents(components, maxMarks, finalAwarded, qNum))
       : [];
@@ -1129,12 +1157,14 @@ export function processEvaluationIntegrity(
           ? balancedComponents.reduce((sum, c) => sum + c.marksAwarded, 0)
           : finalAwarded)
       : 0;
-    const verifiedLost = needsHumanReview
-      ? Math.max(0, Math.round((Number(rawQ.marksLost) || 0) * 4) / 4)
+    const verifiedLost = unsupportedZeroNeedsReview || attemptDetectedButClassifiedBlank
+      ? 0
+      : finalNeedsHumanReview
+        ? Math.max(0, Math.round((Number(rawQ.marksLost) || 0) * 4) / 4)
       : Math.max(0, Math.round((maxMarks - verifiedAwarded) * 4) / 4);
 
     let status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear' = 'correct';
-    if (needsHumanReview && rawQ.status !== 'not_attempted') {
+    if (finalNeedsHumanReview && rawQ.status !== 'not_attempted') {
       status = 'unclear';
     } else if (verifiedAwarded <= 0) {
       status = rawQ.status === 'not_attempted' ? 'not_attempted' : 'incorrect';
@@ -1150,7 +1180,7 @@ export function processEvaluationIntegrity(
     if (isHandwritingUnclear && rawQ.status !== 'not_attempted') {
       if (!questionFlags.includes('HANDWRITING_UNCLEAR')) questionFlags.push('HANDWRITING_UNCLEAR');
     }
-    if (needsHumanReview && !questionFlags.includes('RECHECK_RECOMMENDED')) {
+    if (finalNeedsHumanReview && !questionFlags.includes('RECHECK_RECOMMENDED')) {
       questionFlags.push('RECHECK_RECOMMENDED');
     }
 
@@ -1165,7 +1195,9 @@ export function processEvaluationIntegrity(
       marksLost: verifiedLost,
       markingComponents: balancedComponents,
       finalConclusionAssessment: rawQ.finalConclusionAssessment || 'Conclusion assessed against reference standards.',
-      overallReason: rawQ.reasonForDeduction || rawQ.detailedFeedback || 'Evaluated against official marking scheme.',
+      overallReason: unsupportedZeroNeedsReview
+        ? 'A student attempt was detected, but the initial zero lacked a specific source-grounded no-credit rationale. No academic deduction has been confirmed; manual review is required.'
+        : rawQ.reasonForDeduction || rawQ.detailedFeedback || 'Evaluated against official marking scheme.',
       confidence: Number.isFinite(Number(rawQ.confidence)) ? Math.max(0, Math.min(100, Number(rawQ.confidence))) : 0,
       flags: questionFlags,
       isDerivedAllocation: !Array.isArray(rawQ.markingComponents) || rawQ.markingComponents.length === 0,
@@ -1175,7 +1207,9 @@ export function processEvaluationIntegrity(
       materialId: options.materialId || rawResult.materialId || rawQ.referenceTrace?.materialId || 'ICAI_OFFICIAL_SUGGESTED',
       markingSchemeSection: rawQ.referenceTrace?.markingSchemeSection || (balancedComponents.length > 0 ? balancedComponents.map(c => c.componentType).join(', ') : `Q${qNum} Marking Guideline`),
       suggestedAnswerRef: rawQ.referenceTrace?.suggestedAnswerRef || `Q${qNum}${subQ ? `(${subQ})` : ''}`,
-      deductionReason: rawQ.reasonForDeduction || (needsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on official guideline variance.` : 'Full marks awarded.'),
+      deductionReason: unsupportedZeroNeedsReview || attemptDetectedButClassifiedBlank
+        ? 'A student attempt was detected, but a zero/blank classification could not be verified. No academic deduction has been confirmed; manual review is required.'
+        : rawQ.reasonForDeduction || (finalNeedsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on official guideline variance.` : 'Full marks awarded.'),
       verifiedGroundTruthSnippet: rawQ.referenceTrace?.verifiedGroundTruthSnippet || balancedComponents[0]?.expectedRequirement || undefined,
     };
 
@@ -1186,10 +1220,13 @@ export function processEvaluationIntegrity(
       marksAwarded: verifiedAwarded,
       marksLost: verifiedLost,
       status,
-      reasonForDeduction:
-        rawQ.reasonForDeduction ||
-        (needsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on component evaluation.` : 'Full marks awarded.'),
-      detailedFeedback: rawQ.detailedFeedback || 'Candidate solution evaluated against reference answer.',
+      reasonForDeduction: unsupportedZeroNeedsReview || attemptDetectedButClassifiedBlank
+        ? 'No academic deduction has been confirmed. A detected attempt conflicts with the initial zero/blank classification and requires question-level review.'
+        : rawQ.reasonForDeduction ||
+          (finalNeedsHumanReview ? 'Evaluation requires human review; no academic deduction has been confirmed.' : verifiedLost > 0 ? `${verifiedLost} mark(s) deducted based on component evaluation.` : 'Full marks awarded.'),
+      detailedFeedback: unsupportedZeroNeedsReview || attemptDetectedButClassifiedBlank
+        ? [rawQ.detailedFeedback, 'The answer sheet contains evidence of an attempt, but the automated evaluation did not provide a sufficiently specific zero-mark justification. This is not a confirmed academic zero.'].filter(Boolean).join('\n\n')
+        : rawQ.detailedFeedback || 'Candidate solution evaluated against reference answer.',
       confidence: structuredEv.confidence,
       technicalEvaluation: rawQ.technicalEvaluation || '',
       validAlternativeRecognition: rawQ.validAlternativeRecognition || undefined,
