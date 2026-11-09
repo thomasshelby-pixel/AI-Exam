@@ -53,6 +53,9 @@ export interface IndependentAttemptRecord {
   evidence: string;
   studentSnippet?: string;
   studentSelectedOption?: string;
+  /** Visible MCQ attempt whose selected option is unreadable or conflicting. */
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
   isMcq: boolean;
 }
 
@@ -198,6 +201,8 @@ export function detectIndependentAttempts(options: {
     hasReplacement?: boolean;
     selectedOption?: string;
     isPartial?: boolean;
+    mcqSelectionNeedsReview?: boolean;
+    mappingReviewReason?: string;
   }>;
   mcqSelections?: Record<string, string>;
 }): Map<string, IndependentAttemptRecord> {
@@ -308,7 +313,9 @@ export function detectIndependentAttempts(options: {
         isCrossedOutWithNoReplacement: isCrossedWithoutReplacement,
         evidence,
         studentSnippet: occ.studentSnippet,
-        studentSelectedOption: occ.selectedOption,
+        studentSelectedOption: occ.mcqSelectionNeedsReview ? undefined : occ.selectedOption,
+        ...(occ.mcqSelectionNeedsReview ? { mcqSelectionNeedsReview: true } : {}),
+        ...(occ.mappingReviewReason ? { mappingReviewReason: occ.mappingReviewReason } : {}),
         isMcq: parsed.isMcq,
       });
     } else {
@@ -322,8 +329,20 @@ export function detectIndependentAttempts(options: {
       if (occ.studentSnippet && !existing.studentSnippet?.includes(occ.studentSnippet)) {
         existing.studentSnippet = (existing.studentSnippet ? `${existing.studentSnippet}\n\n` : '') + occ.studentSnippet;
       }
-      if (occ.selectedOption && !existing.studentSelectedOption) {
-        existing.studentSelectedOption = occ.selectedOption;
+      if (occ.mappingReviewReason) existing.mappingReviewReason = occ.mappingReviewReason;
+      if (occ.mcqSelectionNeedsReview) {
+        existing.studentSelectedOption = undefined;
+        existing.mcqSelectionNeedsReview = true;
+      } else if (occ.selectedOption) {
+        const incomingOption = occ.selectedOption.toUpperCase();
+        const existingOption = String(existing.studentSelectedOption || '').toUpperCase();
+        if (existingOption && existingOption !== incomingOption) {
+          existing.studentSelectedOption = undefined;
+          existing.mcqSelectionNeedsReview = true;
+          existing.mappingReviewReason = 'Conflicting MCQ selections were detected across page occurrences.';
+        } else if (!existing.mcqSelectionNeedsReview) {
+          existing.studentSelectedOption = incomingOption;
+        }
       }
       existing.evidence = `${existing.evidence} | Page ${occ.pageNumber} continuation`;
     }
@@ -509,15 +528,28 @@ export function buildCanonicalEvaluationLedger(options: {
         evaluation?.flags?.includes('FAILED_TO_EVALUATE') ||
         evaluation?.flags?.includes('TECHNICAL_FAILURE')
       );
-      if (evaluation && !isTechFail) {
-        status = 'EVALUATED';
-        awardedMarks = Number(evaluation.marksAwarded) || 0;
-        counted = isSelectedAlternative; // Counted only if selected alternative (or non-alternative)
-      } else if (evaluation && isTechFail) {
+      const requiresHumanReview = Boolean(
+        attempt?.mcqSelectionNeedsReview ||
+        evaluation?.status === 'unclear' ||
+        evaluation?.flags?.includes('REVIEW_REQUIRED') ||
+        evaluation?.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED')
+      );
+      if (evaluation && isTechFail) {
         status = 'FAILED_TO_EVALUATE';
         awardedMarks = 0;
         counted = false;
         errors.push(`ATTEMPTED_QUESTION_FAILED_EVALUATION: Attempted question ${canonId} encountered a technical issue and requires review.`);
+      } else if (evaluation && requiresHumanReview) {
+        // An attempted answer with unresolved handwriting/selection must not be
+        // converted into an academic zero or included in the score ledger.
+        status = 'NEEDS_REVIEW';
+        awardedMarks = 0;
+        counted = false;
+        errors.push(`ATTEMPTED_QUESTION_NEEDS_REVIEW: Attempted question ${canonId} has unresolved answer/selection evidence; no academic zero has been assigned.`);
+      } else if (evaluation) {
+        status = 'EVALUATED';
+        awardedMarks = Number(evaluation.marksAwarded) || 0;
+        counted = isSelectedAlternative; // Counted only if selected alternative (or non-alternative)
       } else {
         status = 'FAILED_TO_EVALUATE';
         errors.push(`ATTEMPTED_QUESTION_NOT_EVALUATED: Attempted question ${canonId} was not evaluated.`);
@@ -552,7 +584,8 @@ export function buildCanonicalEvaluationLedger(options: {
       pageLoadMap.set(annotationPage, (pageLoadMap.get(annotationPage) || 0) + 1);
     }
     const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
-    const annotationRequired = isAttempted && isSelectedAlternative && (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE');
+    const annotationRequired = isAttempted && isSelectedAlternative &&
+      (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE' || status === 'NEEDS_REVIEW');
 
     records.push({
       questionId: canonId,
@@ -571,7 +604,9 @@ export function buildCanonicalEvaluationLedger(options: {
       annotationAnchor: {
         pageNumber: annotationPage,
         region: 'RIGHT_MARGIN',
-        annotationType: isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
+        annotationType: status === 'NEEDS_REVIEW'
+          ? 'EVALUATION_NOTE'
+          : isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
       },
       renderOrder: item.sourceOrder ?? 1,
       rendered,
@@ -580,6 +615,10 @@ export function buildCanonicalEvaluationLedger(options: {
       isAlternative: item.isAlternative,
       alternativeGroupId: item.alternativeGroupId,
       studentSelectedOption: evaluation?.candidateSelectedOption || attempt?.studentSelectedOption,
+      reviewRequired: status === 'NEEDS_REVIEW',
+      reviewReason: status === 'NEEDS_REVIEW'
+        ? attempt?.mappingReviewReason || evaluation?.reasonForDeduction || 'Answer evidence requires manual verification.'
+        : undefined,
       officialAnswer: evaluation?.officialCorrectOption,
       evidence: attempt?.evidence,
       stepMarkingBreakdown: evaluation?.stepMarkingBreakdown,
@@ -741,8 +780,11 @@ export function buildEvaluationReconciliationSection(
   }));
 
   const allAttemptedCountedExactlyOnce = ledger.records
-    .filter((r) => r.attempted && r.evaluationStatus === 'EVALUATED')
-    .every((r) => r.counted || r.evaluationStatus === 'EXCLUDED_ALTERNATIVE');
+    .filter((r) => r.attempted)
+    .every((r) =>
+      r.evaluationStatus === 'EXCLUDED_ALTERNATIVE' ||
+      (r.evaluationStatus === 'EVALUATED' && r.counted)
+    );
 
   const summary =
     `Ledger Verified: ${ledger.totalCanonicalQuestions} canonical items, ` +
@@ -781,6 +823,8 @@ export function buildStudentAttemptManifest(options: {
     hasReplacement?: boolean;
     selectedOption?: string;
     isPartial?: boolean;
+    mcqSelectionNeedsReview?: boolean;
+    mappingReviewReason?: string;
   }>;
   mcqSelections?: Record<string, string>;
 }): StudentAttemptManifest {
@@ -804,6 +848,8 @@ export function buildStudentAttemptManifest(options: {
       selectedAlternative: att.selectedAlternative,
       studentSnippet: att.studentSnippet,
       studentSelectedOption: att.studentSelectedOption,
+      mcqSelectionNeedsReview: att.mcqSelectionNeedsReview,
+      mappingReviewReason: att.mappingReviewReason,
       isCrossedOutWithNoReplacement: att.isCrossedOutWithNoReplacement,
       isMcq: att.isMcq,
     });

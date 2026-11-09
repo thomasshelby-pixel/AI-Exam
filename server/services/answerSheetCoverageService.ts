@@ -68,6 +68,12 @@ export interface PageCoverageModelOutput {
   questionLabelEvidence?: string;
   /** Audit signal only; never used to override deterministic identity checks. */
   readingConfidence?: number;
+  /** Number of separate attempted answer blocks visibly present on this page. */
+  answerBlocksObserved?: number;
+  /** Visible answer blocks that could not safely be mapped to an authoritative question. */
+  unresolvedAnswerBlocks: string[];
+  /** MCQs visibly attempted, but whose chosen option could not be read confidently. */
+  mcqNeedsReview: string[];
   detectedQuestions: Array<{
     questionNumber?: string;
     subQuestion?: string | null;
@@ -92,9 +98,9 @@ function normalizeMcqSelectionLabel(raw: string): string {
   const value = original
     .replace(/^(?:QUESTION|MCQ|OBJECTIVE|Q\.?)\s*/i, '')
     .replace(/\s+/g, '');
-  const match = value.match(/^(\d{1,2})(?:\(([a-z0-9]+)\))?$/i);
+  const match = value.match(/^(\d{1,3})((?:\([a-z0-9]+\))*)$/i);
   if (!match) return '';
-  const suffix = match[2] ? '(' + match[2].toLowerCase() + ')' : '';
+  const suffix = match[2].toLowerCase();
   return (hasQuestionPrefix ? 'Q' : '') + match[1] + suffix;
 }
 
@@ -104,7 +110,7 @@ export function resolveMcqSelectionNumber(
   mcqs: AuthoritativePaperStructure['mcqs']
 ): string | undefined {
   const raw = String(rawKey || '').trim();
-  const flatMatch = raw.match(/^(?:MCQ|OBJECTIVE)\s*(\d{1,2})$/i) || raw.match(/^(\d{1,2})$/);
+  const flatMatch = raw.match(/^(?:MCQ|OBJECTIVE)\s*(\d{1,3})$/i) || raw.match(/^(\d{1,3})$/);
   if (flatMatch) {
     const flatNumber = flatMatch[1];
     return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === flatNumber)
@@ -206,6 +212,48 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   const isContinuation = typeof raw.isContinuation === 'boolean' ? raw.isContinuation : undefined;
   if (raw.isContinuation !== undefined && isContinuation === undefined) {
     warnings.push('The page auditor returned an invalid continuation flag.');
+  }
+
+  const answerBlocksObserved = Number.isInteger(raw.answerBlocksObserved) && raw.answerBlocksObserved >= 0
+    ? raw.answerBlocksObserved as number
+    : undefined;
+  if (raw.answerBlocksObserved !== undefined && answerBlocksObserved === undefined) {
+    warnings.push('The page auditor returned an invalid attempted-answer-block count.');
+  } else if (
+    raw.answerBlocksObserved === undefined &&
+    status !== 'CLEARLY_UNATTEMPTED'
+  ) {
+    warnings.push('The page auditor did not account for the number of separate attempted answer blocks.');
+  }
+
+  const unresolvedAnswerBlocks: string[] = [];
+  if (raw.unresolvedAnswerBlocks !== undefined && !Array.isArray(raw.unresolvedAnswerBlocks)) {
+    warnings.push('The page auditor returned an invalid unresolved-answer-block list.');
+  } else {
+    for (const value of raw.unresolvedAnswerBlocks || []) {
+      if (typeof value === 'string' && value.trim()) {
+        unresolvedAnswerBlocks.push(value.trim().slice(0, 240));
+      } else {
+        warnings.push('An unresolved answer block lacked literal evidence and was retained for review.');
+      }
+    }
+    if (unresolvedAnswerBlocks.length > 0) {
+      warnings.push('One or more visible answer blocks could not be mapped to an authoritative question.');
+    }
+  }
+
+  const mcqNeedsReview: string[] = [];
+  if (raw.mcqNeedsReview !== undefined && !Array.isArray(raw.mcqNeedsReview)) {
+    warnings.push('The page auditor returned an invalid MCQ review list.');
+  } else {
+    for (const value of raw.mcqNeedsReview || []) {
+      const label = typeof value === 'string' ? normalizeMcqSelectionLabel(value) : '';
+      if (!label || !/^(?:Q)?[0-9]{1,3}(?:\([a-z0-9]+\))*$/i.test(label)) {
+        warnings.push('An unreadable MCQ response had an invalid source label and was left for page-level review.');
+        continue;
+      }
+      if (!mcqNeedsReview.includes(label)) mcqNeedsReview.push(label);
+    }
   }
 
   // A malformed individual detection must not discard other confidently mapped
@@ -337,7 +385,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       const option = typeof rawOption === 'string'
         ? rawOption.trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()\s]/g, '')
         : '';
-      if (!normalizedNumber || !/^Q?[0-9]{1,2}(?:\([a-z0-9]+\))?$/i.test(normalizedNumber) || !/^[A-D]$/.test(option)) {
+      if (!normalizedNumber || !/^Q?[0-9]{1,3}(?:\([a-z0-9]+\))*$/i.test(normalizedNumber) || !/^[A-D]$/.test(option)) {
         warnings.push('An MCQ selection had an invalid question number or option and was left for review.');
         continue;
       }
@@ -352,7 +400,26 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     }
   }
 
-  const hasDetectedAnswers = detectedQuestions.length > 0 || Object.keys(selections).length > 0;
+  const detectedMcqCount = detectedQuestions.filter(
+    (question) => String(question.subQuestion || '').toUpperCase() === 'MCQ' ||
+      /^MCQ\s*\d+$/i.test(String(question.questionNumber || ''))
+  ).length;
+  const detectedDescriptiveCount = detectedQuestions.length - detectedMcqCount;
+  const accountedAnswerBlocks = detectedDescriptiveCount +
+    detectedMcqCount +
+    Object.keys(selections).length +
+    mcqNeedsReview.length +
+    unresolvedAnswerBlocks.length;
+  if (answerBlocksObserved !== undefined && answerBlocksObserved !== accountedAnswerBlocks) {
+    warnings.push(
+      `The page auditor observed ${answerBlocksObserved} attempted answer block(s), but accounted for ${accountedAnswerBlocks}; missing or merged answer blocks require a second read/review.`
+    );
+  }
+
+  const hasDetectedAnswers = detectedQuestions.length > 0 ||
+    Object.keys(selections).length > 0 ||
+    mcqNeedsReview.length > 0 ||
+    unresolvedAnswerBlocks.length > 0;
   let normalizedHandwriting = hasHandwriting;
   if (hasDetectedAnswers && hasHandwriting === false) {
     normalizedHandwriting = true;
@@ -378,6 +445,9 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     questionLabelEvidence,
     readingConfidence,
     isContinuation,
+    answerBlocksObserved,
+    unresolvedAnswerBlocks,
+    mcqNeedsReview,
     detectedQuestions,
     mcqSelections: selections,
     mappingWarnings: Array.from(new Set(warnings)),
@@ -394,6 +464,9 @@ export interface DetectedQuestionOccurrence {
   snippet?: string;
   studentSelectedOption?: string; // For MCQs
   isMcq?: boolean;
+  /** A visible MCQ response exists, but the option itself is unreadable/ambiguous. */
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
   mappingBasis?: 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION';
   labelMismatch?: boolean;
 }
@@ -563,7 +636,10 @@ export function resolveContextualQuestionIdentity(options: {
   // (a) => Q3(a)), or a nested part under the current leaf. Resolve only when
   // the supplied paper structure identifies exactly one of those candidates.
   const siblingCandidate = toCanonicalQuestionId(context.parentQuestionId, subPart, authoritativeLeaves);
-  const nestedCandidate = `${context.canonicalId}(${subPart})`.toLowerCase();
+  // Canonical IDs serialize nested paths as Q2(a(i)), not Q2(a)(i).
+  // Always compose nested continuation candidates through the shared canonical
+  // serializer; string concatenation silently failed to match valid source leaves.
+  const nestedCandidate = toCanonicalQuestionId(context.canonicalId, subPart, authoritativeLeaves).toLowerCase();
 
   const matches = authoritativeLeaves.filter((question) => {
     const code = question.fullQuestionCode.toLowerCase();
@@ -598,6 +674,9 @@ export interface PageCoverageRecord {
   mappingReviewReason?: string;
   questionLabelEvidence?: string;
   readingConfidence?: number;
+  answerBlocksObserved?: number;
+  unresolvedAnswerBlocks?: string[];
+  mcqNeedsReview?: string[];
   /** Technical failure details are kept separate from handwriting/question ambiguity. */
   analysisFailure?: PageAnalysisFailure;
 }
@@ -627,6 +706,8 @@ export interface AttemptedQuestionMapping {
   studentSnippet?: string;
   studentSelectedOption?: string; // For MCQs
   isMcq: boolean;
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
 }
 
 export interface AnswerCoverageMap {
@@ -639,6 +720,8 @@ export interface AnswerCoverageMap {
   coveredPages?: number[];
   is100PercentCovered: boolean;
   mcqSelections: Record<string, string>; // e.g. { '1': 'C', '9': 'A' }
+  /** Present on current results; optional for backwards-compatible callers and fixtures. */
+  mcqNeedsReview?: string[];
 }
 
 /**
@@ -671,7 +754,7 @@ export async function buildAnswerSheetCoverageMap(
   const structureHash = crypto.createHash('sha256').update(structureSignature).digest('hex');
   const enableTargetedRecovery = options.enableTargetedRecovery === true;
   // Keep normal and PYQ-recovery coverage maps isolated for the same PDF/paper.
-  const cacheKey = `${pdfHash}:${structureHash}:pyqRecovery=${enableTargetedRecovery ? '1' : '0'}`;
+  const cacheKey = `${pdfHash}:${structureHash}:targetedRecovery=${enableTargetedRecovery ? '1' : '0'}`;
   if (coverageMapCache.has(cacheKey)) {
     return coverageMapCache.get(cacheKey)!;
   }
@@ -681,6 +764,8 @@ export async function buildAnswerSheetCoverageMap(
 
   const pageRecords: PageCoverageRecord[] = [];
   const mcqSelections: Record<string, string> = {};
+  const mcqSelectionCandidates = new Map<string, string>();
+  const mcqNeedsReview = new Set<string>();
   let activeQuestionContext: string | undefined = undefined;
   const priorQuestionContextMap = new Map<string, PriorQuestionContext>();
   let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
@@ -746,6 +831,8 @@ export async function buildAnswerSheetCoverageMap(
         analysis.status === 'ATTEMPTED_UNCLEAR' ||
         analysis.status === 'ATTEMPTED_PARTIALLY_READABLE' ||
         Boolean(analysis.mappingReviewReason) ||
+        Boolean(analysis.unresolvedAnswerBlocks?.length) ||
+        Boolean(analysis.mcqNeedsReview?.length) ||
         analysis.detectedQuestions.length === 0
       );
 
@@ -768,9 +855,40 @@ export async function buildAnswerSheetCoverageMap(
             const existing = recoveredByCode.get(key);
             if (!existing) {
               recoveredByCode.set(key, { ...detected });
-            } else if (detected.snippet && !existing.snippet?.includes(detected.snippet)) {
+              continue;
+            }
+
+            if (detected.snippet && !existing.snippet?.includes(detected.snippet)) {
               existing.snippet = [existing.snippet, detected.snippet].filter(Boolean).join('\n\n').slice(-1200);
             }
+
+            // The targeted read may recover an option that the first pass missed.
+            // A clear second-pass option resolves the first-pass unreadable flag,
+            // but conflicting options across passes are never silently selected.
+            if (detected.mcqSelectionNeedsReview) {
+              existing.studentSelectedOption = undefined;
+              existing.mcqSelectionNeedsReview = true;
+              existing.mappingReviewReason = detected.mappingReviewReason || existing.mappingReviewReason ||
+                'The MCQ answer is visible, but the selected option remains unreadable or ambiguous.';
+              existing.status = 'ATTEMPTED_UNCLEAR';
+            } else if (detected.studentSelectedOption) {
+              const incomingOption = detected.studentSelectedOption.toUpperCase();
+              const existingOption = String(existing.studentSelectedOption || '').toUpperCase();
+              if (existingOption && existingOption !== incomingOption) {
+                existing.studentSelectedOption = undefined;
+                existing.mcqSelectionNeedsReview = true;
+                existing.mappingReviewReason = 'The two independent page reads detected conflicting MCQ selections.';
+                existing.status = 'ATTEMPTED_UNCLEAR';
+              } else {
+                existing.studentSelectedOption = incomingOption;
+                existing.mcqSelectionNeedsReview = false;
+                existing.mappingReviewReason = undefined;
+                existing.status = detected.status;
+              }
+            }
+
+            if (detected.mappingBasis && !existing.mappingBasis) existing.mappingBasis = detected.mappingBasis;
+            if (detected.labelMismatch !== undefined) existing.labelMismatch = detected.labelMismatch;
           }
 
           const recoveredQuestions = Array.from(recoveredByCode.values());
@@ -779,6 +897,7 @@ export async function buildAnswerSheetCoverageMap(
             recovery.status !== 'PAGE_UNREADABLE' &&
             recovery.status !== 'CLEARLY_UNATTEMPTED' &&
             !recovery.mappingReviewReason &&
+            !(recovery.unresolvedAnswerBlocks?.length) &&
             recoveredQuestions.length > 0;
 
           analysis = {
@@ -796,6 +915,11 @@ export async function buildAnswerSheetCoverageMap(
                   .join(' | '),
             questionLabelEvidence: recovery.questionLabelEvidence || analysis.questionLabelEvidence,
             readingConfidence: recovery.readingConfidence ?? analysis.readingConfidence,
+            answerBlocksObserved: recovery.answerBlocksObserved ?? analysis.answerBlocksObserved,
+            unresolvedAnswerBlocks: recovery.unresolvedAnswerBlocks ?? analysis.unresolvedAnswerBlocks,
+            mcqNeedsReview: recoveredQuestions
+              .filter((question) => question.isMcq && question.mcqSelectionNeedsReview)
+              .map((question) => question.questionNumber),
           };
         } else {
           analysis = {
@@ -859,12 +983,29 @@ export async function buildAnswerSheetCoverageMap(
       activeQuestionContext = nonMcqs[nonMcqs.length - 1].fullQuestionCode;
     }
 
-    // Collect any MCQs found on this page
+    // Preserve every visible MCQ attempt. Unreadable or conflicting selections
+    // are explicitly held for review; they must never be downgraded to blank or
+    // overwritten by whichever page happened to be processed last.
     for (const q of analysis.detectedQuestions) {
-      if (q.studentSelectedOption && (q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ')) {
-        const mcqNum = q.questionNumber;
-        mcqSelections[mcqNum] = q.studentSelectedOption.toUpperCase();
+      if (!(q.isMcq || q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ')) continue;
+      const mcqNum = String(q.questionNumber || '').replace(/[^0-9]/g, '');
+      if (!mcqNum) continue;
+
+      if (q.mcqSelectionNeedsReview) {
+        mcqNeedsReview.add(mcqNum);
+        mcqSelectionCandidates.delete(mcqNum);
+        continue;
       }
+      if (!q.studentSelectedOption || mcqNeedsReview.has(mcqNum)) continue;
+
+      const selectedOption = q.studentSelectedOption.trim().toUpperCase();
+      const priorOption = mcqSelectionCandidates.get(mcqNum);
+      if (priorOption && priorOption !== selectedOption) {
+        mcqSelectionCandidates.delete(mcqNum);
+        mcqNeedsReview.add(mcqNum);
+        continue;
+      }
+      mcqSelectionCandidates.set(mcqNum, selectedOption);
     }
   }
 
@@ -886,8 +1027,10 @@ export async function buildAnswerSheetCoverageMap(
           pages: [pageRec.pageNumber],
           status: det.status,
           studentSnippet: det.snippet,
-          studentSelectedOption: det.studentSelectedOption,
+          studentSelectedOption: det.mcqSelectionNeedsReview ? undefined : det.studentSelectedOption,
           isMcq: parsed.isMcq,
+          ...(det.mcqSelectionNeedsReview ? { mcqSelectionNeedsReview: true } : {}),
+          ...(det.mappingReviewReason ? { mappingReviewReason: det.mappingReviewReason } : {}),
         });
       } else {
         const existing = mappingMap.get(parsed.canonicalId)!;
@@ -898,8 +1041,20 @@ export async function buildAnswerSheetCoverageMap(
         if (det.snippet && !existing.studentSnippet?.includes(det.snippet)) {
           existing.studentSnippet = (existing.studentSnippet ? `${existing.studentSnippet}\n\n` : '') + det.snippet;
         }
-        if (det.studentSelectedOption && !existing.studentSelectedOption) {
-          existing.studentSelectedOption = det.studentSelectedOption;
+        if (det.mappingReviewReason) existing.mappingReviewReason = det.mappingReviewReason;
+        if (det.mcqSelectionNeedsReview) {
+          existing.studentSelectedOption = undefined;
+          existing.mcqSelectionNeedsReview = true;
+        } else if (det.studentSelectedOption) {
+          const incomingOption = det.studentSelectedOption.toUpperCase();
+          const existingOption = String(existing.studentSelectedOption || '').toUpperCase();
+          if (existingOption && existingOption !== incomingOption) {
+            existing.studentSelectedOption = undefined;
+            existing.mcqSelectionNeedsReview = true;
+            existing.mappingReviewReason = 'Conflicting MCQ selections were detected across pages; manual verification is required.';
+          } else if (!existing.mcqSelectionNeedsReview) {
+            existing.studentSelectedOption = incomingOption;
+          }
         }
       }
     }
@@ -909,6 +1064,16 @@ export async function buildAnswerSheetCoverageMap(
   // leaf exists. The helper removes only those proven containers and transfers
   // their source pages to the matching leaf tasks; unresolved parent-only
   // detections remain visible to the pre-evaluation review gate.
+  for (const [questionNumber, option] of mcqSelectionCandidates) {
+    if (!mcqNeedsReview.has(questionNumber)) mcqSelections[questionNumber] = option;
+  }
+  for (const attempt of mappingMap.values()) {
+    if (attempt.isMcq && attempt.mcqSelectionNeedsReview) {
+      mcqNeedsReview.add(attempt.questionNumber);
+      delete mcqSelections[attempt.questionNumber];
+    }
+  }
+
   const hierarchyNormalized = normalizeDetectedAttemptHierarchy(Array.from(mappingMap.values()));
   const attemptedQuestions = hierarchyNormalized.attemptedQuestions;
   const allDetectedCodes = attemptedQuestions.map((a) => a.fullQuestionCode);
@@ -939,6 +1104,7 @@ export async function buildAnswerSheetCoverageMap(
     coveredPages,
     is100PercentCovered,
     mcqSelections,
+    mcqNeedsReview: Array.from(mcqNeedsReview).sort((a, b) => Number(a) - Number(b)),
   };
 
   coverageMapCache.set(cacheKey, coverageResult);
@@ -1025,6 +1191,22 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
   question label when it agrees with the material. If the label conflicts with a strong material match,
   report the material match and set labelMismatch=true; do not silently hide the conflict.
 - One page may contain multiple independent questions. Split and map each answer block separately.
+- Treat every separately labelled descriptive sub-part as its own answer block: (a), (b), (i), (ii),
+  (1), (2), and nested labels such as (a)(i) or (5)(ii). Never collapse siblings into their parent.
+- Count every distinct attempted answer block in answerBlocksObserved. Count each descriptive sub-part
+  and each attempted MCQ once. Do not count printed question stems, blank space or unattempted parts.
+- If an answer block is visibly attempted but its question identity cannot be safely mapped, add a concise
+  literal description to unresolvedAnswerBlocks. Do not omit it and do not guess a nearby question ID.
+- If an MCQ response is visibly attempted but its chosen option is unreadable, overwritten, ambiguous or
+  conflicting, add its exact source label to mcqNeedsReview. Do NOT leave it out as blank, infer an option,
+  or put it in mcqSelections. Preserve other clearly read MCQ choices normally.
+- A visible MCQ attempt must never be downgraded to a blank/unattempted or wrong answer
+  solely because its selected option could not be read.
+- Represent a readable MCQ attempt only in mcqSelections, and an unreadable/ambiguous MCQ attempt
+  only in mcqNeedsReview. Do not duplicate the same MCQ as a descriptive detectedQuestions entry.
+- Read common MCQ response formats: a circled/ticked A-D, a handwritten option beside the number,
+  "1-(c)", "1. c", "Q1(iv)=C", answer grids and clearly marked option bubbles. Link them only to the
+  authoritative MCQ crosswalk above.
 - A continuation can refer to ANY earlier question, not necessarily the previous page's last question.
   Compare it with PRIOR DETECTED ANSWERS FROM ALL EARLIER PAGES. Set isContinuation=true and use the
   same canonical ID only when the handwriting/content clearly continues that earlier answer.
@@ -1092,7 +1274,10 @@ TASK:
 3. Set isContinuation=true only for a clear continuation without a new label.
 4. Give literal questionLabelEvidence (e.g. "circled 2 in left margin") and readingConfidence 0–1.
    Confidence is diagnostic only and must not override identity validation.
-5. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
+5. Set answerBlocksObserved to the exact number of distinct attempted answer blocks on this page.
+6. Return every unresolved visible answer block in unresolvedAnswerBlocks.
+7. Return every visible MCQ attempt with an unreadable/ambiguous option in mcqNeedsReview.
+8. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
    CLEARLY_UNATTEMPTED or QUESTION_NOT_IDENTIFIED.
 
 Return valid JSON only:
@@ -1102,6 +1287,9 @@ Return valid JSON only:
   "summary": "brief factual page summary",
   "questionLabelEvidence": "literal label evidence and its location",
   "readingConfidence": 0.0,
+  "answerBlocksObserved": 2,
+  "unresolvedAnswerBlocks": [],
+  "mcqNeedsReview": [],
   "detectedQuestions": [
     {
       "questionNumber": "2",
@@ -1170,6 +1358,19 @@ async function analyzeSinglePageCoverage(
       ? raw.mappingWarnings.join(' | ')
       : undefined;
     let pageActiveQuestionContext = previousActiveQuestion;
+    const mappedMcqNeedsReview = new Set<string>();
+    const detectedMcqAttempts = new Set<string>();
+    for (const rawLabel of raw.mcqNeedsReview) {
+      const number = resolveMcqSelectionNumber(rawLabel, paperStructure.mcqs || []);
+      if (!number) {
+        mappingReviewReason = [
+          mappingReviewReason,
+          `Visible MCQ response label "${rawLabel}" could not be matched to the selected paper's MCQ crosswalk.`,
+        ].filter(Boolean).join(' | ');
+        continue;
+      }
+      mappedMcqNeedsReview.add(number);
+    }
 
     if (Array.isArray(raw.detectedQuestions)) {
       for (const dq of raw.detectedQuestions) {
@@ -1201,6 +1402,13 @@ async function analyzeSinglePageCoverage(
         const parsed = parseCanonicalQuestionIdentity(canonId);
         if (!parsed.questionNumber) continue;
 
+        if (parsed.isMcq) {
+          // A question-level MCQ detection with no explicit option still proves
+          // an attempt. Wait for the option map below; if it is absent, hold the
+          // MCQ for human review instead of letting it become an unattempted 0.
+          detectedMcqAttempts.add(parsed.questionNumber);
+          continue;
+        }
         detectedQuestions.push({
           fullQuestionCode: parsed.canonicalId,
           questionNumber: parsed.questionNumber,
@@ -1212,29 +1420,34 @@ async function analyzeSinglePageCoverage(
           ...(dq.mappingBasis && dq.mappingBasis !== 'UNCERTAIN' ? { mappingBasis: dq.mappingBasis } : {}),
           ...(dq.labelMismatch !== undefined ? { labelMismatch: dq.labelMismatch } : {}),
         });
-        pageActiveQuestionContext = parsed.isMcq ? pageActiveQuestionContext : parsed.canonicalId;
+        pageActiveQuestionContext = parsed.canonicalId;
       }
     }
 
     // Map both flattened IDs and original nested Model Test labels to canonical MCQs.
+    const mappedSelections = new Map<string, string>();
     if (raw.mcqSelections && typeof raw.mcqSelections === 'object') {
-      const mappedSelections = new Map<string, string>();
       for (const [mcqKey, opt] of Object.entries(raw.mcqSelections)) {
         const num = resolveMcqSelectionNumber(mcqKey, paperStructure.mcqs || []);
         if (!num) {
           mappingReviewReason = [mappingReviewReason, `MCQ response label \"${mcqKey}\" did not match a source label or flat MCQ ID in the selected paper.`].filter(Boolean).join(' | ');
           continue;
         }
+        if (mappedMcqNeedsReview.has(num)) {
+          continue;
+        }
         const choice = String(opt).trim().toUpperCase();
         const existing = mappedSelections.get(num);
         if (existing && existing !== choice) {
           mappedSelections.delete(num);
+          mappedMcqNeedsReview.add(num);
           mappingReviewReason = [mappingReviewReason, `Conflicting responses were mapped to MCQ${num}; manual review is required.`].filter(Boolean).join(' | ');
           continue;
         }
         mappedSelections.set(num, choice);
       }
       for (const [num, opt] of mappedSelections) {
+        if (mappedMcqNeedsReview.has(num)) continue;
         detectedQuestions.push({
           fullQuestionCode: `MCQ${num}`,
           questionNumber: num,
@@ -1247,6 +1460,30 @@ async function analyzeSinglePageCoverage(
           isMcq: true,
         });
       }
+    }
+
+    // If a page-level detection identifies an objective question but returns
+    // no selected option, retain it as an attempted MCQ requiring review.
+    for (const num of detectedMcqAttempts) {
+      if (!mappedSelections.has(num)) mappedMcqNeedsReview.add(num);
+    }
+
+    // A visible MCQ response whose option is unreadable is an attempted answer,
+    // not a blank question and not an incorrect selection. Preserve the attempt
+    // explicitly so the deterministic scorer can require review instead of 0.
+    for (const num of mappedMcqNeedsReview) {
+      detectedQuestions.push({
+        fullQuestionCode: `MCQ${num}`,
+        questionNumber: num,
+        subQuestionNumber: 'MCQ',
+        status: 'ATTEMPTED_UNCLEAR',
+        isContinuation: false,
+        pageNumber,
+        snippet: `MCQ ${num}: a response is visible, but its selected option is unreadable or ambiguous.`,
+        isMcq: true,
+        mcqSelectionNeedsReview: true,
+        mappingReviewReason: 'Visible MCQ attempt; selected option needs manual verification.',
+      });
     }
 
     // If no explicit question headings were found on this page, but it has handwriting and indicates continuation of previous active question:
@@ -1287,6 +1524,9 @@ async function analyzeSinglePageCoverage(
       mappingReviewReason,
       questionLabelEvidence: raw.questionLabelEvidence,
       readingConfidence: raw.readingConfidence,
+      answerBlocksObserved: raw.answerBlocksObserved,
+      unresolvedAnswerBlocks: raw.unresolvedAnswerBlocks,
+      mcqNeedsReview: Array.from(mappedMcqNeedsReview),
     };
   } catch (err: any) {
     const rawError = err?.message || String(err);

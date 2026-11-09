@@ -28,6 +28,8 @@ export interface McqScoringConfig {
   paper?: string;
   subjectKey?: string;
   mcqPageNumbers?: Record<string, number>;
+  /** Visible MCQ attempts whose selected option could not be read confidently. */
+  mcqNeedsReview?: string[];
 }
 
 /**
@@ -164,6 +166,16 @@ export function applyDeterministicMcqScoring(
   return questions.map((q) => {
     const isQuestionMcq = isMcqItem(q);
 
+    // A visible MCQ attempt with an unreadable/ambiguous option is not wrong
+    // or blank. Preserve its provisional state and never apply binary or
+    // Foundation negative marking until a human verifies the selected option.
+    if (
+      isQuestionMcq &&
+      (q.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED') || q.flags?.includes('REVIEW_REQUIRED') || q.status === 'unclear')
+    ) {
+      return q;
+    }
+
     const updatedComponents = (q.markingComponents || []).map((c) => {
       if (isQuestionMcq || isMcqItem(q, c)) {
         return scoreMcqComponent(c, config);
@@ -288,6 +300,52 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
     const studentChoice = String(rawChoice || '').trim().toUpperCase();
     const officialKey = (mcq.officialKey || '').trim().toUpperCase();
     const maxMarks = mcq.maximumMarks;
+    const selectionNeedsReview = (config.mcqNeedsReview || []).some((value) =>
+      String(value).replace(/[^0-9]/g, '') === qNum
+    );
+
+    if (selectionNeedsReview) {
+      const explanation = `A visible response was detected for MCQ ${qNum}, but the selected option could not be read confidently. No academic zero or wrong-answer deduction has been assigned. The original answer must be checked manually.`;
+      auditTable.push({
+        questionNumber: `MCQ ${qNum}`,
+        candidateSelectedOption: 'UNREADABLE / AMBIGUOUS',
+        authoritativeOfficialOption: officialKey,
+        marksAvailable: maxMarks,
+        marksAwarded: 0,
+        correctness: 'REVIEW_REQUIRED',
+        exactReferenceMaterial: `${matTitle} (${matVersion})`,
+        exactSuggestedAnswerSection: `Section ${mcq.section} Division A MCQ ${qNum}`,
+        explanation,
+        confidence: 0,
+      });
+      return {
+        questionNumber: `MCQ ${qNum}`,
+        canonicalId: mcq.fullQuestionCode,
+        subQuestion: undefined,
+        maximumMarks: maxMarks,
+        marksAwarded: 0,
+        marksLost: 0,
+        status: 'unclear',
+        reasonForDeduction: 'No academic deduction assigned: a visible MCQ attempt needs manual option verification.',
+        detailedFeedback: explanation,
+        confidence: 0,
+        technicalEvaluation: 'MCQ selection detection was uncertain; this is not an incorrect-answer classification.',
+        markingComponents: [],
+        flags: ['MCQ_SELECTION_REVIEW_REQUIRED', 'REVIEW_REQUIRED'],
+        pageNumber: config.mcqPageNumbers?.[qNum] ?? mcq.sourcePage,
+        candidateSelectedOption: 'UNREADABLE / AMBIGUOUS',
+        officialCorrectOption: officialKey,
+        negativeMarking: 0,
+        markingRule: 'REVIEW_REQUIRED: visible attempted MCQ selection could not be verified.',
+        referenceTrace: {
+          materialId: matId,
+          markingSchemeSection: `Section ${mcq.section} - Division A (MCQ ${qNum})`,
+          suggestedAnswerRef: `MCQ ${qNum}: Option (${officialKey})`,
+          deductionReason: explanation,
+          verifiedGroundTruthSnippet: `MCQ ${qNum} Official Answer: (${officialKey}) [${maxMarks} Mark(s)]`,
+        },
+      } as any;
+    }
 
     const isAttempted = Boolean(studentChoice);
     const isCorrect = isAttempted && officialKey && studentChoice === officialKey;

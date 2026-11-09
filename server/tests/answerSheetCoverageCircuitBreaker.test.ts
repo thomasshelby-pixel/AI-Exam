@@ -58,6 +58,11 @@ async function run() {
   assert.match(pagePrompt, /Foundation,\s*Intermediate and Final/i);
   assert.match(pagePrompt, /every subject/i);
   assert.match(pagePrompt, /HANDWRITING STYLE FAIRNESS — MANDATORY/i);
+  assert.match(pagePrompt, /answerBlocksObserved/i);
+  assert.match(pagePrompt, /unresolvedAnswerBlocks/i);
+  assert.match(pagePrompt, /mcqNeedsReview/i);
+  assert.match(pagePrompt, /every separately labelled descriptive sub-part as its own answer block/i);
+  assert.match(pagePrompt, /must never be downgraded to a blank\/unattempted or wrong answer/i);
   assert.match(pagePrompt, /Students use genuinely different handwriting styles/i);
   assert.match(pagePrompt, /NO handwriting style is illegal or invalid/i);
   assert.match(pagePrompt, /cursive \/ joined-up writing/i);
@@ -152,9 +157,64 @@ async function run() {
   assert.equal(ambiguousParentSelection.mcqSelections['Q1'], 'C', 'A parent-labelled Q1 must not be flattened into MCQ1.');
   assert.equal(resolveMcqSelectionNumber('Q1', nestedMcqStructure), undefined);
 
+  const mcqReadReviewPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_PARTIALLY_READABLE',
+    hasHandwriting: true,
+    answerBlocksObserved: 1,
+    detectedQuestions: [],
+    unresolvedAnswerBlocks: [],
+    mcqNeedsReview: ['Question 1(iv)'],
+    mcqSelections: {},
+  }));
+  assert.deepEqual(mcqReadReviewPage.mcqNeedsReview, ['1(iv)'],
+    'An unreadable nested MCQ selection must be preserved as a separate review item, not treated as blank.');
+
+  assert.equal(
+    resolveMcqSelectionNumber('Question 1(a)(i)', [{
+      questionNumber: '4',
+      fullQuestionCode: 'MCQ4',
+      sourceQuestionLabel: 'Question 1(a)(i)',
+    }] as any),
+    '4',
+    'Unreadable MCQ source labels with more than one nested numbering level must map through the authoritative crosswalk.',
+  );
+  const deeplyNestedMcqReview = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_PARTIALLY_READABLE',
+    hasHandwriting: true,
+    answerBlocksObserved: 1,
+    detectedQuestions: [],
+    unresolvedAnswerBlocks: [],
+    mcqNeedsReview: ['Question 1(a)(i)'],
+    mcqSelections: {},
+  }));
+  assert.deepEqual(deeplyNestedMcqReview.mcqNeedsReview, ['1(a)(i)'],
+    'The page reader must preserve a multi-level nested MCQ label for source mapping.');
+
+  const missingAnswerBlockPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    answerBlocksObserved: 2,
+    detectedQuestions: [{
+      questionNumber: '2',
+      subQuestion: 'a',
+      parentQuestionNumberVisible: true,
+      authoritativeQuestionCode: 'Q2(a)',
+      mappingBasis: 'VISIBLE_LABEL',
+      snippet: 'First answer block',
+    }],
+    unresolvedAnswerBlocks: [],
+    mcqNeedsReview: [],
+    mcqSelections: {},
+  }));
+  assert.ok(missingAnswerBlockPage.mappingWarnings.some((warning) => /observed 2 attempted answer block/.test(warning)),
+    'A visible answer-block count mismatch must trigger recovery/review instead of silently omitting a sub-part.');
+
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_PARTIALLY_READABLE',
     hasHandwriting: true,
+    answerBlocksObserved: 1,
+    unresolvedAnswerBlocks: [],
+    mcqNeedsReview: [],
     summary: 'A handwritten answer continues.',
     questionLabelEvidence: 'Circled 6 in the left margin above the journal entry.',
     readingConfidence: 0.82,
@@ -296,6 +356,35 @@ async function run() {
   });
   assert.equal(explicitContinuation.canonicalId, 'Q2(a)', 'A clearly identified continuation can reuse the active answer identity.');
 
+  const nestedContinuationStructure: any = {
+    ...arbitraryOrderStructure,
+    subQuestions: [
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false },
+      { fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false },
+      { fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 3, isMcq: false },
+    ],
+  };
+  const nestedRomanContinuation = resolveContextualQuestionIdentity({
+    subQuestion: 'i',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q2(a)',
+    isContinuation: true,
+    paperSubQuestions: nestedContinuationStructure.subQuestions,
+  });
+  assert.equal(nestedRomanContinuation.canonicalId, 'Q2(a(i))',
+    'A bare Roman child after Q2(a) must resolve through canonical serialization, not Q2(a)(i).');
+  assert.equal(nestedRomanContinuation.requiresReview, false);
+  const nestedRomanSibling = resolveContextualQuestionIdentity({
+    subQuestion: 'ii',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q2(a(i))',
+    isContinuation: true,
+    paperSubQuestions: nestedContinuationStructure.subQuestions,
+  });
+  assert.equal(nestedRomanSibling.canonicalId, 'Q2(a(ii))',
+    'A sibling Roman child must resolve under the authoritative parent Q2(a).');
+  assert.equal(nestedRomanSibling.requiresReview, false);
+
   const inventory = buildCanonicalQuestionInventory({ paperStructure: arbitraryOrderStructure });
   const independentAttempts = detectIndependentAttempts({
     inventory,
@@ -384,7 +473,89 @@ async function run() {
   assert.ok(observedPriorContexts[2].some((context: any) => context.fullQuestionCode === 'Q1(a)' && context.pages.includes(2)));
 
   clearCoverageMapCache();
-  console.log('✅ Page coverage, source-grounded mapping, arbitrary order and non-adjacent continuation regressions passed (no external AI calls).');
+  const mcqStructure: any = {
+    paperTitle: 'Nested MCQ recovery regression',
+    totalPaperMaxMarks: 10,
+    questions: [],
+    subQuestions: [],
+    mcqs: [{
+      fullQuestionCode: 'MCQ4',
+      questionNumber: '4',
+      subQuestionNumber: 'MCQ',
+      sourceQuestionLabel: 'Question 1(iv)',
+      maximumMarks: 2,
+      officialKey: 'C',
+      section: 'A',
+      isMcq: true,
+    }],
+  };
+  const onePageMcqPdf = await createPdf(1);
+  const recoveredMcqCoverage = await buildAnswerSheetCoverageMap(onePageMcqPdf, mcqStructure, {
+    enableTargetedRecovery: true,
+    analyzePage: async (_base64, pageNumber, _structure, _total, _previous, _prior, recoveryMode) => ({
+      pageNumber,
+      status: recoveryMode ? 'ATTEMPTED_READABLE' : 'ATTEMPTED_UNCLEAR',
+      detectedQuestions: [{
+        fullQuestionCode: 'MCQ4',
+        questionNumber: '4',
+        subQuestionNumber: 'MCQ',
+        status: recoveryMode ? 'ATTEMPTED_READABLE' : 'ATTEMPTED_UNCLEAR',
+        isContinuation: false,
+        pageNumber,
+        isMcq: true,
+        ...(recoveryMode
+          ? { studentSelectedOption: 'C', snippet: 'MCQ4 option C is visibly marked.' }
+          : {
+              mcqSelectionNeedsReview: true,
+              mappingReviewReason: 'Visible MCQ response; option not readable on first pass.',
+              snippet: 'MCQ4 response mark is faint.',
+            }),
+      }],
+      rawSummary: recoveryMode ? 'Second read recovered MCQ4=C.' : 'First read found an ambiguous MCQ4 mark.',
+      hasHandwriting: true,
+      mcqNeedsReview: recoveryMode ? [] : ['4'],
+      answerBlocksObserved: 1,
+      unresolvedAnswerBlocks: [],
+    }),
+  });
+  assert.equal(recoveredMcqCoverage.mcqSelections['4'], 'C',
+    'A targeted second read must retain the MCQ option recovered after an incomplete first read.');
+  assert.deepEqual(recoveredMcqCoverage.mcqNeedsReview, [],
+    'A successful second read must clear the first-pass unreadable MCQ flag.');
+  assert.equal(recoveredMcqCoverage.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'MCQ4')?.studentSelectedOption, 'C');
+
+  clearCoverageMapCache();
+  const twoPageMcqPdf = await createPdf(2);
+  const conflictingMcqCoverage = await buildAnswerSheetCoverageMap(twoPageMcqPdf, mcqStructure, {
+    analyzePage: async (_base64, pageNumber) => ({
+      pageNumber,
+      status: 'ATTEMPTED_READABLE',
+      detectedQuestions: [{
+        fullQuestionCode: 'MCQ4',
+        questionNumber: '4',
+        subQuestionNumber: 'MCQ',
+        status: 'ATTEMPTED_READABLE',
+        isContinuation: false,
+        pageNumber,
+        isMcq: true,
+        studentSelectedOption: pageNumber === 1 ? 'A' : 'B',
+        snippet: `MCQ4 selected option ${pageNumber === 1 ? 'A' : 'B'}.`,
+      }],
+      rawSummary: 'MCQ4 visible.',
+      hasHandwriting: true,
+      answerBlocksObserved: 1,
+      unresolvedAnswerBlocks: [],
+      mcqNeedsReview: [],
+    }),
+  });
+  assert.equal(conflictingMcqCoverage.mcqSelections['4'], undefined,
+    'Conflicting cross-page MCQ choices must not be resolved by last-write-wins.');
+  assert.ok(conflictingMcqCoverage.mcqNeedsReview.includes('4'),
+    'Conflicting cross-page MCQ choices must remain in explicit manual review.');
+  assert.equal(conflictingMcqCoverage.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'MCQ4')?.mcqSelectionNeedsReview, true);
+
+  clearCoverageMapCache();
+  console.log('✅ Answer-block completeness, nested continuation, MCQ recovery and conflict review regressions passed (no external AI calls).');
 }
 
 run().catch((error) => {
