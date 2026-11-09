@@ -111,7 +111,8 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
 
     // Dotted hierarchy: Q3.1.2 -> Q3(1)(2); Q3.b -> Q3(b).
     const dotted = rest.match(/^[.]\s*([a-zA-Z0-9]+)(?:\s*[.]\s*([a-zA-Z0-9]+))*/);
-    if (dotted && (/[0-9]/.test(dotted[1]) || /^[a-z]$/i.test(dotted[1]))) {
+    const dottedHeadIsRoman = /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx|xxi|xxii|xxiii|xxiv|xxv|xxx|xl|l|lx|lxx|xc|c)$/i.test(dotted?.[1] || '');
+    if (dotted && (/[0-9]/.test(dotted[1]) || /^[a-z]$/i.test(dotted[1]) || dottedHeadIsRoman)) {
       const tokenText = dotted[0].replace(/^\./, '');
       const tokens = tokenText.split('.').map((token) => token.trim()).filter(Boolean);
       parts.push(...tokens.map((token) => token.toLowerCase()));
