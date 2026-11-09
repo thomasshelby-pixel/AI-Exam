@@ -560,8 +560,11 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   let activeSubQuestionPath: string[] = [];
   const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b|CLAUSE\b|ITEM\b|PARA\b))/i;
   const childSubQRegex = new RegExp(
-    '^\\s*' + labelledPartPrefix +
-    '(' + namedPrefixPath + '|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.?[a-zA-Z0-9]+)(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]|[a-zA-Z0-9]+))' +
+    '^\\s*(' + namedPrefixPath + '|' +
+    '(?:' + labelledPrefixName + '\\s*)?' + bracketPath + '|' +
+    '(?:\\.?[a-zA-Z0-9]+)(?:\\.[a-zA-Z0-9]+){1,4}|' +
+    '(?:' + labelledPrefixName + '\\s*)?[a-zA-Z0-9]+[.)]|' +
+    '[a-zA-Z0-9]+)' +
     '(?:\\s*[-–—:]\\s*|\\s+|$)',
     'i',
   );
