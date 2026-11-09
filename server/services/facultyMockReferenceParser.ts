@@ -57,8 +57,8 @@ export function validateFacultyMockReferenceSections(
 ): FacultyMockReferenceSections {
   const result: FacultyMockReferenceSections = {
     questionPaperText: String(sections.questionPaperText || '').replace(/^\uFEFF/, '').trim(),
-    suggestedAnswersText: String(sections.suggestedAnswersText || '').replace(/^\\uFEFF/, '').trim(),
-    markingSchemeText: String(sections.markingSchemeText || '').replace(/^\\uFEFF/, '').trim(),
+    suggestedAnswersText: String(sections.suggestedAnswersText || '').replace(/^\uFEFF/, '').trim(),
+    markingSchemeText: String(sections.markingSchemeText || '').replace(/^\uFEFF/, '').trim(),
   };
   if (result.questionPaperText.length < 50) {
     throw new Error('The Question Paper Text TXT must contain at least 50 characters.');
