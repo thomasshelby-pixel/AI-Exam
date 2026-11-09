@@ -320,20 +320,24 @@ export function extractLockedQuestionSlice(
         startRegexes.push(/(?:Question\s*8|8\.)\b/i);
       }
     } else {
-      // Section A questions (Q1 to Q4)
-      if (qNum === '1') {
-        if (!subQ) {
-          // Parent Q1 is a container only when the caller requested Q1 itself.
-          startRegexes.push(/^\s*1\s*[.)]\s+(?=\S)/i);
-          startRegexes.push(/(?:Division\s*B[^\n]*\n)?.*1\.\s+Computation\s+of\s+Total\s+Income\s+of\s+Ms\.\s*Sana/i);
-          startRegexes.push(/(?:Question\s*(?:No\.?)?\s*1|Q\.?\s*1|Answer\s*1)\b/i);
-          startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
-        }
+      // Section A questions (Q1 to Q4).
+      // A child reference must never fall through to the parent Q1 heading.
+      if (qNum === '1' && !subQ) {
+        startRegexes.push(/^\\s*1\\s*[.)]\\s+(?=\\S)/i);
+        startRegexes.push(/(?:Division\\s*B[^\\n]*\\n)?.*1\\.\\s+Computation\\s+of\\s+Total\\s+Income\\s+of\\s+Ms\\.\\s*Sana/i);
+        startRegexes.push(/(?:Question\\s*(?:No\\.?)?\\s*1|Q\\.?\\s*1|Answer\\s*1)\\b/i);
+        startRegexes.push(/(?:^|\\n|\\b)1\\.\\s+Computation\\s+of\\s+Total\\s+Income/i);
       } else if (subQ) {
-        // Division B descriptive answers can restart numbering (e.g. "2. Delta Limited").
-        // Division B is scoped above, so this matcher cannot borrow Division A MCQ keys.
-        startRegexes.push(new RegExp(String.raw`^\s*${qNum}\s*[.)]\s+(?=\S)`, 'i'));
-        startRegexes.push(new RegExp(`(?:Question\\s*(?:No\\.?)?\\s*${qNum}|Questions?\\s*${qNum}\\.|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum})\\b`, 'i'));
+        startRegexes.push(new RegExp(
+          '(?:Question\\s*' + qNum + '|Answer\\s*' + qNum + '|Ans\\.?\\s*' + qNum + '|Q\\.?\\s*' + qNum + '|' + qNum + '\\.)\\s*' + canonicalSuffixPattern,
+          'i',
+        ));
+      } else {
+        startRegexes.push(new RegExp(String.raw`^\\s*${qNum}\\s*[.)]\\s+(?=\\S)`, 'i'));
+        startRegexes.push(new RegExp(
+          '(?:Question\\s*(?:No\\.?)?\\s*' + qNum + '|Questions?\\s*' + qNum + '\\.|Answer\\s*' + qNum + '|Ans\\.?\\s*' + qNum + '|Q\\.?\\s*' + qNum + ')\\b',
+          'i',
+        ));
       }
     }
   } else {
