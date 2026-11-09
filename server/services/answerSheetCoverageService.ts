@@ -1250,6 +1250,18 @@ async function analyzeSinglePageCoverage(
       ? raw.mappingWarnings.join(' | ')
       : undefined;
     let pageActiveQuestionContext = previousActiveQuestion;
+    const mappedMcqNeedsReview = new Set<string>();
+    for (const rawLabel of raw.mcqNeedsReview) {
+      const number = resolveMcqSelectionNumber(rawLabel, paperStructure.mcqs || []);
+      if (!number) {
+        mappingReviewReason = [
+          mappingReviewReason,
+          `Visible MCQ response label "${rawLabel}" could not be matched to the selected paper's MCQ crosswalk.`,
+        ].filter(Boolean).join(' | ');
+        continue;
+      }
+      mappedMcqNeedsReview.add(number);
+    }
 
     if (Array.isArray(raw.detectedQuestions)) {
       for (const dq of raw.detectedQuestions) {
@@ -1305,16 +1317,21 @@ async function analyzeSinglePageCoverage(
           mappingReviewReason = [mappingReviewReason, `MCQ response label \"${mcqKey}\" did not match a source label or flat MCQ ID in the selected paper.`].filter(Boolean).join(' | ');
           continue;
         }
+        if (mappedMcqNeedsReview.has(num)) {
+          continue;
+        }
         const choice = String(opt).trim().toUpperCase();
         const existing = mappedSelections.get(num);
         if (existing && existing !== choice) {
           mappedSelections.delete(num);
+          mappedMcqNeedsReview.add(num);
           mappingReviewReason = [mappingReviewReason, `Conflicting responses were mapped to MCQ${num}; manual review is required.`].filter(Boolean).join(' | ');
           continue;
         }
         mappedSelections.set(num, choice);
       }
       for (const [num, opt] of mappedSelections) {
+        if (mappedMcqNeedsReview.has(num)) continue;
         detectedQuestions.push({
           fullQuestionCode: `MCQ${num}`,
           questionNumber: num,
@@ -1327,6 +1344,24 @@ async function analyzeSinglePageCoverage(
           isMcq: true,
         });
       }
+    }
+
+    // A visible MCQ response whose option is unreadable is an attempted answer,
+    // not a blank question and not an incorrect selection. Preserve the attempt
+    // explicitly so the deterministic scorer can require review instead of 0.
+    for (const num of mappedMcqNeedsReview) {
+      detectedQuestions.push({
+        fullQuestionCode: `MCQ${num}`,
+        questionNumber: num,
+        subQuestionNumber: 'MCQ',
+        status: 'ATTEMPTED_UNCLEAR',
+        isContinuation: false,
+        pageNumber,
+        snippet: `MCQ ${num}: a response is visible, but its selected option is unreadable or ambiguous.`,
+        isMcq: true,
+        mcqSelectionNeedsReview: true,
+        mappingReviewReason: 'Visible MCQ attempt; selected option needs manual verification.',
+      });
     }
 
     // If no explicit question headings were found on this page, but it has handwriting and indicates continuation of previous active question:
@@ -1367,6 +1402,9 @@ async function analyzeSinglePageCoverage(
       mappingReviewReason,
       questionLabelEvidence: raw.questionLabelEvidence,
       readingConfidence: raw.readingConfidence,
+      answerBlocksObserved: raw.answerBlocksObserved,
+      unresolvedAnswerBlocks: raw.unresolvedAnswerBlocks,
+      mcqNeedsReview: Array.from(mappedMcqNeedsReview),
     };
   } catch (err: any) {
     const rawError = err?.message || String(err);
