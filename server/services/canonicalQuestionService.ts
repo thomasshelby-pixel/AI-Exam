@@ -70,17 +70,25 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
   let rest = String(source || '').trim();
   if (!rest) return [];
 
-  const labelPrefix = rest.match(/^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*/i);
-  if (labelPrefix) {
-    rest = rest.slice(labelPrefix[0].length).trim();
-    allowBareToken = true;
-  }
-
   const parts: string[] = [];
   let guard = 0;
   while (rest && guard++ < 12) {
     rest = rest.replace(/^\s+/, '').replace(/^[-_:/]+\s*/, '');
     if (!rest) break;
+
+    // Named numbering levels may be chained, e.g. "Part IV Clause 2".
+    // The explicit prefix makes the following bare token an unambiguous ID.
+    const labelPrefix = rest.match(/^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*/i);
+    if (labelPrefix) {
+      rest = rest.slice(labelPrefix[0].length).trim();
+      allowBareToken = true;
+      const namedToken = rest.match(/^([a-zA-Z0-9]+)(?=\s|\(|\[|$)/);
+      if (namedToken) {
+        parts.push(namedToken[1].toLowerCase());
+        rest = rest.slice(namedToken[0].length);
+        continue;
+      }
+    }
 
     if (allowBareToken) {
       const nestedDotted = rest.match(/^([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)+)$/);
