@@ -152,17 +152,17 @@ const caFinalTaxPaper = getAuthoritativePaperStructure({
     'CA Final Direct Tax Laws - Question Paper',
     'Question 1(a) - 4 Marks',
     'Question 2(a) - 6 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   suggestedAnswersText: [
     'Suggested Answers',
     'Question 1(a) - Source-backed answer for CA Final direct tax problem.',
     'Question 2(a) - Source-backed answer for international tax problem.',
-  ].join('\\n'),
+  ].join('\n'),
   markingSchemeText: [
     'Marking Scheme',
     'Question 1(a) - 4 Marks',
     'Question 2(a) - 6 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   officialPaperMaxMarks: 100,
 });
 assert.notEqual(caFinalTaxPaper.paperTitle, 'CA Intermediate – Paper 3: Taxation');
