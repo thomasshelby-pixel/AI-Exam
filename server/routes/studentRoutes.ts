@@ -31,6 +31,7 @@ import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { enforceMaterialHardGate, VerifiedReferencePackage } from '../services/materialHardGateService.js';
+import { resolveFacultyMockComponentSourceIds } from '../services/materialComponentSourceIds.js';
 import { recordParakhLearningObservation, excludeParakhLearningForStudent } from '../services/parakhLearningService.js';
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
@@ -1378,12 +1379,13 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
       // All three private evaluation sections are loaded server-side from the
       // exact selected mock. The student never submits or receives the TXT.
+      const facultyMockSourceIds = resolveFacultyMockComponentSourceIds(facultyMockRecord);
       preloadedMat = {
         id: facultyMockRecord.id,
-        file_id: facultyMockRecord.suggested_answer_file_id,
-        question_material_id: facultyMockRecord.question_paper_reference_file_id || facultyMockRecord.suggested_answer_file_id,
-        suggested_answer_material_id: facultyMockRecord.suggested_answer_file_id,
-        marking_scheme_material_id: facultyMockRecord.marking_scheme_file_id || facultyMockRecord.suggested_answer_file_id,
+        file_id: facultyMockSourceIds.suggestedAnswerMaterialId,
+        question_material_id: facultyMockSourceIds.questionMaterialId,
+        suggested_answer_material_id: facultyMockSourceIds.suggestedAnswerMaterialId,
+        marking_scheme_material_id: facultyMockSourceIds.markingSchemeMaterialId,
         question_paper_title: facultyMockRecord.title || `${faculty.name} Mock ${facultyMockRecord.mock_number}`,
         level: storedLevel,
         subject_key: storedSubjectKey,
