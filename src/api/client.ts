@@ -186,13 +186,16 @@ export async function downloadAuthenticatedFile(
 
   if (!response.ok) {
     let errMsg = 'Failed to download file';
+    let errData: any = undefined;
     try {
-      const errData = await response.json();
-      errMsg = errData.error || errData.message || errMsg;
+      errData = await response.json();
+      errMsg = errData?.error || errData?.message || errMsg;
     } catch {
       errMsg = `Download failed with HTTP ${response.status}: ${response.statusText}`;
     }
-    throw new ApiError(errMsg, response.status);
+    // Preserve machine-readable API codes (e.g. FACULTY_MOCK_PAYMENT_REQUIRED)
+    // so callers can handle an unlock/payment flow instead of showing a generic error.
+    throw new ApiError(errMsg, response.status, errData);
   }
 
   const blob = await response.blob();

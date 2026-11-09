@@ -1140,6 +1140,7 @@ function runMigrations() {
       marking_scheme_file_id TEXT,
       marking_scheme_file_name TEXT,
       marking_scheme_file_size INTEGER,
+      access_type TEXT NOT NULL DEFAULT 'FREE',
       status TEXT NOT NULL DEFAULT 'PUBLISHED',
       created_by TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -1183,6 +1184,7 @@ function runMigrations() {
   addColumnIfNotExists('faculty_mock_tests', 'question_paper_reference_file_id', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'question_paper_reference_file_name', 'TEXT');
   addColumnIfNotExists('faculty_mock_tests', 'question_paper_reference_file_size', 'INTEGER');
+  addColumnIfNotExists('faculty_mock_tests', 'access_type', "TEXT NOT NULL DEFAULT 'FREE'");
   addColumnIfNotExists('evaluations', 'faculty_mock_test_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'faculty_mock_payment_order_id', 'TEXT');
 

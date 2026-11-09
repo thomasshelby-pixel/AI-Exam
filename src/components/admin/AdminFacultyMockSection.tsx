@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../../api/client.js';
 import { CA_CURRICULUM } from '../../data/caCurriculum.js';
 import { CALevel } from '../../types/index.js';
-import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle, Trash2 } from 'lucide-react';
 
 type Faculty = { id: string; name: string; description?: string | null; status: 'ACTIVE' | 'INACTIVE' };
 type MockTest = {
@@ -10,6 +10,8 @@ type MockTest = {
   model_group?: string | null; subject_key: string; subject_name: string; paper: string;
   mock_number: number; title: string; maximum_marks: number; status: string;
   question_paper_file_name?: string;
+  access_type?: 'FREE' | 'PAID';
+  unlock_price_inr?: number;
 };
 type StoredPdf = { name: string; type: string; size: number; base64: string };
 type StoredText = { name: string; type: 'text/plain'; size: number; base64: string; text: string };
@@ -30,6 +32,8 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   const [loading, setLoading] = useState(true);
   const [savingFaculty, setSavingFaculty] = useState(false);
   const [savingTest, setSavingTest] = useState(false);
+  const [deletingFacultyId, setDeletingFacultyId] = useState<string | null>(null);
+  const [unlockPriceINR, setUnlockPriceINR] = useState(35);
   const [facultyName, setFacultyName] = useState('');
   const [facultyDescription, setFacultyDescription] = useState('');
   const [facultyId, setFacultyId] = useState('');
@@ -40,6 +44,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   const [mockNumber, setMockNumber] = useState('');
   const [title, setTitle] = useState('');
   const [maximumMarks, setMaximumMarks] = useState('100');
+  const [accessType, setAccessType] = useState<'FREE' | 'PAID'>('FREE');
   const [questionPaper, setQuestionPaper] = useState<StoredPdf | null>(null);
   const [questionPaperReference, setQuestionPaperReference] = useState<StoredText | null>(null);
   const [suggestedAnswersReference, setSuggestedAnswersReference] = useState<StoredText | null>(null);
@@ -58,10 +63,11 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     try {
       const [facultyRes, testRes] = await Promise.all([
         apiRequest<{ faculties: Faculty[] }>('/api/admin/faculty-mocks/faculties'),
-        apiRequest<{ tests: MockTest[] }>('/api/admin/faculty-mocks/tests'),
+        apiRequest<{ tests: MockTest[]; unlockPriceINR?: number }>('/api/admin/faculty-mocks/tests'),
       ]);
       setFaculties(facultyRes.faculties || []);
       setTests(testRes.tests || []);
+      setUnlockPriceINR(Number(testRes.unlockPriceINR || 35));
       if (!facultyId && facultyRes.faculties?.length) setFacultyId(facultyRes.faculties.find((f) => f.status === 'ACTIVE')?.id || '');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not load faculty mock data.';
@@ -209,7 +215,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
         body: JSON.stringify({
           facultyId, courseLevel, attempt: attempt.trim(), modelGroup: selectedSubject?.group || '',
           subjectKey, subjectName: selectedSubject?.name || '', paper, mockNumber, title,
-          maximumMarks: Number(maximumMarks), syllabusVersion: 'New Scheme 2024',
+          maximumMarks: Number(maximumMarks), accessType, syllabusVersion: 'New Scheme 2024',
           questionPaperFile: questionPaper,
           questionPaperReferenceFile: questionPaperReference,
           suggestedAnswersFile: suggestedAnswersReference,
@@ -219,6 +225,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       onNotify?.(`${result.test.faculty_name}: Mock ${String(result.test.mock_number).padStart(2, '0')} published for ${attempt}.`, 'success');
       setMockNumber('');
       setTitle('');
+      setAccessType('FREE');
       setQuestionPaper(null);
       setQuestionPaperReference(null);
       setSuggestedAnswersReference(null);
@@ -240,6 +247,30 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       });
       await loadData();
     } catch (err) { onNotify?.(err instanceof Error ? err.message : 'Failed to update faculty.', 'error'); }
+  };
+
+  const deleteFaculty = async (faculty: Faculty) => {
+    const confirmed = window.confirm(
+      `Permanently delete ${faculty.name} and all of its faculty mocks and uploaded source files? Existing student evaluation reports and payment transaction history will be retained. Deletion is blocked while students have unused paid copies.`
+    );
+    if (!confirmed) return;
+    setDeletingFacultyId(faculty.id);
+    try {
+      const result = await apiRequest<{ deletedMockCount: number }>(`/api/admin/faculty-mocks/faculties/${faculty.id}`, {
+        method: 'DELETE',
+      });
+      if (facultyId === faculty.id) setFacultyId('');
+      if (filterFaculty === faculty.id) setFilterFaculty('ALL');
+      onNotify?.(`Deleted ${faculty.name} and ${result.deletedMockCount} associated mock(s). Historical evaluation reports and payment records were retained.`, 'success');
+      await loadData();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not delete faculty and its mocks.';
+      setError(message);
+      onNotify?.(message, 'error');
+      await loadData();
+    } finally {
+      setDeletingFacultyId(null);
+    }
   };
 
   const toggleTest = async (test: MockTest) => {
@@ -302,6 +333,9 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
               <span className="text-xs font-semibold">{faculty.name}</span>
               <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${faculty.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'}`}>{faculty.status}</span>
               <button type="button" onClick={() => void toggleFaculty(faculty)} className="text-[10px] font-semibold text-blue-700">{faculty.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</button>
+              <button type="button" disabled={deletingFacultyId === faculty.id} onClick={() => void deleteFaculty(faculty)} title="Delete faculty and all its mocks" className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-600 hover:text-rose-700 disabled:opacity-50">
+                <Trash2 className="h-3 w-3" />{deletingFacultyId === faculty.id ? 'Deleting…' : 'Delete'}
+              </button>
             </div>
           ))}
           {!loading && !faculties.length && <p className="text-xs text-slate-400">No faculties added yet.</p>}
@@ -342,6 +376,12 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
             <label className="text-[11px] font-semibold text-slate-600">Test Title
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Auto-generated if blank" maxLength={160} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" />
             </label>
+            <label className="text-[11px] font-semibold text-slate-600">Student Access
+              <select value={accessType} onChange={(e) => setAccessType(e.target.value as 'FREE' | 'PAID')} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+                <option value="FREE">Free — first copy free, repeats ₹{unlockPriceINR}</option>
+                <option value="PAID">Unlock by Paying — ₹{unlockPriceINR} per copy</option>
+              </select>
+            </label>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {renderPdfInput('Downloadable Question Paper PDF', questionPaper)}
@@ -368,8 +408,8 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-xs">
-            <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Faculty</th><th>Course / Attempt</th><th>Subject</th><th>Mock No.</th><th>Marks</th><th>Status</th><th className="text-right">Action</th></tr></thead>
+          <table className="w-full min-w-[900px] text-left text-xs">
+            <thead><tr className="border-b border-slate-200 text-slate-500"><th className="py-2">Faculty</th><th>Course / Attempt</th><th>Subject</th><th>Mock No.</th><th>Marks</th><th>Access</th><th>Status</th><th className="text-right">Action</th></tr></thead>
             <tbody className="divide-y divide-slate-100">
               {filteredTests.map((test) => (
                 <tr key={test.id}>
@@ -378,11 +418,12 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
                   <td>{test.subject_name} · {test.paper}</td>
                   <td><span className="rounded-md bg-indigo-50 px-2 py-1 font-mono font-bold text-indigo-700">Mock {String(test.mock_number).padStart(2, '0')}</span></td>
                   <td>{test.maximum_marks}</td>
+                  <td><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${String(test.access_type || 'FREE').toUpperCase() === 'PAID' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{String(test.access_type || 'FREE').toUpperCase() === 'PAID' ? `PAID · ₹${test.unlock_price_inr || unlockPriceINR}` : 'FREE'}</span></td>
                   <td><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${test.status === 'PUBLISHED' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{test.status}</span></td>
                   <td className="py-2 text-right"><button type="button" onClick={() => void toggleTest(test)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-bold text-blue-700">{test.status === 'PUBLISHED' ? 'Unpublish' : 'Publish'}</button></td>
                 </tr>
               ))}
-              {!loading && !filteredTests.length && <tr><td colSpan={7} className="py-8 text-center text-slate-400">No faculty mocks match these filters.</td></tr>}
+              {!loading && !filteredTests.length && <tr><td colSpan={8} className="py-8 text-center text-slate-400">No faculty mocks match these filters.</td></tr>}
             </tbody>
           </table>
         </div>

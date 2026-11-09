@@ -12,7 +12,7 @@ type FacultyMockTest = {
   id: string; faculty_id: string; faculty_name: string; course_level: CALevel; attempt: string;
   model_group?: string | null; subject_key: string; subject_name: string; paper: string;
   mock_number: number; title: string; maximum_marks: number; syllabus_version: string;
-  question_paper_file_name: string;
+  question_paper_file_name: string; access_type?: 'FREE' | 'PAID'; unlock_price_inr?: number;
 };
 
 interface FacultyMockRazorpayResponse {
@@ -40,6 +40,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   const [fileBase64, setFileBase64] = useState('');
   const [loadingFile, setLoadingFile] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [unlockingMock, setUnlockingMock] = useState(false);
   const [checkingDisclaimer, setCheckingDisclaimer] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
   const [error, setError] = useState('');
@@ -121,7 +122,90 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     }
   };
 
-  const downloadQuestionPaper = async () => {
+  const startMockCopyPayment = async (
+    onPaymentVerified: (orderId: string) => Promise<void>,
+    purpose: 'DOWNLOAD' | 'EVALUATION',
+  ) => {
+    if (!selectedTest || !user) return;
+    setUnlockingMock(true);
+    let checkoutOpened = false;
+    try {
+      const response = await apiRequest<{
+        success: boolean;
+        isConfigured: boolean;
+        keyId: string;
+        order: {
+          orderId: string;
+          razorpayOrderId: string;
+          amountPaise: number;
+          amountINR: number;
+          currency: string;
+          keyId: string;
+          description: string;
+        };
+      }>('/api/payments/create-order', {
+        method: 'POST',
+        body: JSON.stringify({ purchaseType: 'FACULTY_MOCK_COPY', facultyMockTestId: selectedTest.id }),
+      });
+
+      if (!response.isConfigured) {
+        throw new Error('Razorpay is not configured for live payments. Please contact the administrator.');
+      }
+      if (!window.Razorpay) {
+        const loaded = await loadRazorpayScript();
+        if (!loaded || !window.Razorpay) {
+          throw new Error('Razorpay checkout could not be loaded. Check your internet connection and retry.');
+        }
+      }
+
+      const order = response.order;
+      const checkout = new window.Razorpay({
+        key: order.keyId,
+        amount: order.amountPaise,
+        currency: order.currency,
+        name: 'EXAM CHECKER AI',
+        description: order.description || (purpose === 'DOWNLOAD' ? 'Faculty Mock Paper Unlock' : 'Faculty Mock Evaluation Copy'),
+        order_id: order.razorpayOrderId,
+        prefill: {
+          name: user.fullName || '',
+          email: user.email || '',
+          contact: (profile as any)?.phone || '',
+        },
+        theme: { color: '#2563eb' },
+        modal: {
+          ondismiss: () => setUnlockingMock(false),
+        },
+        handler: async (payment: FacultyMockRazorpayResponse) => {
+          try {
+            await apiRequest('/api/payments/verify', {
+              method: 'POST',
+              body: JSON.stringify({
+                razorpayOrderId: payment.razorpay_order_id,
+                razorpayPaymentId: payment.razorpay_payment_id,
+                razorpaySignature: payment.razorpay_signature,
+              }),
+            });
+            setSuccess(purpose === 'DOWNLOAD'
+              ? 'Payment verified. Your paper is now unlocked.'
+              : 'Payment verified. Starting your evaluation…');
+            await onPaymentVerified(order.orderId);
+          } catch (paymentError) {
+            setError(paymentError instanceof Error ? paymentError.message : 'Payment verification or Faculty Mock unlock failed.');
+          } finally {
+            setUnlockingMock(false);
+          }
+        },
+      });
+      checkout.open();
+      checkoutOpened = true;
+    } catch (paymentError) {
+      setError(paymentError instanceof Error ? paymentError.message : 'Could not start Faculty Mock payment.');
+    } finally {
+      if (!checkoutOpened) setUnlockingMock(false);
+    }
+  };
+
+  const downloadQuestionPaper = async (afterPayment = false) => {
     if (!selectedTest) return;
     setError('');
     try {
@@ -129,7 +213,13 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         `/api/student/faculty-mocks/tests/${selectedTest.id}/question-paper`,
         { filename: selectedTest.question_paper_file_name || `${selectedTest.faculty_name}_Mock_${selectedTest.mock_number}_Question_Paper.pdf` }
       );
+      if (afterPayment) setSuccess('Question Paper downloaded. Upload your answer sheet when ready.');
     } catch (err) {
+      const apiError = err as Error & { code?: string };
+      if (!afterPayment && selectedTest.access_type === 'PAID' && apiError?.code === 'FACULTY_MOCK_PAYMENT_REQUIRED') {
+        await startMockCopyPayment(() => downloadQuestionPaper(true), 'DOWNLOAD');
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Question Paper download failed.');
     }
   };
@@ -174,8 +264,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       navigate(`/student/evaluations/${encodeURIComponent(reportId)}`);
     } catch (err) {
       const apiError = err as Error & { code?: string; data?: any };
-      if (!facultyMockPaymentOrderId && apiError?.code === 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED') {
-        setError('First copy already used. Complete the one-copy payment to evaluate this mock again.');
+      if (!facultyMockPaymentOrderId && ['FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED', 'FACULTY_MOCK_PAYMENT_REQUIRED'].includes(String(apiError?.code || ''))) {
+        setError(selectedTest.access_type === 'PAID'
+          ? `This is a paid faculty mock. Pay ₹${selectedTest.unlock_price_inr || 35} to unlock this evaluation.`
+          : `Your free copy has already been used. Pay ₹${selectedTest.unlock_price_inr || 35} to evaluate this mock again.`);
         await startRepeatCopyPayment();
       } else {
         setError(err instanceof Error ? err.message : 'Faculty mock submission failed.');
@@ -186,78 +278,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   };
 
   const startRepeatCopyPayment = async () => {
-    if (!selectedTest || !user) return;
-    try {
-      const response = await apiRequest<{
-        success: boolean;
-        isConfigured: boolean;
-        keyId: string;
-        order: {
-          orderId: string;
-          razorpayOrderId: string;
-          amountPaise: number;
-          amountINR: number;
-          currency: string;
-          keyId: string;
-          description: string;
-        };
-      }>('/api/payments/create-order', {
-        method: 'POST',
-        body: JSON.stringify({ purchaseType: 'FACULTY_MOCK_COPY', facultyMockTestId: selectedTest.id }),
-      });
-
-      if (!response.isConfigured) {
-        setError('Razorpay is not configured for live payments. Please contact the administrator.');
-        return;
-      }
-      if (!window.Razorpay) {
-        const loaded = await loadRazorpayScript();
-        if (!loaded || !window.Razorpay) {
-          setError('Razorpay checkout could not be loaded. Check your internet connection and retry.');
-          return;
-        }
-      }
-
-      const order = response.order;
-      const checkout = new window.Razorpay({
-        key: order.keyId,
-        amount: order.amountPaise,
-        currency: order.currency,
-        name: 'CA Exam Checker AI',
-        description: order.description || 'Faculty Mock Repeat Copy',
-        order_id: order.razorpayOrderId,
-        prefill: {
-          name: user.fullName || '',
-          email: user.email || '',
-          contact: (profile as any)?.phone || '',
-        },
-        theme: { color: '#2563eb' },
-        modal: {
-          ondismiss: () => setSubmitting(false),
-        },
-        handler: async (payment: FacultyMockRazorpayResponse) => {
-          try {
-            await apiRequest('/api/payments/verify', {
-              method: 'POST',
-              body: JSON.stringify({
-                razorpayOrderId: payment.razorpay_order_id,
-                razorpayPaymentId: payment.razorpay_payment_id,
-                razorpaySignature: payment.razorpay_signature,
-              }),
-            });
-            setSuccess('Payment verified. Starting your repeat-copy evaluation…');
-            await submitAnswerSheet(order.orderId);
-          } catch (paymentError) {
-            setError(paymentError instanceof Error ? paymentError.message : 'Payment verification or evaluation submission failed.');
-            setSubmitting(false);
-          }
-        },
-      });
-      checkout.open();
-    } catch (paymentError) {
-      setError(paymentError instanceof Error ? paymentError.message : 'Could not start Faculty Mock repeat-copy payment.');
-      setSubmitting(false);
-    }
+    await startMockCopyPayment(
+      (orderId) => submitAnswerSheet(orderId),
+      'EVALUATION',
+    );
   };
 
   const handleSubmitClick = async () => {
@@ -328,7 +352,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mock Number
                 <select value={testId} onChange={(e) => setTestId(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800">
-                  {subjectTests.map((item) => <option key={item.id} value={item.id}>Mock {String(item.mock_number).padStart(2, '0')} — {item.title}</option>)}
+                  {subjectTests.map((item) => <option key={item.id} value={item.id}>Mock {String(item.mock_number).padStart(2, '0')} — {item.title} ({String(item.access_type || 'FREE').toUpperCase() === 'PAID' ? `Unlock ₹${item.unlock_price_inr || 35}` : 'Free first copy'})</option>)}
                 </select>
               </label>
             </div>
@@ -342,9 +366,14 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                     <h3 className="mt-1 text-base font-black text-slate-900">{selectedTest.title}</h3>
                     <p className="mt-1 text-xs text-slate-600">{selectedTest.subject_name} · {selectedTest.paper} · {selectedTest.maximum_marks} marks</p>
                   </div>
-                  <span className="rounded-lg bg-indigo-600 px-3 py-2 font-mono text-sm font-black text-white">MOCK {String(selectedTest.mock_number).padStart(2, '0')}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-lg bg-indigo-600 px-3 py-2 font-mono text-sm font-black text-white">MOCK {String(selectedTest.mock_number).padStart(2, '0')}</span>
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-black ${String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                      {String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? `UNLOCK ₹${selectedTest.unlock_price_inr || 35}` : 'FREE'}
+                    </span>
+                  </div>
                 </div>
-                <button type="button" onClick={() => void downloadQuestionPaper()} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50"><Download className="h-4 w-4" />Download Question Paper</button>
+                <button type="button" disabled={unlockingMock} onClick={() => void downloadQuestionPaper()} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"><Download className="h-4 w-4" />{unlockingMock ? 'Unlocking…' : selectedTest.access_type === 'PAID' ? `Unlock ₹${selectedTest.unlock_price_inr || 35} & Download Paper` : 'Download Question Paper'}</button>
               </div>
             )}
           </section>
@@ -361,10 +390,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
               </label>
               {loadingFile && <p className="mt-2 text-xs text-blue-600">Reading your answer sheet…</p>}
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />One free copy per student for this exact faculty mock. Further copies cost ₹35 each and do not use your general evaluation credits.</div>
+                <div className="flex items-center gap-2 text-[10px] text-slate-500"><ShieldCheck className="h-4 w-4 text-emerald-600" />{String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? `This mock requires ₹${selectedTest.unlock_price_inr || 35} per evaluation. Payment unlocks one copy and does not use general evaluation credits.` : `First copy is free for each student. Further copies cost ₹${selectedTest.unlock_price_inr || 35} each and do not use general evaluation credits.`}</div>
                 <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer} onClick={() => void handleSubmitClick()} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-black text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                   {submitting || checkingDisclaimer ? <RefreshCw className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                  {submitting ? 'Submitting…' : checkingDisclaimer ? 'Checking…' : 'Submit for AI Evaluation'}
+                  {submitting ? 'Submitting…' : checkingDisclaimer ? 'Checking…' : selectedTest.access_type === 'PAID' ? `Unlock ₹${selectedTest.unlock_price_inr || 35} & Submit` : 'Submit for AI Evaluation'}
                 </button>
               </div>
             </section>
