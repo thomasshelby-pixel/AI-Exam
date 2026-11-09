@@ -259,6 +259,16 @@ export function extractLockedQuestionSlice(
 
   // Define candidate search patterns for this question
   const startRegexes: RegExp[] = [];
+  const canonicalSuffixPattern = subQ && subQ.toUpperCase() !== 'MCQ'
+    ? subQuestionSuffixPattern(subQ)
+    : '';
+  if (canonicalSuffixPattern) {
+    startRegexes.push(new RegExp(
+      '^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*(?:NO\\.?)?\\s*)?' +
+      qNum + '\\s*\\.?\\s*' + canonicalSuffixPattern + '(?=\\s|[-–—:.)]|$)',
+      'i',
+    ));
+  }
 
   if (docType === 'MS') {
     // Marking scheme has explicit headings: "QUESTION 5(a) – 10 MARKS" or "QUESTION 1 – 15 MARKS"
@@ -312,14 +322,14 @@ export function extractLockedQuestionSlice(
     } else {
       // Section A questions (Q1 to Q4)
       if (qNum === '1') {
-        // Generic Division B Q1 heading for non-Taxation papers (e.g. "1. (a) ...").
-        startRegexes.push(/^\s*1\s*[.)]\s+(?=\S)/i);
-        startRegexes.push(/(?:Division\s*B[^\n]*\n)?.*1\.\s+Computation\s+of\s+Total\s+Income\s+of\s+Ms\.\s*Sana/i);
-        startRegexes.push(/(?:Question\s*(?:No\.?)?\s*1|Q\.?\s*1|Answer\s*1)\b/i);
-        startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
+        if (!subQ) {
+          // Parent Q1 is a container only when the caller requested Q1 itself.
+          startRegexes.push(/^\s*1\s*[.)]\s+(?=\S)/i);
+          startRegexes.push(/(?:Division\s*B[^\n]*\n)?.*1\.\s+Computation\s+of\s+Total\s+Income\s+of\s+Ms\.\s*Sana/i);
+          startRegexes.push(/(?:Question\s*(?:No\.?)?\s*1|Q\.?\s*1|Answer\s*1)\b/i);
+          startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
+        }
       } else if (subQ) {
-        startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Answer\\s*${qNum}|Ans\\.?\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
-      } else {
         // Division B descriptive answers can restart numbering (e.g. "2. Delta Limited").
         // Division B is scoped above, so this matcher cannot borrow Division A MCQ keys.
         startRegexes.push(new RegExp(String.raw`^\s*${qNum}\s*[.)]\s+(?=\S)`, 'i'));
@@ -344,7 +354,7 @@ export function extractLockedQuestionSlice(
       }
     } else {
       if (subQ) {
-        startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*\\(\\s*${subQ}\\s*\\)`, 'i'));
+        startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*${canonicalSuffixPattern}`, 'i'));
       } else {
         // Match standalone numeric QP headings at line start. A word boundary
         // after a literal period never matches (both '.' and the following
