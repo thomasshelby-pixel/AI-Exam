@@ -120,7 +120,7 @@ type DurableEvaluationQueueRecord = {
 };
 
 function isProductionEvaluationQueue(): boolean {
-  return process.env.NODE_ENV === 'production';
+  return process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE || process.env.K_REVISION);
 }
 
 function isDurableQueueTerminal(status: unknown): boolean {
