@@ -1199,6 +1199,8 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
 - If an MCQ response is visibly attempted but its chosen option is unreadable, overwritten, ambiguous or
   conflicting, add its exact source label to mcqNeedsReview. Do NOT leave it out as blank, infer an option,
   or put it in mcqSelections. Preserve other clearly read MCQ choices normally.
+- A visible MCQ attempt must never be downgraded to a blank/unattempted or wrong answer
+  solely because its selected option could not be read.
 - Represent a readable MCQ attempt only in mcqSelections, and an unreadable/ambiguous MCQ attempt
   only in mcqNeedsReview. Do not duplicate the same MCQ as a descriptive detectedQuestions entry.
 - Read common MCQ response formats: a circled/ticked A-D, a handwritten option beside the number,
