@@ -431,6 +431,8 @@ router.get('/faculty-mocks/catalogue', async (req: AuthRequest, res: Response) =
         title: t.title,
         maximum_marks: Number(t.maximum_marks || 100),
         syllabus_version: t.syllabus_version,
+        access_type: String(t.access_type || 'FREE').toUpperCase() === 'PAID' ? 'PAID' : 'FREE',
+        unlock_price_inr: CUSTOM_PRICE_PER_EVALUATION_INR,
         question_paper_file_name: t.question_paper_file_name || 'Question Paper.pdf',
         created_at: t.created_at,
       }))
