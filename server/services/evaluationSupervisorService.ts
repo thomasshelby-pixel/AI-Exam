@@ -119,7 +119,10 @@ function auditEvaluation(
   const issues: string[] = [
     ...(result.validationErrors || []),
     ...gate.errors,
-    ...gate.warnings,
+    // A duplicate-deduction warning is actionable and can be repaired with a
+    // targeted second read. Informational/diagnostic warnings are not blockers
+    // by themselves; the deterministic gate's actual errors remain hard gates.
+    ...gate.warnings.filter((warning) => /POTENTIAL_DOUBLE_DEDUCTION/.test(warning)),
   ];
   const warnings: string[] = [...gate.warnings];
 
