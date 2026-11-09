@@ -164,10 +164,8 @@ const ROMAN_QUESTION_PART_TOKENS = new Set([
  * Detect an actual repeated alphabetic sub-part echo such as Q3(b(b)).
  *
  * Nested parentheses alone are valid CA numbering: Q2(a(i)), Q4(a(ii)),
- * Q6(5(i)) and Q6(5(ii)) are legitimate independent leaves. The old integrity
- * gate treated every pair of nested parentheses as malformed, which rejected
- * those valid structures. This helper inspects the raw path before the normal
- * canonical parser collapses repeated alphabetic OCR echoes.
+ * Q6(5(i)) and Q6(5(ii)) are legitimate independent leaves. This checks the
+ * raw path before the canonical parser collapses repeated alphabetic OCR echoes.
  */
 export function hasInvalidRecursiveQuestionNesting(
   questionNumberInput?: string | number | null,
@@ -176,10 +174,10 @@ export function hasInvalidRecursiveQuestionNesting(
   let rawQuestion = String(questionNumberInput || '').trim();
   if (!rawQuestion) return false;
 
-  const alternativePattern = /(?:[\\(\\[\\{]\\s*(?:OR|ALT|ALTERNATIVE|OPTION\\s*[0-9]+|CHOICE\\s*[0-9]+)\\s*[\\)\\]\\}]|\\b(?:OR|ALT|ALTERNATIVE|OPTION\\s*[0-9]+|CHOICE\\s*[0-9]+)\\b)/gi;
+  const alternativePattern = /(?:[\(\[\{]\s*(?:OR|ALT|ALTERNATIVE|OPTION\s*[0-9]+|CHOICE\s*[0-9]+)\s*[\)\]\}]|\b(?:OR|ALT|ALTERNATIVE|OPTION\s*[0-9]+|CHOICE\s*[0-9]+)\b)/gi;
   rawQuestion = rawQuestion.replace(alternativePattern, ' ').trim();
 
-  const questionMatch = rawQuestion.match(/^(?:Question\\s*|Q\\.?\\s*|Ans\\.?\\s*|Answer\\s*)?(\\d+)\\s*(.*)$/i);
+  const questionMatch = rawQuestion.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(.*)$/i);
   if (!questionMatch) return false;
 
   let parts = parseQuestionPartPath(questionMatch[2] || '');
