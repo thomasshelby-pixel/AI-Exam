@@ -65,9 +65,10 @@ export function buildFacultyMockEvaluationReference(sections: FacultyMockReferen
 }
 
 /**
- * Parse the one private Faculty Mock TXT into the three reference components
- * consumed by the existing CA evaluation pipeline. No AI or PDF extraction is used.
- *
+ * Parse the canonical private Faculty Mock reference package into the three
+ * components consumed by the existing CA evaluation pipeline. New admin uploads
+ * are serialized in-memory from separate TXT files; legacy combined TXT files remain supported.
+ * No AI or PDF extraction is used.
  * Required TXT format (headings may use Markdown, square brackets, or === fences):
  * [QUESTION PAPER]
  * ...
