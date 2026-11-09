@@ -47,6 +47,11 @@ assert.equal(
   'The same review result cannot claim a second free retry.',
 );
 assert.equal(
+  isEligibleFacultyMockReviewRetry({ ...eligibleRetrySource, retry_of_evaluation_id: 'eval_review_original' }, 'student_review_retry', 'faculty_mock_retry_test'),
+  false,
+  'A NEEDS_REVIEW result that is already a retry cannot start another free retry chain.',
+);
+assert.equal(
   isEligibleFacultyMockReviewRetry({ ...eligibleRetrySource, answer_sheet_sha256: null }, 'student_review_retry', 'faculty_mock_retry_test'),
   false,
   'No free retry is allowed when the original answer-sheet fingerprint is missing.',
