@@ -10,6 +10,14 @@ const cursiveRejectedByOldVerifier = normalizeAiAnswerSheetDocumentValidation({
 assert.equal(cursiveRejectedByOldVerifier.isValidAnswerSheet, true);
 assert.equal(cursiveRejectedByOldVerifier.isHandwritten, true);
 
+const cursiveInDocumentTypeOnly = normalizeAiAnswerSheetDocumentValidation({
+  isValidAnswerSheet: false,
+  documentTypeDetected: 'Illegal Cursive Writing',
+  isHandwritten: false,
+  rejectionReason: 'The writing style could not be classified.',
+});
+assert.equal(cursiveInDocumentTypeOnly.isValidAnswerSheet, true, 'A cursive-only classification is not an invalid document type.');
+
 const joinedUpWriting = normalizeAiAnswerSheetDocumentValidation({
   isValidAnswerSheet: false,
   documentTypeDetected: 'Handwritten CA Answer Sheet',
