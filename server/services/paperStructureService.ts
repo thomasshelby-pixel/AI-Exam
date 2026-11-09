@@ -479,8 +479,13 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     let suffix = '';
     if (label) {
       if (/^[([]/.test(label)) suffix = label;
+      else if (/^\\.?[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)+$/.test(label)) {
+        // Dotted labels are a hierarchy, not one literal token. Serialize each
+        // level separately before canonical parsing: .1.1 -> (1)(1).
+        suffix = label.replace(/^\\./, '').split('.').map((part) => '(' + part + ')').join('');
+      }
       else if (/^[a-zA-Z0-9]+[.)]$/.test(label)) suffix = '(' + label.slice(0, -1) + ')';
-      else if (/^(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARA)\s+/i.test(label)) suffix = label;
+      else if (/^(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARA)\\s+/i.test(label)) suffix = label;
       else suffix = '(' + label + ')';
     }
     const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
