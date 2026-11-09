@@ -675,7 +675,19 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
       throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: Selected Faculty Mock ID does not match the saved evaluation.');
     }
 
-    const mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
+    let mock: any = null;
+    try {
+      mock = await getFirestoreDoc<any>('faculty_mock_tests', mockId, { failOnError: true });
+    } catch (sourceLookupError) {
+      if (isProductionEvaluationQueue()) {
+        throw new Error('FACULTY_MOCK_SOURCE_LOOKUP_FAILED: The worker could not verify the selected mock against the shared database. It will not use an instance-local stale copy.');
+      }
+      console.warn('[AsyncEval] Shared Faculty Mock source lookup unavailable in local development; using the local fixture cache:', sourceLookupError);
+    }
+    if (!mock && !isProductionEvaluationQueue()) {
+      mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
+    }
+
     if (!mock ||
         !same(mock.course_level, job.level) ||
         !same(mock.subject_key, job.subjectKey) ||
@@ -684,8 +696,12 @@ function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
         !same(mock.attempt, job.attempt) ||
         !sameText(mock.question_paper_text, job.referenceQuestionPaperText) ||
         !sameText(mock.suggested_answers_text, job.referenceSuggestedAnswersText) ||
-        !sameText(mock.marking_scheme_text, job.markingSchemeText)) {
-      throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: The selected Faculty Mock QP or private TXT reference changed or belongs to another mock.');
+        !sameText(mock.marking_scheme_text, job.markingSchemeText) ||
+        !same(String(mock.question_paper_reference_file_id || mock.suggested_answer_file_id || ''), String(job.questionMaterialId || '')) ||
+        !same(String(mock.suggested_answer_file_id || ''), String(job.suggestedAnswerMaterialId || '')) ||
+        !same(String(mock.marking_scheme_file_id || mock.suggested_answer_file_id || ''), String(job.markingSchemeMaterialId || '')) ||
+        Number(mock.maximum_marks || 100) !== Number(job.officialPaperMaxMarks || 100)) {
+      throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: The selected Faculty Mock QP, private TXT content, source file IDs or maximum marks changed or belong to another mock.');
     }
   }
 }
