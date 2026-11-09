@@ -519,6 +519,30 @@ assert.match(
   optionalFacultyMock.questions.find((question) => question.questionNumber === '2')?.choiceRule || '',
   /Attempt any 1 of Q2, Q3, Q4/,
 );
+assert.equal(optionalFacultyMock.questions.find((question) => question.questionNumber === '1')?.compulsory, true);
+for (const questionNumber of ['2', '3', '4']) {
+  assert.equal(
+    optionalFacultyMock.questions.find((question) => question.questionNumber === questionNumber)?.compulsory,
+    false,
+    'The parent question must be optional when the selected QP allows choosing among it.',
+  );
+  assert.ok(
+    optionalFacultyMock.subQuestions
+      .filter((subQuestion) => subQuestion.questionNumber === questionNumber)
+      .every((subQuestion) => subQuestion.compulsory === false),
+    'Every leaf sub-part under an optional parent must also be marked optional.',
+  );
+}
+const optionalInventory = buildCanonicalQuestionInventory({
+  paperStructure: optionalFacultyMock,
+  totalPaperMaxMarks: 40,
+});
+assert.ok(
+  optionalInventory.items
+    .filter((item) => item.parentQuestionId === 'Q2' || item.parentQuestionId === 'Q3' || item.parentQuestionId === 'Q4')
+    .every((item) => item.isRequiredOrOptional === 'OPTIONAL'),
+  'Canonical leaf inventory must preserve optional selection metadata from the official source.',
+);
 const optionalOverAttemptGate = validatePreEvaluationGate({
   paperStructure: optionalFacultyMock,
   questionPaperText: 'Question Paper',
