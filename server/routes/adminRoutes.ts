@@ -1134,6 +1134,117 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
   }
 });
 
+router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) => {
+  const uploadedFileIds: string[] = [];
+  let sharedRecordSaved = false;
+  try {
+    const testId = String(req.params.id || '').trim();
+    if (!testId) return res.status(400).json({ error: 'Faculty mock test ID is required.' });
+    let existing: any = null;
+    try { existing = await getFirestoreDoc<any>('faculty_mock_tests', testId, { failOnError: true }); }
+    catch (readError) { console.warn('[FacultyMocks] Shared mock lookup unavailable during edit; using local cache:', readError); }
+    existing ||= db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
+    if (!existing) return res.status(404).json({ error: 'Faculty mock test not found.' });
+    const inFlight = db.prepare(`SELECT id FROM evaluations WHERE faculty_mock_test_id = ? AND UPPER(COALESCE(status, '')) IN ('PROCESSING', 'QUEUED', 'PENDING') LIMIT 1`).get(testId) as any;
+    if (inFlight) return res.status(409).json({ error: 'This mock has an evaluation in progress. Wait for it to finish before editing the mock.', code: 'FACULTY_MOCK_EVALUATION_IN_PROGRESS' });
+    const body = req.body || {};
+    const title = String(body.title ?? existing.title ?? '').trim().slice(0, 160) || `${String(existing.faculty_name || 'Faculty')} — ${String(existing.subject_name || 'Subject')} Mock ${String(existing.mock_number || '').padStart(2, '0')}`;
+    const maximumMarks = Number(body.maximumMarks ?? existing.maximum_marks ?? 100);
+    const accessType = String(body.accessType ?? existing.access_type ?? 'FREE').trim().toUpperCase();
+    if (!Number.isFinite(maximumMarks) || maximumMarks <= 0 || maximumMarks > 500) return res.status(400).json({ error: 'Maximum marks must be a number between 1 and 500.' });
+    if (!['FREE', 'PAID'].includes(accessType)) return res.status(400).json({ error: 'Student access must be Free or Unlock by Paying.' });
+    const previousAccessType = String(existing.access_type || 'FREE').trim().toUpperCase() === 'PAID' ? 'PAID' : 'FREE';
+    if (accessType !== previousAccessType) {
+      const activity = db.prepare(`SELECT
+        EXISTS(SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ?) AS has_evaluations,
+        EXISTS(SELECT 1 FROM faculty_mock_free_uses WHERE faculty_mock_test_id = ?) AS has_free_claims,
+        EXISTS(SELECT 1 FROM faculty_mock_copy_purchases WHERE faculty_mock_test_id = ?) AS has_paid_copies,
+        EXISTS(SELECT 1 FROM payment_orders WHERE faculty_mock_test_id = ?) AS has_payment_orders`).get(testId, testId, testId, testId) as any;
+      if (activity?.has_evaluations || activity?.has_free_claims || activity?.has_paid_copies || activity?.has_payment_orders) {
+        return res.status(409).json({ error: 'Free/Paid access cannot be changed after a student evaluation, free-copy claim or payment order exists. This protects previously issued student entitlements.', code: 'FACULTY_MOCK_ACCESS_TYPE_LOCKED' });
+      }
+      let freeLedgers: any[] = [];
+      let paidLedgers: any[] = [];
+      try { [freeLedgers, paidLedgers] = await Promise.all([getAllFirestoreDocs<any>('faculty_mock_free_uses', { failOnError: true }), getAllFirestoreDocs<any>('faculty_mock_paid_copy_ledgers', { failOnError: true })]); }
+      catch (ledgerError) { console.error('[FacultyMocks] Could not verify shared entitlements:', ledgerError); return res.status(503).json({ error: 'Student entitlement history could not be verified. Retry after the shared database is available.', code: 'FACULTY_MOCK_ENTITLEMENT_LOOKUP_UNAVAILABLE' }); }
+      const hasFree = freeLedgers.some((x: any) => String(x.facultyMockTestId || x.faculty_mock_test_id || '') === testId);
+      const hasPaid = paidLedgers.some((x: any) => String(x.facultyMockTestId || x.faculty_mock_test_id || '') === testId && Object.values(x.copies || {}).some((c: any) => ['AVAILABLE', 'CONSUMED', 'PENDING'].includes(String(c?.status || '').toUpperCase())));
+      if (hasFree || hasPaid) return res.status(409).json({ error: 'Free/Paid access cannot be changed after a student entitlement has been issued. Create a separate mock for a different access model.', code: 'FACULTY_MOCK_ACCESS_TYPE_LOCKED' });
+    }
+    let pdf: { buffer: Buffer; mime: string; filename: string } | null = null;
+    const pdfInput = body.questionPaperFile;
+    if (pdfInput !== undefined && pdfInput !== null) {
+      if (typeof pdfInput.base64 !== 'string' || !pdfInput.base64.trim()) return res.status(400).json({ error: 'The replacement Question Paper PDF is invalid.' });
+      const raw = pdfInput.base64.includes(',') ? pdfInput.base64.split(',')[1] : pdfInput.base64;
+      if (raw.length > Math.ceil((20 * 1024 * 1024) * 4 / 3) + 16) return res.status(413).json({ error: 'Question Paper PDF must be 20 MB or smaller.' });
+      const buffer = Buffer.from(raw, 'base64');
+      const filename = String(pdfInput.name || 'Question_Paper.pdf').slice(0, 180);
+      const mime = String(pdfInput.type || 'application/pdf').toLowerCase();
+      if (!buffer.length || buffer.length > 20 * 1024 * 1024 || mime !== 'application/pdf' || !filename.toLowerCase().endsWith('.pdf') || buffer.subarray(0, 4).toString() !== '%PDF') return res.status(400).json({ error: 'Replacement Question Paper must be a valid original PDF between 1 byte and 20 MB.' });
+      pdf = { buffer, mime, filename };
+    }
+    const readOptionalText = (file: any, label: string) => {
+      if (file === undefined || file === null) return null;
+      if (typeof file.base64 !== 'string' || !file.base64.trim()) throw new Error(`${label} replacement TXT is invalid.`);
+      const raw = file.base64.includes(',') ? file.base64.split(',')[1] : file.base64;
+      if (raw.length > Math.ceil((4 * 1024 * 1024) * 4 / 3) + 16) throw new Error(`${label} TXT must be 4 MB or smaller.`);
+      const buffer = Buffer.from(raw, 'base64');
+      const filename = String(file.name || `${label.replace(/\s+/g, '_')}.txt`).slice(0, 180);
+      const mime = String(file.type || 'text/plain').toLowerCase();
+      if (!buffer.length || buffer.length > 4 * 1024 * 1024 || !filename.toLowerCase().endsWith('.txt') || !['text/plain', 'application/octet-stream'].includes(mime) || buffer.includes(0)) throw new Error(`${label} must be a valid UTF-8 plain .txt file within 4 MB.`);
+      return { buffer, filename, mime: 'text/plain', text: buffer.toString('utf8').replace(/^\uFEFF/, '').trim() };
+    };
+    let qpText: ReturnType<typeof readOptionalText>;
+    let answersText: ReturnType<typeof readOptionalText>;
+    let markingText: ReturnType<typeof readOptionalText>;
+    try { qpText = readOptionalText(body.questionPaperReferenceFile, 'Question Paper Text'); answersText = readOptionalText(body.suggestedAnswersFile, 'Suggested Answers'); markingText = readOptionalText(body.markingSchemeFile, 'Marking Scheme'); }
+    catch (fileError) { return res.status(400).json({ error: fileError instanceof Error ? fileError.message : 'A replacement TXT file is invalid.', code: 'FACULTY_MOCK_REPLACEMENT_FILE_INVALID' }); }
+    let parsedReference;
+    try { parsedReference = validateFacultyMockReferenceSections({ questionPaperText: qpText?.text ?? String(existing.question_paper_text || ''), suggestedAnswersText: answersText?.text ?? String(existing.suggested_answers_text || ''), markingSchemeText: markingText?.text ?? String(existing.marking_scheme_text || '') }); }
+    catch (referenceError) { return res.status(422).json({ error: referenceError instanceof Error ? referenceError.message : 'The mock reference TXT package is invalid.', code: 'FACULTY_MOCK_REFERENCE_TXT_INVALID' }); }
+    const saveReplacement = async (file: { buffer: Buffer; mime: string; filename: string }, suffix: string, category: string) => {
+      const fileId = `${testId}_edit_${suffix}_${crypto.randomBytes(6).toString('hex')}`;
+      const saved = await savePersistentFile(fileId, file.filename, file.mime, file.buffer, category, { ownerUserId: req.user!.id, materialId: testId });
+      if (!saved || !saved.storagePath || saved.status !== 'ACTIVE') throw new Error('A replacement source file could not be durably stored. The existing mock has not been changed.');
+      uploadedFileIds.push(fileId);
+      return saved;
+    };
+    const updated = { ...existing, title, maximum_marks: maximumMarks, access_type: accessType, question_paper_text: parsedReference.questionPaperText, suggested_answers_text: parsedReference.suggestedAnswersText, marking_scheme_text: parsedReference.markingSchemeText, updated_at: new Date().toISOString() };
+    if (pdf) { const saved = await saveReplacement(pdf, 'question_paper', 'MATERIAL_QUESTION_PAPER'); updated.question_paper_file_id = saved.fileId; updated.question_paper_file_name = saved.originalFilename || pdf.filename; updated.question_paper_file_size = saved.size; }
+    if (qpText) { const saved = await saveReplacement(qpText, 'question_paper_reference_text', 'MATERIAL_MODEL_ANSWER'); updated.question_paper_reference_file_id = saved.fileId; updated.question_paper_reference_file_name = saved.originalFilename || qpText.filename; updated.question_paper_reference_file_size = saved.size; }
+    if (answersText) { const saved = await saveReplacement(answersText, 'suggested_answers', 'MATERIAL_MODEL_ANSWER'); updated.suggested_answer_file_id = saved.fileId; updated.suggested_answer_file_name = saved.originalFilename || answersText.filename; updated.suggested_answer_file_size = saved.size; }
+    if (markingText) { const saved = await saveReplacement(markingText, 'marking_scheme', 'MATERIAL_MODEL_ANSWER'); updated.marking_scheme_file_id = saved.fileId; updated.marking_scheme_file_name = saved.originalFilename || markingText.filename; updated.marking_scheme_file_size = saved.size; }
+    if (!await setFirestoreDoc('faculty_mock_tests', testId, updated)) throw new Error('Mock changes could not be saved to the shared database. The previous mock remains active.');
+    sharedRecordSaved = true;
+    db.prepare(`INSERT INTO faculty_mock_tests (
+      id, faculty_id, course_level, attempt, model_group, subject_key, subject_name, paper, mock_number, title,
+      maximum_marks, syllabus_version, question_paper_text, suggested_answers_text, marking_scheme_text,
+      question_paper_file_id, question_paper_file_name, question_paper_file_size,
+      question_paper_reference_file_id, question_paper_reference_file_name, question_paper_reference_file_size,
+      suggested_answer_file_id, suggested_answer_file_name, suggested_answer_file_size,
+      marking_scheme_file_id, marking_scheme_file_name, marking_scheme_file_size, access_type, status, created_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET title=excluded.title, maximum_marks=excluded.maximum_marks, syllabus_version=excluded.syllabus_version,
+      question_paper_text=excluded.question_paper_text, suggested_answers_text=excluded.suggested_answers_text, marking_scheme_text=excluded.marking_scheme_text,
+      question_paper_file_id=excluded.question_paper_file_id, question_paper_file_name=excluded.question_paper_file_name, question_paper_file_size=excluded.question_paper_file_size,
+      question_paper_reference_file_id=excluded.question_paper_reference_file_id, question_paper_reference_file_name=excluded.question_paper_reference_file_name, question_paper_reference_file_size=excluded.question_paper_reference_file_size,
+      suggested_answer_file_id=excluded.suggested_answer_file_id, suggested_answer_file_name=excluded.suggested_answer_file_name, suggested_answer_file_size=excluded.suggested_answer_file_size,
+      marking_scheme_file_id=excluded.marking_scheme_file_id, marking_scheme_file_name=excluded.marking_scheme_file_name, marking_scheme_file_size=excluded.marking_scheme_file_size, access_type=excluded.access_type, updated_at=excluded.updated_at
+    `).run(testId, updated.faculty_id, updated.course_level, updated.attempt, updated.model_group || null, updated.subject_key, updated.subject_name, updated.paper, Number(updated.mock_number), title, maximumMarks, updated.syllabus_version || 'New Scheme 2024', parsedReference.questionPaperText, parsedReference.suggestedAnswersText, parsedReference.markingSchemeText, updated.question_paper_file_id, updated.question_paper_file_name || null, updated.question_paper_file_size || null, updated.question_paper_reference_file_id || null, updated.question_paper_reference_file_name || null, updated.question_paper_reference_file_size || null, updated.suggested_answer_file_id, updated.suggested_answer_file_name || null, updated.suggested_answer_file_size || null, updated.marking_scheme_file_id || null, updated.marking_scheme_file_name || null, updated.marking_scheme_file_size || null, accessType, updated.status || 'PUBLISHED', updated.created_by || req.user!.id, updated.created_at || new Date().toISOString(), updated.updated_at);
+    db.prepare(`INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details) VALUES (?, ?, 'FACULTY_MOCK_TEST_UPDATED', 'FACULTY_MOCK_TEST', ?, ?)`).run(`aud_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, testId, `Updated faculty mock "${title}". Replaced ${[pdf && 'Question Paper PDF', qpText && 'Question Paper Text', answersText && 'Suggested Answers', markingText && 'Marking Scheme'].filter(Boolean).join(', ') || 'no source files'}; maximum marks=${maximumMarks}; student access=${accessType}. Past entitlement records were preserved.`);
+    const hasEvaluationHistory = Boolean(db.prepare('SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ? LIMIT 1').get(testId));
+    if (!hasEvaluationHistory) {
+      const oldIds = [pdf ? existing.question_paper_file_id : null, qpText ? existing.question_paper_reference_file_id : null, answersText ? existing.suggested_answer_file_id : null, markingText ? existing.marking_scheme_file_id : null].map((x) => String(x || '').trim()).filter(Boolean);
+      for (const oldId of oldIds) await deletePersistentFile(oldId).catch((deleteError) => console.warn('[FacultyMocks] Could not remove superseded source file:', oldId, deleteError));
+    }
+    return res.json({ success: true, test: { ...updated, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined, question_paper_reference_file_id: undefined, suggested_answer_file_id: undefined, marking_scheme_file_id: undefined }, retainedHistoricalSourceFiles: hasEvaluationHistory });
+  } catch (error) {
+    if (!sharedRecordSaved) for (const fileId of uploadedFileIds) await deletePersistentFile(fileId).catch(() => {});
+    console.error('[FacultyMocks] Edit test error:', error);
+    return res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to update faculty mock test.' });
+  }
+});
+
 router.put('/faculty-mocks/tests/:id/status', async (req: AuthRequest, res: Response) => {
   try {
     const testId = String(req.params.id || '').trim();
