@@ -522,7 +522,7 @@ export function extractLockedQuestionSlice(
       const explicitQuestion = trimmed.match(/^(?:(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(?:NO\.?)?\s*)?(\d{1,3})\s*(.*)$/i);
       let candidatePath: string[] = [];
       if (explicitQuestion && String(Number(explicitQuestion[1])) === String(Number(qNum))) {
-        const tail = explicitQuestion[2].replace(/^[.\-–—:]\s*/, '');
+        const tail = explicitQuestion[2].replace(/^[-–—:]\\s*/, '').replace(/^\\.(?=\\s*[\\(\\[])/, '');
         candidatePath = parseCanonicalQuestionIdentity('Q' + qNum + tail).subQuestionPath || [];
         if (candidatePath.length === 0 && /^(?:QUESTION|Q\.?|ANSWER|ANS\.?)/i.test(trimmed)) {
           isStop = true;
