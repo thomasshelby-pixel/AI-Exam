@@ -262,6 +262,49 @@ export function validatePreEvaluationGate(params: {
           criticalFailures.push(message);
         }
       }
+
+      // A paper may contain optional alternatives whose combined catalogue maximum
+      // exceeds the paper maximum. Score only when the student's detected leaf
+      // attempts themselves fit within the official paper maximum. If they do not,
+      // never guess which optional answer should count; require manual selection.
+      const officialMaximum = Number(
+        params.officialPaperMaxMarks || paperStructure.totalPaperMaxMarks || 100
+      );
+      if (Number.isFinite(officialMaximum) && officialMaximum > 0) {
+        const maximumByCanonicalId = new Map<string, number>();
+        for (const question of subQs) {
+          const canonicalId = toCanonicalQuestionId(
+            question.fullQuestionCode || question.questionNumber,
+            question.subQuestionNumber,
+            subQs,
+          );
+          maximumByCanonicalId.set(canonicalId, Number(question.maximumMarks) || 0);
+        }
+        for (const mcq of mcqs) {
+          const canonicalId = toCanonicalQuestionId(mcq.fullQuestionCode || mcq.questionNumber, 'MCQ');
+          maximumByCanonicalId.set(canonicalId, Number(mcq.maximumMarks) || 0);
+        }
+
+        const uniqueAttemptedIds = new Set<string>();
+        let attemptedMaximum = 0;
+        for (const attempt of coverageMap.attemptedQuestions) {
+          const canonicalId = toCanonicalQuestionId(
+            attempt.fullQuestionCode || attempt.questionNumber,
+            attempt.subQuestionNumber,
+            subQs,
+          );
+          if (uniqueAttemptedIds.has(canonicalId)) continue;
+          uniqueAttemptedIds.add(canonicalId);
+          attemptedMaximum += maximumByCanonicalId.get(canonicalId) || 0;
+        }
+
+        if (attemptedMaximum > officialMaximum + 0.01) {
+          const message = `ATTEMPTED_MAX_MARKS_EXCEED_PAPER_MAX: Detected attempted answers carry up to ${attemptedMaximum} marks, exceeding the official paper maximum of ${officialMaximum}. The system cannot choose which optional answers to discard; manual selection/review is required before scoring.`;
+          sourceConflicts.push(message);
+          failedInvariants.push(message);
+          criticalFailures.push(message);
+        }
+      }
     }
   }
 
