@@ -571,7 +571,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const numberingFamily = (token: string, depth: number): string => {
     const value = String(token || '').toLowerCase();
     if (/^\d+$/.test(value)) return 'numeric';
-    if (romanNumerals.has(value) && (value.length > 1 || depth > 0)) return 'roman';
+    if (romanNumerals.has(value)) return 'roman';
     if (/^[a-z]$/.test(value)) return 'alphabetic';
     if (romanNumerals.has(value)) return 'roman';
     return 'other:' + value;
