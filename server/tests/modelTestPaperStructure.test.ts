@@ -197,8 +197,8 @@ for (const [code, marks] of [
 }
 assert.equal(universalMaxima.has('Q1(a)'), false, 'A parent with separately-marked children must be removed from scorable leaf IDs.');
 assert.equal(
-  toCanonicalQuestionId('Q1(a)(iii)', undefined, universalParts),
-  'Q1(a)(iii)',
+  toCanonicalQuestionId('Q1(a(iii))', undefined, universalParts),
+  'Q1(a(iii))',
   'An unknown nested part must not be fuzzy-mapped to another part with the same leading letter.',
 );
 assert.notEqual(
