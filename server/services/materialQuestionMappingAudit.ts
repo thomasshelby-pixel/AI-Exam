@@ -2,7 +2,7 @@ import {
   extractOfficialMcqKeysFromSuggestedAnswers,
   extractSubQuestionsFromText,
 } from './paperStructureService.js';
-import { toCanonicalQuestionId, parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
+import { toCanonicalQuestionId, parseCanonicalQuestionIdentity, isCanonicalQuestionDescendant } from './canonicalQuestionService.js';
 
 export type MaterialMappingAuditStatus =
   | 'MATCHED'
@@ -52,7 +52,7 @@ function removeParentWhenChildrenExist(values: Iterable<string>): string[] {
   const ids = uniqueSorted(values);
   const parentIds = new Set<string>();
   for (const parent of ids) {
-    if (ids.some((child) => child !== parent && child.toUpperCase().startsWith((parent + '(').toUpperCase()))) {
+    if (ids.some((child) => child !== parent && isCanonicalQuestionDescendant(child, parent))) {
       parentIds.add(parent.toUpperCase());
     }
   }
