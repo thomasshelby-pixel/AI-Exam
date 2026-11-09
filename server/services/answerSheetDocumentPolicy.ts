@@ -54,7 +54,7 @@ export function normalizeAiAnswerSheetDocumentValidation(
   }
 
   const styleOnlyRejection = handwritingStyleRejection.test(reason) ||
-    (handwritingStyleRejection.test(documentType) && answerSheetEvidence.test(combined));
+    handwritingStyleRejection.test(documentType);
 
   const identifiedAnswerSheet = input.isHandwritten === true && answerSheetEvidence.test(combined);
 
