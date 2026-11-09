@@ -91,7 +91,9 @@ export function buildCanonicalQuestionInventory(options: {
       parentQuestionId: 'DIV_A_MCQ',
       subQuestionId: rawNum,
       questionType: 'MCQ',
-      maxMarks: Number(mcq.maximumMarks) || (paperStructure.totalPaperMaxMarks === 30 ? 1 : 2),
+      // Preserve only source-backed MCQ allocations. Missing marks remain zero
+      // so validatePreEvaluationGate blocks scoring instead of guessing 1 or 2.
+      maxMarks: Number(mcq.maximumMarks) > 0 ? Number(mcq.maximumMarks) : 0,
       sourceOrder: sourceOrder++,
       canonicalTextAnchor: mcq.topic || `Multiple Choice Question ${rawNum}`,
       isAlternative: false,
