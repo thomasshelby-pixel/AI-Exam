@@ -723,7 +723,7 @@ export function extractOptionalAttemptSelectionRule(
     .sort((left, right) => Number(left) - Number(right));
   if (!available.length) return null;
 
-  const directPattern = /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+(?:questions?\s*)?((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
+  const directPattern = /\b(?:attempt|answer|choose|select)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+(?:questions?\s*)?((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
   const directMatch = sourceText.match(directPattern);
 
   let allowedCount = 0;
@@ -749,7 +749,7 @@ export function extractOptionalAttemptSelectionRule(
     // from the remaining five." Derive the remaining parent IDs only when
     // the explicit compulsory IDs and the stated remaining count reconcile.
     const remainingMatch = sourceText.match(
-      /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+questions?\s+from\s+(?:the\s+)?remaining\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i,
+      /\b(?:attempt|answer|choose|select)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+questions?\s+from\s+(?:the\s+)?remaining\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i,
     );
     if (!remainingMatch) return null;
 
