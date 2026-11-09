@@ -1222,7 +1222,7 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     let parsedReference;
     try { parsedReference = validateFacultyMockReferenceSections({ questionPaperText: qpText?.text ?? String(existing.question_paper_text || ''), suggestedAnswersText: answersText?.text ?? String(existing.suggested_answers_text || ''), markingSchemeText: markingText?.text ?? String(existing.marking_scheme_text || '') }); }
     catch (referenceError) { return res.status(422).json({ error: referenceError instanceof Error ? referenceError.message : 'The mock reference TXT package is invalid.', code: 'FACULTY_MOCK_REFERENCE_TXT_INVALID' }); }
-    const saveReplacement = async (file: { buffer: Buffer; mime: string; filename: string }, suffix: string, category: string) => {
+    const saveReplacement = async (file: { buffer: Buffer; mime: string; filename: string }, suffix: string, category: 'EVALUATION_ORIGINAL' | 'EVALUATION_CHECKED_COPY' | 'EVALUATION_REPORT' | 'MATERIAL_QUESTION_PAPER' | 'MATERIAL_MODEL_ANSWER' | 'MATERIAL_MARKING_SCHEME' | 'MATERIAL_PRIVATE_INSTITUTE' | 'GENERAL_DOCUMENT') => {
       const fileId = `${testId}_edit_${suffix}_${crypto.randomBytes(6).toString('hex')}`;
       const saved = await savePersistentFile(fileId, file.filename, file.mime, file.buffer, category, { ownerUserId: req.user!.id, materialId: testId });
       if (!saved || !saved.storagePath || saved.status !== 'ACTIVE') throw new Error('A replacement source file could not be durably stored. The existing mock has not been changed.');
