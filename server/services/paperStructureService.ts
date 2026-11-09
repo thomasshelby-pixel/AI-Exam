@@ -79,9 +79,11 @@ export function getAuthoritativePaperStructure(options: {
     subjectName = '',
     paper = '',
     officialPaperMaxMarks = 100,
+    materialType = '',
   } = options;
 
   const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
+  const isFacultyMock = String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
   const isTaxationPaper =
     subjectName.toLowerCase().includes('tax') ||
     paper.toLowerCase().includes('tax') ||
@@ -90,9 +92,14 @@ export function getAuthoritativePaperStructure(options: {
     textCombined.includes('rudra') ||
     textCombined.includes('dharani');
 
-  const structure = isTaxationPaper
-    ? buildTaxationPaperStructure(options)
-    : buildGenericPaperStructure(options);
+  // Faculty Mock references are independently authored. Never substitute a
+  // preconfigured taxation/PYQ structure; the exact selected mock's private TXT
+  // files are the only authoritative source for question identity and marks.
+  const structure = isFacultyMock
+    ? buildGenericPaperStructure(options)
+    : isTaxationPaper
+      ? buildTaxationPaperStructure(options)
+      : buildGenericPaperStructure(options);
 
   // Preserve the exact selected materials alongside the canonical IDs. The
   // page mapper needs real QP wording and SA anchors to identify answers in
@@ -639,6 +646,62 @@ export function extractOptionalAttemptSelectionRule(
   return { allowedCount, questionNumbers: allowedNumbers, choiceRule };
 }
 
+function getFacultyMockMcqMaximumMarks(
+  questionNumber: string,
+  options: { questionPaperText?: string; markingSchemeText?: string },
+): number {
+  const qNum = String(Number(questionNumber));
+  if (!qNum || qNum === 'NaN') return 0;
+
+  const sources = [options.questionPaperText, options.markingSchemeText]
+    .map((value) => String(value || '').replace(/\r/g, ''))
+    .filter((value) => value.trim().length > 0);
+  const labelPattern = new RegExp(
+    '^\\s*(?:(?:MCQ|MULTIPLE\\s+CHOICE\\s+QUESTION|QUESTION|Q\\.?)\\s*)?' +
+      qNum + '\\s*(?:[).:]|\\b)',
+    'i',
+  );
+  const nextQuestionPattern = /^\s*(?:(?:MCQ|MULTIPLE\s+CHOICE\s+QUESTION|QUESTION|Q\.?)\s*)?\d{1,2}\s*[).:]/i;
+  const marksPattern = /(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i;
+
+  for (const source of sources) {
+    const lines = source.split('\n');
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!labelPattern.test(lines[index])) continue;
+
+      let end = Math.min(lines.length, index + 7);
+      for (let next = index + 1; next < end; next += 1) {
+        if (nextQuestionPattern.test(lines[next])) {
+          end = next;
+          break;
+        }
+      }
+
+      const localMatch = lines.slice(index, end).join(' ').match(marksPattern);
+      if (localMatch) {
+        const marks = Number(localMatch[1]);
+        if (Number.isFinite(marks) && marks > 0) return marks;
+      }
+    }
+  }
+
+  // A source-backed per-question rule may define the same allocation for every MCQ.
+  const combined = sources.join('\n');
+  const sharedRules = [
+    /\b(?:each|every)\s+(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\s+(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
+    /\b(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\b[^\n.]{0,60}\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per\s+question)\b/i,
+    /\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per)\s+(?:MCQ|multiple[- ]choice|objective)\b/i,
+  ];
+  for (const rule of sharedRules) {
+    const match = combined.match(rule);
+    const marks = match ? Number(match[1]) : 0;
+    if (Number.isFinite(marks) && marks > 0) return marks;
+  }
+
+  // Missing MCQ allocation must fail the pre-evaluation gate; never guess 1 or 2 marks.
+  return 0;
+}
+
 function buildGenericPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -652,8 +715,9 @@ function buildGenericPaperStructure(options: {
   // Preserve the existing PYQ/MTP fallback behaviour. Model Tests use the
   // same parser, but an unparseable independently authored source must not be
   // assigned fabricated Q1-Q6 identities or maximum marks.
-  const isModelTest = String(options.materialType || '').trim().toUpperCase() === 'MODEL_TEST_PAPER';
-  if (subQuestions.length === 0 && !isModelTest) {
+  const materialType = String(options.materialType || '').trim().toUpperCase();
+  const isIndependentlyAuthoredPaper = materialType === 'MODEL_TEST_PAPER' || materialType === 'FACULTY_MOCK_TEST';
+  if (subQuestions.length === 0 && !isIndependentlyAuthoredPaper) {
     for (let i = 1; i <= 6; i++) {
       subQuestions.push({
         fullQuestionCode: `Q${i}`,
@@ -695,7 +759,9 @@ function buildGenericPaperStructure(options: {
       fullQuestionCode: `MCQ${qNum}`,
       questionNumber: qNum,
       subQuestionNumber: 'MCQ',
-      maximumMarks: 2,
+      maximumMarks: materialType === 'FACULTY_MOCK_TEST'
+        ? getFacultyMockMcqMaximumMarks(qNum, options)
+        : 2,
       compulsory: true,
       isMcq: true,
       officialKey: data.officialKey,
