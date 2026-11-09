@@ -730,6 +730,8 @@ export interface StudentAttemptManifestItem {
   readonly selectedAlternative?: string | number;
   readonly studentSnippet?: string;
   readonly studentSelectedOption?: string;
+  readonly mcqSelectionNeedsReview?: boolean;
+  readonly mappingReviewReason?: string;
   readonly isCrossedOutWithNoReplacement?: boolean;
   readonly isMcq?: boolean;
 }
@@ -849,6 +851,8 @@ export interface CanonicalEvaluationRecord {
   readonly isAlternative?: boolean;
   readonly alternativeGroupId?: string;
   readonly studentSelectedOption?: string;
+  readonly reviewRequired?: boolean;
+  readonly reviewReason?: string;
   readonly officialAnswer?: string;
   readonly evidence?: string;
   readonly stepMarkingBreakdown?: any[];
