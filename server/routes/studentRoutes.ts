@@ -44,11 +44,13 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 import {
   claimFacultyMockFreeCopy,
+  claimFacultyMockReviewRetry,
   consumeFacultyMockPaidCopy,
   findAvailableFacultyMockPaidCopy,
   getFacultyMockFreeCopyClaim,
   releaseFacultyMockFreeCopy,
   releaseFacultyMockPaidCopy,
+  releaseFacultyMockReviewRetry,
 } from '../services/facultyMockEntitlementService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
@@ -1133,6 +1135,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       : `eval_${crypto.randomBytes(8).toString('hex')}`;
   let facultyMockFreeCopyClaimed = false;
   let facultyMockPaidCopyOrderId: string | null = null;
+  let facultyMockReviewRetryClaimed = false;
+  let facultyMockReviewRetryPrevious: any | null = null;
+  let facultyMockReviewRetryOfEvaluationId: string | null = null;
   let creditAlreadyConsumed = false;
   let asyncEvaluationAccepted = false;
   let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' =
@@ -1158,6 +1163,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       instituteMaterialId,
       facultyMockTestId,
       facultyMockPaymentOrderId,
+      retryOfEvaluationId,
     } = req.body;
     const requestedCheckingMode = String(checkingMode || 'standard').trim().toLowerCase();
     const selectedCheckingMode: CheckingMode =
@@ -1342,7 +1348,46 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
       }
 
-      if (!isPermanentFreeStudent) {
+      const requestedReviewRetryId = String(retryOfEvaluationId || '').trim();
+      if (requestedReviewRetryId) {
+        const previousEvaluation = db.prepare(`
+          SELECT id, status, evaluation_source, material_type, faculty_mock_test_id,
+                 answer_sheet_sha256, faculty_mock_review_retry_evaluation_id
+          FROM evaluations
+          WHERE id = ? AND student_id = ?
+          LIMIT 1
+        `).get(requestedReviewRetryId, studentId) as any;
+        const validPreviousReview =
+          previousEvaluation &&
+          String(previousEvaluation.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
+          String(previousEvaluation.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK' &&
+          String(previousEvaluation.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
+          String(previousEvaluation.faculty_mock_test_id || '') === selectedTestId;
+        if (!validPreviousReview) {
+          return res.status(409).json({
+            error: 'A free re-evaluation is available only for your own Faculty Mock copy that is currently marked NEEDS_REVIEW.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_NOT_ELIGIBLE',
+          });
+        }
+        if (String(previousEvaluation.faculty_mock_review_retry_evaluation_id || '').trim()) {
+          return res.status(409).json({
+            error: 'The one-time free review retry for this Faculty Mock answer sheet has already been used.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_ALREADY_USED',
+          });
+        }
+        if (!String(previousEvaluation.answer_sheet_sha256 || '').trim()) {
+          return res.status(409).json({
+            error: 'The original answer-sheet fingerprint is unavailable, so the system cannot safely confirm an exact same-copy retry. Please contact support.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_FINGERPRINT_MISSING',
+          });
+        }
+        facultyMockReviewRetryPrevious = previousEvaluation;
+        facultyMockReviewRetryOfEvaluationId = requestedReviewRetryId;
+      }
+
+      // A valid review retry is exempt from ordinary FREE/PAID copy purchase
+      // checks; the exact answer-sheet hash is verified before any copy is claimed.
+      if (!isPermanentFreeStudent && !facultyMockReviewRetryPrevious) {
         const mockAccessType = String(facultyMockRecord.access_type || 'FREE').trim().toUpperCase() === 'PAID'
           ? 'PAID'
           : 'FREE';
@@ -1660,6 +1705,15 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       }
 
       answerSheetSha256 = crypto.createHash('sha256').update(pdfBuf).digest('hex');
+      if (
+        facultyMockReviewRetryPrevious &&
+        String(facultyMockReviewRetryPrevious.answer_sheet_sha256 || '') !== answerSheetSha256
+      ) {
+        return res.status(409).json({
+          error: 'The uploaded file is not byte-for-byte the same answer sheet as the original Faculty Mock submission. Upload the original copy from the review page to use the free retry.',
+          code: 'FACULTY_MOCK_REVIEW_RETRY_COPY_MISMATCH',
+        });
+      }
       const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
       fs.writeFileSync(originalFilePath, pdfBuf);
 
@@ -1745,6 +1799,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       filename || 'ca_answer_sheet.pdf',
       entitlementSource
     );
+
+    if (facultyMockReviewRetryOfEvaluationId) {
+      db.prepare('UPDATE evaluations SET retry_of_evaluation_id = ? WHERE id = ?')
+        .run(facultyMockReviewRetryOfEvaluationId, evaluationId);
+    }
 
     // Persist the normalized answer-sheet fingerprint for future cross-account duplicate checks.
     if (answerSheetSha256) {
@@ -1834,6 +1893,46 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // a permanent-free entitlement bypass both copy-payment paths entirely.
     if (isFacultyMockMode && !isPermanentFreeStudent) {
       const selectedMockId = String(facultyMockRecord?.id || '').trim();
+      if (facultyMockReviewRetryPrevious && facultyMockReviewRetryOfEvaluationId) {
+        const claimed = await claimFacultyMockReviewRetry(
+          studentId,
+          selectedMockId,
+          facultyMockReviewRetryOfEvaluationId,
+          evaluationId,
+        );
+        if (!claimed) {
+          db.prepare(`
+            UPDATE evaluations
+            SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'PROCESSING'
+          `).run('The one-time Faculty Mock review retry was already claimed by another submission.', evaluationId);
+          return res.status(409).json({
+            error: 'The one-time free review retry for this Faculty Mock answer sheet has already been used.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_ALREADY_USED',
+          });
+        }
+        facultyMockReviewRetryClaimed = true;
+        const linked = db.prepare(`
+          UPDATE evaluations
+          SET faculty_mock_review_retry_evaluation_id = ?
+          WHERE id = ? AND (faculty_mock_review_retry_evaluation_id IS NULL OR faculty_mock_review_retry_evaluation_id = ?)
+        `).run(evaluationId, facultyMockReviewRetryOfEvaluationId, evaluationId);
+        if (Number(linked.changes) !== 1) {
+          await releaseFacultyMockReviewRetry(studentId, selectedMockId, facultyMockReviewRetryOfEvaluationId, evaluationId);
+          facultyMockReviewRetryClaimed = false;
+          db.prepare(`
+            UPDATE evaluations
+            SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'PROCESSING'
+          `).run('Could not link the Faculty Mock review retry to its original evaluation.', evaluationId);
+          return res.status(409).json({
+            error: 'This Faculty Mock review retry was already used or could not be reserved. No second paid copy was consumed.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_ALREADY_USED',
+          });
+        }
+        db.prepare('UPDATE evaluations SET retry_of_evaluation_id = ? WHERE id = ?')
+          .run(facultyMockReviewRetryOfEvaluationId, evaluationId);
+      } else {
       const mockAccessType = String(facultyMockRecord?.access_type || 'FREE').trim().toUpperCase() === 'PAID'
         ? 'PAID'
         : 'FREE';
@@ -1913,6 +2012,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           ON CONFLICT(order_id) DO UPDATE SET status = 'CONSUMED', evaluation_id = excluded.evaluation_id,
             consumed_at = CURRENT_TIMESTAMP
         `).run(paidOrderId, studentId, selectedMockId, evaluationId);
+      }
       }
     }
 
@@ -2012,7 +2112,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       status: 'PROCESSING',
       progressStage: 'QUEUED',
       progressPercentage: 5,
-      message: 'Answer sheet received and evaluation started in background.',
+      message: facultyMockReviewRetryOfEvaluationId
+        ? 'Your exact same Faculty Mock answer sheet has been accepted for its one-time free review retry.'
+        : 'Answer sheet received and evaluation started in background.',
     });
   } catch (error: unknown) {
     console.error('Answer sheet evaluation error:', error);
@@ -2052,6 +2154,23 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           .run(studentId, String(req.body?.facultyMockTestId || ''), evaluationId);
       } catch (releaseError) {
         console.warn('[FacultyMocks] Could not release an unaccepted free-copy claim:', releaseError);
+      }
+    }
+    if (facultyMockReviewRetryClaimed && facultyMockReviewRetryOfEvaluationId) {
+      try {
+        await releaseFacultyMockReviewRetry(
+          studentId,
+          String(req.body?.facultyMockTestId || ''),
+          facultyMockReviewRetryOfEvaluationId,
+          evaluationId,
+        );
+        db.prepare(`
+          UPDATE evaluations
+          SET faculty_mock_review_retry_evaluation_id = NULL
+          WHERE id = ? AND faculty_mock_review_retry_evaluation_id = ?
+        `).run(facultyMockReviewRetryOfEvaluationId, evaluationId);
+      } catch (releaseError) {
+        console.warn('[FacultyMocks] Could not release an unaccepted review-retry reservation:', releaseError);
       }
     }
     if (facultyMockPaidCopyOrderId) {
