@@ -23,6 +23,7 @@ import {
 } from '../services/featureControlPersistenceService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
+import { CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 import { parseFacultyMockEvaluationReference, validateFacultyMockReferenceSections } from '../services/facultyMockReferenceParser.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
@@ -640,6 +641,160 @@ router.put('/faculty-mocks/faculties/:id/status', async (req: AuthRequest, res: 
   }
 });
 
+// Permanently delete a faculty's catalogue and mock source files.
+// Completed evaluation reports and Razorpay transaction history are retained.
+router.delete('/faculty-mocks/faculties/:id', async (req: AuthRequest, res: Response) => {
+  const facultyId = String(req.params.id || '').trim();
+  try {
+    if (!facultyId) return res.status(400).json({ error: 'Faculty ID is required.' });
+
+    const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', facultyId, { failOnError: true })
+      || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(facultyId) as any;
+    if (!faculty) return res.status(404).json({ error: 'Faculty not found.' });
+
+    // Use both the shared catalogue and local cache so a partially hydrated
+    // instance does not leave mock records behind.
+    const [sharedTests, sharedFreeLedgers, sharedPaidLedgers] = await Promise.all([
+      getAllFirestoreDocs<any>('faculty_mock_tests', { failOnError: true }),
+      getAllFirestoreDocs<any>('faculty_mock_free_uses', { failOnError: true }),
+      getAllFirestoreDocs<any>('faculty_mock_paid_copy_ledgers', { failOnError: true }),
+    ]);
+    const localTests = db.prepare('SELECT * FROM faculty_mock_tests WHERE faculty_id = ?').all(facultyId) as any[];
+    const testsById = new Map<string, any>();
+    for (const test of [...sharedTests, ...localTests]) {
+      if (String(test.faculty_id || '') === facultyId) testsById.set(String(test.id), test);
+    }
+    const facultyTests = [...testsById.values()];
+    const testIds = new Set(facultyTests.map((test) => String(test.id)));
+    const testIdList = [...testIds];
+
+    // Never remove a paid mock while a student still has an unused paid copy.
+    // That would strand a successfully paid entitlement without an evaluation.
+    const hasUnusedPaidCopy = sharedPaidLedgers.some((ledger: any) =>
+      testIds.has(String(ledger.facultyMockTestId || '')) &&
+      Object.values(ledger.copies || {}).some((copy: any) => String(copy?.status || '').toUpperCase() === 'AVAILABLE')
+    );
+    const localAvailablePurchase = testIdList.length
+      ? db.prepare(`SELECT order_id FROM faculty_mock_copy_purchases
+          WHERE faculty_mock_test_id IN (${testIdList.map(() => '?').join(',')}) AND status = 'AVAILABLE' LIMIT 1`)
+          .get(...testIdList) as any
+      : null;
+    if (hasUnusedPaidCopy || localAvailablePurchase) {
+      return res.status(409).json({
+        error: 'This faculty has mock copies that students have already paid for but have not used yet. Resolve those outstanding copies before deleting the faculty.',
+        code: 'FACULTY_MOCK_UNUSED_PAID_COPIES_EXIST',
+      });
+    }
+
+    if (testIdList.length) {
+      const inFlight = db.prepare(`SELECT id FROM evaluations
+        WHERE faculty_mock_test_id IN (${testIdList.map(() => '?').join(',')})
+          AND UPPER(COALESCE(status, '')) IN ('PROCESSING', 'QUEUED', 'PENDING')
+        LIMIT 1`).get(...testIdList) as any;
+      if (inFlight) {
+        return res.status(409).json({
+          error: 'A mock from this faculty is currently being evaluated. Wait for that evaluation to finish before deleting the faculty.',
+          code: 'FACULTY_MOCK_EVALUATION_IN_PROGRESS',
+        });
+      }
+    }
+
+    // First deactivate the faculty in the shared catalogue. Student catalogue,
+    // download, payment and evaluation endpoints all reject inactive faculties.
+    const deactivated = { ...faculty, status: 'INACTIVE', updated_at: new Date().toISOString() };
+    if (!await setFirestoreDoc('faculty_mock_faculties', facultyId, deactivated)) {
+      return res.status(502).json({ error: 'Could not deactivate the faculty in the shared database. No deletion was performed.' });
+    }
+    db.prepare('UPDATE faculty_mock_faculties SET status = ?, updated_at = ? WHERE id = ?')
+      .run('INACTIVE', deactivated.updated_at, facultyId);
+
+    // Remove mock catalogue records from Firestore before removing their files.
+    for (const testId of testIdList) {
+      if (!await deleteFirestoreDoc('faculty_mock_tests', testId)) {
+        return res.status(502).json({
+          error: 'The faculty has been deactivated, but one or more mock records could not be removed from the shared database. Retry deletion.',
+          code: 'FACULTY_MOCK_DELETE_PARTIAL',
+        });
+      }
+    }
+
+    // Remove per-student free/paid mock entitlements for deleted mock IDs.
+    for (const ledger of sharedFreeLedgers) {
+      if (testIds.has(String(ledger.facultyMockTestId || ''))) {
+        if (!await deleteFirestoreDoc('faculty_mock_free_uses', String(ledger.id))) {
+          return res.status(502).json({ error: 'The faculty is inactive, but a free-copy entitlement record could not be cleaned up. Retry deletion.' });
+        }
+      }
+    }
+    for (const ledger of sharedPaidLedgers) {
+      if (testIds.has(String(ledger.facultyMockTestId || ''))) {
+        if (!await deleteFirestoreDoc('faculty_mock_paid_copy_ledgers', String(ledger.id))) {
+          return res.status(502).json({ error: 'The faculty is inactive, but a paid-copy entitlement record could not be cleaned up. Retry deletion.' });
+        }
+      }
+    }
+
+    // Remove every original PDF and private TXT source owned by these mocks.
+    const fileIds = new Set<string>();
+    for (const test of facultyTests) {
+      for (const field of [
+        'question_paper_file_id',
+        'question_paper_reference_file_id',
+        'suggested_answer_file_id',
+        'marking_scheme_file_id',
+      ]) {
+        const fileId = String(test[field] || '').trim();
+        if (fileId) fileIds.add(fileId);
+      }
+    }
+    for (const fileId of fileIds) {
+      await deletePersistentFile(fileId);
+    }
+
+    // Delete catalogue and local entitlement cache atomically. Historical
+    // evaluations and payment_transactions intentionally remain untouched.
+    const removeLocalRows = db.transaction(() => {
+      if (testIdList.length) {
+        const placeholders = testIdList.map(() => '?').join(',');
+        db.prepare(`DELETE FROM faculty_mock_free_uses WHERE faculty_mock_test_id IN (${placeholders})`).run(...testIdList);
+        db.prepare(`DELETE FROM faculty_mock_copy_purchases WHERE faculty_mock_test_id IN (${placeholders})`).run(...testIdList);
+      }
+      db.prepare('DELETE FROM faculty_mock_tests WHERE faculty_id = ?').run(facultyId);
+      db.prepare('DELETE FROM faculty_mock_faculties WHERE id = ?').run(facultyId);
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'FACULTY_MOCK_FACULTY_DELETED', 'FACULTY_MOCK_FACULTY', ?, ?)
+      `).run(
+        `aud_${crypto.randomBytes(8).toString('hex')}`,
+        req.user!.id,
+        facultyId,
+        `Deleted faculty mock catalogue "${String(faculty.name || facultyId)}" with ${testIdList.length} mock(s) and ${fileIds.size} stored source file(s). Evaluation reports and payment transaction history were retained.`,
+      );
+    });
+    removeLocalRows();
+
+    if (!await deleteFirestoreDoc('faculty_mock_faculties', facultyId)) {
+      return res.status(502).json({
+        error: 'The faculty mocks were deleted, but the faculty directory record could not be removed from the shared database. Retry deletion.',
+        code: 'FACULTY_MOCK_DELETE_PARTIAL',
+      });
+    }
+
+    return res.json({
+      success: true,
+      deletedFacultyId: facultyId,
+      deletedMockCount: testIdList.length,
+      deletedSourceFileCount: fileIds.size,
+      retainedEvaluationHistory: true,
+      retainedPaymentHistory: true,
+    });
+  } catch (error) {
+    console.error('[FacultyMocks] Faculty cascade delete error:', error);
+    return res.status(500).json({ error: error instanceof Error ? error.message : 'Failed to delete faculty and its mocks.' });
+  }
+});
+
+
 router.get('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
   try {
     const docs = await getAllFirestoreDocs<any>('faculty_mock_tests', { failOnError: true }).catch(() =>
@@ -656,6 +811,8 @@ router.get('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     ).map((t: any) => ({
       ...t,
       faculty_name: facultyById.get(t.faculty_id)?.name || t.faculty_name || 'Unknown Faculty',
+      access_type: String(t.access_type || 'FREE').toUpperCase() === 'PAID' ? 'PAID' : 'FREE',
+      unlock_price_inr: CUSTOM_PRICE_PER_EVALUATION_INR,
       question_paper_text: undefined,
       suggested_answers_text: undefined,
       marking_scheme_text: undefined,
@@ -694,6 +851,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     const paper = String(body.paper || 'Paper 1').trim().slice(0, 40);
     const title = String(body.title || '').trim().slice(0, 160);
     const maximumMarks = Number(body.maximumMarks || 100);
+    const accessType = String(body.accessType || 'FREE').trim().toUpperCase();
     const requestedMockNumber = body.mockNumber === '' || body.mockNumber === undefined || body.mockNumber === null
       ? undefined
       : Number(body.mockNumber);
@@ -701,6 +859,9 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     if (!facultyId || !['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(courseLevel) ||
         !attempt || !subjectKey || !subjectName || !paper || !Number.isFinite(maximumMarks) || maximumMarks <= 0 || maximumMarks > 500) {
       return res.status(400).json({ error: 'Select faculty, CA level, attempt, subject, paper and valid maximum marks.' });
+    }
+    if (!['FREE', 'PAID'].includes(accessType)) {
+      return res.status(400).json({ error: 'Select whether this faculty mock is Free or Unlock by Paying.' });
     }
     if (modelGroup && !['GROUP_1', 'GROUP_2', 'BOTH', 'OTHER'].includes(modelGroup)) {
       return res.status(400).json({ error: 'Select a valid CA group.' });
@@ -887,6 +1048,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       marking_scheme_file_id: markingSchemeSaved?.fileId || null,
       marking_scheme_file_name: markingSchemeSaved?.originalFilename || markingSchemeReference?.filename || null,
       marking_scheme_file_size: markingSchemeSaved?.size || null,
+      access_type: accessType,
       status: 'PUBLISHED',
       created_by: req.user!.id,
       created_at: now,
@@ -900,8 +1062,8 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         question_paper_reference_file_id, question_paper_reference_file_name, question_paper_reference_file_size,
         suggested_answer_file_id, suggested_answer_file_name, suggested_answer_file_size,
         marking_scheme_file_id, marking_scheme_file_name, marking_scheme_file_size,
-        status, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        access_type, status, created_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, facultyId, courseLevel, attempt, modelGroup || null, subjectKey, subjectName, paper, mockNumber, test.title,
       maximumMarks, test.syllabus_version, questionPaperText, suggestedAnswersText, markingSchemeText || null,
@@ -915,7 +1077,7 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       markingSchemeSaved?.fileId || null,
       markingSchemeSaved?.originalFilename || markingSchemeReference?.filename || null,
       markingSchemeSaved?.size || null,
-      test.status, test.created_by, now, now
+      accessType, test.status, test.created_by, now, now
     );
     const persisted = await setFirestoreDoc('faculty_mock_tests', id, test);
     if (!persisted) {
