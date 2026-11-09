@@ -70,6 +70,20 @@ import {
 
 const router = Router();
 
+function getStudentCreditSummaryForAccess(userId: string, hasPermanentFreeAccess: boolean) {
+  const currentSummary = getStudentCreditDetailedSummary(userId);
+  if (!hasPermanentFreeAccess) return currentSummary;
+  return {
+    ...currentSummary,
+    monthlyFreeEvaluationsUsed: 0,
+    monthlyFreeEvaluationsLimit: 9999,
+    freeEvaluationsRemaining: 9999,
+    totalAvailable: 9999 + currentSummary.paidCredits,
+    canEvaluate: true,
+    statusMessage: 'Permanent free access is active. Unlimited evaluations are available at no cost.',
+  };
+}
+
 function isProductionSharedDataRuntime(): boolean {
   return process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE || process.env.K_REVISION);
 }
@@ -651,14 +665,14 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
       profile,
       enrolledInstitutes,
       creditStatus,
-      creditSummary: getStudentCreditDetailedSummary(studentId),
+      creditSummary: getStudentCreditSummaryForAccess(studentId, entitlement.hasPermanentFreeAccess),
       metrics: {
         totalEvaluations: totalCount,
         freeEvaluationsRemaining: entitlement.freeEvaluationsRemaining,
         purchasedCredits: creditStatus.totalValidCredits,
         paidCredits: creditStatus.totalValidCredits,
         monthlyFreeEvaluationsUsed: entitlement.monthlyFreeEvaluationsUsed ?? 0,
-        monthlyFreeEvaluationsLimit: entitlement.monthlyFreeEvaluationsLimit ?? 2,
+        monthlyFreeEvaluationsLimit: entitlement.hasPermanentFreeAccess ? 9999 : entitlement.monthlyFreeEvaluationsLimit ?? 2,
         freeEvaluationResetMonth: entitlement.freeEvaluationResetMonth,
         expiringSoonCredits: creditStatus.expiringSoonCredits,
         earliestExpiryDate: creditStatus.earliestExpiryDate,
@@ -3553,7 +3567,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
         avatarUrl: profile?.avatar_url || '',
         freeEvaluationsUsed: profile?.free_evaluations_used || 0,
         monthlyFreeEvaluationsUsed: entitlement.monthlyFreeEvaluationsUsed ?? 0,
-        monthlyFreeEvaluationsLimit: entitlement.monthlyFreeEvaluationsLimit ?? 2,
+        monthlyFreeEvaluationsLimit: entitlement.hasPermanentFreeAccess ? 9999 : entitlement.monthlyFreeEvaluationsLimit ?? 2,
         freeEvaluationResetMonth: entitlement.freeEvaluationResetMonth,
         freeEvaluationsRemaining: entitlement.freeEvaluationsRemaining,
         purchasedCredits: creditStatus.totalValidCredits,
@@ -3568,7 +3582,7 @@ router.get('/profile', (req: AuthRequest, res: Response) => {
       enrolledInstitutes,
       entitlement,
       creditStatus,
-      creditSummary: getStudentCreditDetailedSummary(studentId),
+      creditSummary: getStudentCreditSummaryForAccess(studentId, entitlement.hasPermanentFreeAccess),
       activePromo: activePromo ? {
         id: activePromo.id,
         referralCode: activePromo.referral_code,
