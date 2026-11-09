@@ -57,6 +57,12 @@ async function run() {
   });
   assert.match(pagePrompt, /Foundation,\s*Intermediate and Final/i);
   assert.match(pagePrompt, /every subject/i);
+  assert.match(pagePrompt, /HANDWRITING STYLE FAIRNESS — MANDATORY/i);
+  assert.match(pagePrompt, /Students use genuinely different handwriting styles/i);
+  assert.match(pagePrompt, /NO handwriting style is illegal or invalid/i);
+  assert.match(pagePrompt, /cursive \/ joined-up writing/i);
+  assert.match(pagePrompt, /localize the uncertainty to that fragment/i);
+  assert.match(pagePrompt, /ATTEMPTED_PARTIALLY_READABLE/i);
   assert.match(pagePrompt, /left margin/i);
   assert.match(pagePrompt, /circled\/margin-written numbers/i);
   assert.match(pagePrompt, /faint, cursive/i);
