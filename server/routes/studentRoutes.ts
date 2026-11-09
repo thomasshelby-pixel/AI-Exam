@@ -3194,23 +3194,36 @@ router.get(
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const originalFilePath = path.join(uploadsDir, `${realEvaluationId}_original.pdf`);
+    const isFacultyMockOriginal = String(record.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK';
+    const expectedAnswerSheetHash = String(record.answer_sheet_sha256 || '').trim().toLowerCase();
+    const hasExactOriginalHash = (buffer: Buffer): boolean => {
+      if (!isFacultyMockOriginal) return true;
+      if (!/^[a-f0-9]{64}$/.test(expectedAnswerSheetHash)) return false;
+      const actualHash = crypto.createHash('sha256').update(buffer).digest('hex');
+      return actualHash === expectedAnswerSheetHash;
+    };
 
     if (fs.existsSync(originalFilePath)) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
-      return res.sendFile(originalFilePath);
+      const localOriginal = fs.readFileSync(originalFilePath);
+      if (hasExactOriginalHash(localOriginal)) {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
+        return res.send(localOriginal);
+      }
+      console.warn(`[FacultyMocks] Local original file hash mismatch for evaluation ${realEvaluationId}; trying persistent storage.`);
     }
 
     // Check persistent cloud storage
     const persistentOriginal = await getPersistentFile(`${realEvaluationId}_original`, `${realEvaluationId}_original.pdf`);
-    if (persistentOriginal && persistentOriginal.buffer) {
+    if (persistentOriginal && persistentOriginal.buffer && hasExactOriginalHash(persistentOriginal.buffer)) {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
       return res.send(persistentOriginal.buffer);
     }
 
-    // Check if alternate image file format exists
-    const possibleExts = ['.png', '.jpg', '.jpeg'];
+    // Check alternate image files only for non-Faculty-Mock historical downloads.
+    // Faculty Mock retry is pinned to the normalized PDF whose hash was recorded.
+    const possibleExts = isFacultyMockOriginal ? [] : ['.png', '.jpg', '.jpeg'];
     for (const ext of possibleExts) {
       const imgPath = path.join(uploadsDir, `${evaluationId}_original${ext}`);
       if (fs.existsSync(imgPath)) {
