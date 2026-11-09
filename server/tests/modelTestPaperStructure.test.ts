@@ -239,4 +239,15 @@ assert.deepEqual(
   [['Q9(a)(i)', 2], ['Q9(a)(ii)', 3]],
   'Bare contextual sub-part labels must be attached to the active parent and retained as separate leaves.',
 );
+const namedContextualParts = extractSubQuestionsFromText([
+  'Question 10 Part IV',
+  'Clause 1 - 2 Marks',
+  'Clause 2 - 3 Marks',
+].join('\n'));
+assert.deepEqual(
+  namedContextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  [['Q10(iv)(1)', 2], ['Q10(iv)(2)', 3]],
+  'A named parent heading and its named child clauses must create separately marked nested leaves.',
+);
+
 console.log('Model Test shared PYQ/MTP parser and universal sub-part contract tests passed.');
