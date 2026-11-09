@@ -826,10 +826,18 @@ export function auditNumericalReasoningIntegrity(
       ? updatedComponents.reduce((s, c) => s + (c.marksAwarded || 0), 0)
       : q.marksAwarded;
 
+    const requiresHumanReview = q.status === 'unclear' ||
+      q.flags?.includes('REVIEW_REQUIRED') ||
+      q.flags?.includes('UNSUPPORTED_ZERO_REQUIRES_REVIEW') ||
+      q.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED');
+
     auditedQuestions.push({
       ...q,
       marksAwarded: recomputedAwarded,
-      marksLost: Math.max(0, q.maximumMarks - recomputedAwarded),
+      // A provisional review score is not an academic deduction. Do not
+      // recreate max-minus-awarded lost marks after the integrity engine has
+      // explicitly withheld certification for an unresolved attempt.
+      marksLost: requiresHumanReview ? 0 : Math.max(0, q.maximumMarks - recomputedAwarded),
       markingComponents: updatedComponents,
       consequentialErrorDetected,
       consequentialErrorNotes: consequentialNotes || undefined,
