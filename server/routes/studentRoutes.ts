@@ -67,6 +67,32 @@ import {
   updateUserNotificationPreferences,
 } from '../services/notificationService.js';
 
+type FacultyMockSourceCollection = 'faculty_mock_tests' | 'faculty_mock_faculties';
+
+function requiresSharedFacultyMockSource(): boolean {
+  return process.env.USE_FIREBASE_ADMIN === 'true' ||
+    Boolean(process.env.K_SERVICE && !process.env.K_SERVICE.startsWith('ais-dev')) ||
+    process.env.NODE_ENV === 'production';
+}
+
+/**
+ * Production Faculty Mock reads must come from the shared source of truth.
+ * Per-instance SQLite is only a local-development fallback; using it after a
+ * Firestore timeout can silently evaluate an older edited-paper version.
+ */
+async function getFacultyMockSourceRecord(
+  collectionName: FacultyMockSourceCollection,
+  recordId: string,
+): Promise<any | null> {
+  const sharedRequired = requiresSharedFacultyMockSource();
+  const shared = await getFirestoreDoc<any>(collectionName, recordId, {
+    failOnError: sharedRequired,
+  });
+  if (shared) return shared;
+  if (sharedRequired) return null;
+  return db.prepare('SELECT * FROM ' + collectionName + ' WHERE id = ?').get(recordId) as any || null;
+}
+
 const router = Router();
 
 // Student-specific responses must never be stored in a browser or intermediary cache.
@@ -466,16 +492,26 @@ router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, r
     const testId = String(req.params.id || '').trim();
     const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user!.id) as { ca_level?: string } | undefined;
     const courseLevel = String(profile?.ca_level || '').trim().toUpperCase();
-    let test = await getFirestoreDoc<any>('faculty_mock_tests', testId);
-    if (!test) test = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
+    let test: any;
+    try {
+      test = await getFacultyMockSourceRecord('faculty_mock_tests', testId);
+    } catch (sourceReadError) {
+      console.error('[FacultyMocks] Shared source lookup failed during Question Paper download:', sourceReadError);
+      return res.status(503).json({ error: 'The latest published Faculty Mock could not be verified. Please retry shortly.', code: 'FACULTY_MOCK_SOURCE_LOOKUP_UNAVAILABLE' });
+    }
     if (!test || String(test.status || '').toUpperCase() !== 'PUBLISHED') {
       return res.status(404).json({ error: 'Faculty mock test not found or not published.' });
     }
     if (String(test.course_level || '').toUpperCase() !== courseLevel) {
       return res.status(403).json({ error: 'This mock test does not match your registered CA course.' });
     }
-    const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(test.faculty_id))
-      || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(test.faculty_id) as any;
+    let faculty: any;
+    try {
+      faculty = await getFacultyMockSourceRecord('faculty_mock_faculties', String(test.faculty_id));
+    } catch (sourceReadError) {
+      console.error('[FacultyMocks] Shared faculty lookup failed during Question Paper download:', sourceReadError);
+      return res.status(503).json({ error: 'The latest faculty status could not be verified. Please retry shortly.', code: 'FACULTY_MOCK_SOURCE_LOOKUP_UNAVAILABLE' });
+    }
     if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
       return res.status(404).json({ error: 'This faculty mock is not currently available.' });
     }
@@ -757,13 +793,23 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
         });
       }
 
-      const mock = await getFirestoreDoc<any>('faculty_mock_tests', selectedMockId)
-        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(selectedMockId) as any;
+      let mock: any;
+      try {
+        mock = await getFacultyMockSourceRecord('faculty_mock_tests', selectedMockId);
+      } catch (sourceReadError) {
+        console.error('[FacultyMocks] Shared source lookup failed during preflight:', sourceReadError);
+        return res.status(503).json({ success: false, code: 'FACULTY_MOCK_SOURCE_LOOKUP_UNAVAILABLE', error: 'The latest published Faculty Mock could not be verified. Please retry shortly.' });
+      }
       if (!mock || String(mock.status || '').toUpperCase() !== 'PUBLISHED') {
         return res.status(404).json({ success: false, code: 'FACULTY_MOCK_NOT_PUBLISHED', error: 'The selected Faculty Mock is no longer published.' });
       }
-      const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(mock.faculty_id))
-        || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(mock.faculty_id) as any;
+      let faculty: any;
+      try {
+        faculty = await getFacultyMockSourceRecord('faculty_mock_faculties', String(mock.faculty_id));
+      } catch (sourceReadError) {
+        console.error('[FacultyMocks] Shared faculty lookup failed during preflight:', sourceReadError);
+        return res.status(503).json({ success: false, code: 'FACULTY_MOCK_SOURCE_LOOKUP_UNAVAILABLE', error: 'The latest faculty status could not be verified. Please retry shortly.' });
+      }
       if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
         return res.status(404).json({ success: false, code: 'FACULTY_MOCK_FACULTY_INACTIVE', error: 'The selected faculty is not active.' });
       }
@@ -1264,14 +1310,23 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(400).json({ error: 'Select a faculty mock test before uploading your answer sheet.', code: 'FACULTY_MOCK_TEST_REQUIRED' });
       }
 
-      facultyMockRecord = await getFirestoreDoc<any>('faculty_mock_tests', selectedTestId)
-        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(selectedTestId) as any;
+      try {
+        facultyMockRecord = await getFacultyMockSourceRecord('faculty_mock_tests', selectedTestId);
+      } catch (sourceReadError) {
+        console.error('[FacultyMocks] Shared source lookup failed during answer-sheet submission:', sourceReadError);
+        return res.status(503).json({ error: 'The latest published Faculty Mock could not be verified. Your answer sheet has not been submitted; please retry shortly.', code: 'FACULTY_MOCK_SOURCE_LOOKUP_UNAVAILABLE' });
+      }
       if (!facultyMockRecord || String(facultyMockRecord.status || '').toUpperCase() !== 'PUBLISHED') {
         return res.status(404).json({ error: 'This faculty mock is no longer available. Refresh the mock list and try again.', code: 'FACULTY_MOCK_NOT_PUBLISHED' });
       }
 
-      const faculty = await getFirestoreDoc<any>('faculty_mock_faculties', String(facultyMockRecord.faculty_id))
-        || db.prepare('SELECT * FROM faculty_mock_faculties WHERE id = ?').get(facultyMockRecord.faculty_id) as any;
+      let faculty: any;
+      try {
+        faculty = await getFacultyMockSourceRecord('faculty_mock_faculties', String(facultyMockRecord.faculty_id));
+      } catch (sourceReadError) {
+        console.error('[FacultyMocks] Shared faculty lookup failed during answer-sheet submission:', sourceReadError);
+        return res.status(503).json({ error: 'The latest faculty status could not be verified. Your answer sheet has not been submitted; please retry shortly.', code: 'FACULTY_MOCK_SOURCE_LOOKUP_UNAVAILABLE' });
+      }
       if (!faculty || String(faculty.status || '').toUpperCase() !== 'ACTIVE') {
         return res.status(404).json({ error: 'This faculty is not currently active.', code: 'FACULTY_MOCK_FACULTY_INACTIVE' });
       }
