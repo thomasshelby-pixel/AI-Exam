@@ -30,6 +30,9 @@ jobs:
       - name: Order-independent answer-sheet question mapping regression
         run: node_modules/.bin/tsx server/tests/answerSheetCoverageCircuitBreaker.test.ts
 
+      - name: Valid nested canonical question ID integrity regression
+        run: node_modules/.bin/tsx server/tests/nestedCanonicalQuestionGate.test.ts
+
       - name: Handwriting-style tolerant document validation regression
         run: node_modules/.bin/tsx server/tests/answerSheetDocumentPolicy.test.ts
 
