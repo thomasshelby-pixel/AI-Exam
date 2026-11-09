@@ -79,7 +79,7 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
   const parts: string[] = [];
   let guard = 0;
   while (rest && guard++ < 12) {
-    rest = rest.replace(/^\s+/, '');
+    rest = rest.replace(/^\s+/, '').replace(/^[-_:/]+\s*/, '');
     if (!rest) break;
 
     if (allowBareToken) {
@@ -142,7 +142,7 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
 
   // Collapse only accidental repeated echoes such as Q3(b)(b). Roman numeral
   // and numeric levels are never collapsed merely because of their character set.
-  return parts.filter((part, index) => index === 0 || part !== parts[index - 1]);
+  return parts;
 }
 
 function buildCanonicalQuestionCode(questionNumber: string, parts: string[]): string {
