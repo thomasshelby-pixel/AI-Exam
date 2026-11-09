@@ -532,7 +532,11 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                       </div>
                     )}
 
-      {loading ? (
+      {activeEvaluationId ? (
+        <div className="rounded-2xl border border-indigo-200 bg-indigo-50/70 px-4 py-3 text-xs text-indigo-900 dark:border-indigo-400/20 dark:bg-indigo-400/5 dark:text-indigo-100">
+          Mock selection and upload are paused while this evaluation is running. You can leave this page safely; the evaluation continues in the background and the report will be available in My Evaluations.
+        </div>
+      ) : loading ? (
         <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-10 text-sm text-slate-500"><RefreshCw className="h-4 w-4 animate-spin" />Loading available faculty mocks…</div>
       ) : !faculties.length ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
