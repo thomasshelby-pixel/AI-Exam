@@ -90,8 +90,9 @@ export interface QuestionReferenceEvaluationDisposition {
 
 /**
  * A parsed authoritative paper structure can anchor a question when the exact
- * QP text-slice matcher misses its formatting. The Suggested Answer must still
- * be locked to that exact canonical question. Such scores remain provisional.
+ * QP text-slice matcher misses a formatting variant, for PYQ, MTP, Model Test
+ * and Faculty Mock alike. The exact Suggested Answer must still be locked and
+ * the canonical leaf must carry a verified positive maximum-mark allocation.
  */
 export function assessQuestionReferenceForEvaluation(
   reference: Pick<ExtractedReferenceSnippets, 'questionPaperFound' | 'suggestedAnswerFound' | 'referenceNeedsReview'> & {
@@ -107,15 +108,22 @@ export function assessQuestionReferenceForEvaluation(
     };
   }
 
-  const canUsePyqStructureAnchor =
-    String(reference.materialType || '').trim().toUpperCase() === 'PYQ' &&
+  const normalizedMaterialType = String(reference.materialType || '').trim().toUpperCase();
+  const supportsAuthoritativeStructureAnchor = new Set([
+    'PYQ',
+    'MTP',
+    'MODEL_TEST_PAPER',
+    'FACULTY_MOCK_TEST',
+  ]).has(normalizedMaterialType);
+  const canUseAuthoritativeStructureAnchor =
+    supportsAuthoritativeStructureAnchor &&
     reference.authoritativeQuestionStructureVerified === true;
 
-  if (!reference.questionPaperFound && !canUsePyqStructureAnchor) {
+  if (!reference.questionPaperFound && !canUseAuthoritativeStructureAnchor) {
     return {
       canScoreProvisionally: true,
       requiresHumanReview: true,
-      reason: 'The question is present in the parsed authoritative paper structure and its Suggested Answer is locked, but the exact Question Paper text slice needs manual verification. This score is provisional.',
+      reason: 'The exact Question Paper slice could not be matched and no verified canonical leaf identity with official maximum marks is available. This question needs manual mapping review.',
     };
   }
 
