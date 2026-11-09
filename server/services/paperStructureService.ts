@@ -491,7 +491,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
       source.match(/(?:\[\s*|\(\s*)([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i) ||
       source.match(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i) ||
       source.match(/\b(?:Marks?|M)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-      source.match(/\b(?:carries?|carrying|worth|allotted)\s+([0-9]+(?:\.[0-9+)?)(?:\s*(?:Marks?|M))?\b/i);
+      source.match(/\b(?:carries?|carrying|worth|allotted)\s+([0-9]+(?:\.[0-9]+)?)(?:\s*(?:Marks?|M))?\b/i);
     const valueText = match?.[1];
     if (!valueText) return undefined;
     const marks = Number(valueText);
