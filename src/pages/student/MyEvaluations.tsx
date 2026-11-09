@@ -11,6 +11,7 @@ import {
   Layers,
   Globe,
   Building2,
+  GraduationCap,
   RotateCcw,
   Lock,
   LogIn,
@@ -41,11 +42,29 @@ interface EvaluationItem {
   progress_message?: string;
   review_reason?: string;
   created_at: string;
-  evaluation_source?: 'PUBLIC' | 'INSTITUTE';
+  evaluation_source?: 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK';
+  material_source?: 'GLOBAL' | 'INSTITUTE' | 'FACULTY_MOCK';
+  faculty_mock_test_id?: string;
+  faculty_mock_title?: string;
+  faculty_name?: string;
   institute_id?: string;
   institute_name?: string;
   batch_name?: string;
 }
+
+const resolveEvaluationSource = (ev: EvaluationItem): 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK' => {
+  const source = String(ev.evaluation_source || '').trim().toUpperCase();
+  const materialSource = String(ev.material_source || '').trim().toUpperCase();
+  const materialType = String(ev.material_type || '').trim().toUpperCase();
+  if (
+    source === 'FACULTY_MOCK' ||
+    materialSource === 'FACULTY_MOCK' ||
+    materialType === 'FACULTY_MOCK_TEST' ||
+    Boolean(ev.faculty_mock_test_id)
+  ) return 'FACULTY_MOCK';
+  if (source === 'INSTITUTE' || materialSource === 'INSTITUTE') return 'INSTITUTE';
+  return 'PUBLIC';
+};
 
 interface MyEvaluationsProps {
   onViewReport: (id: string) => void;
@@ -61,7 +80,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
   const [noticeMessage, setNoticeMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null);
   const [search, setSearch] = useState<string>('');
   const [levelFilter, setLevelFilter] = useState<string>('ALL');
-  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'PUBLIC' | 'INSTITUTE'>('ALL');
+  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'PUBLIC' | 'INSTITUTE' | 'FACULTY_MOCK'>('ALL');
   const [recheckEvaluation, setRecheckEvaluation] = useState<EvaluationResult | null>(null);
   const [isRecheckModalOpen, setIsRecheckModalOpen] = useState<boolean>(false);
   const [loadingRecheckId, setLoadingRecheckId] = useState<string | null>(null);
@@ -137,8 +156,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
   const filtered = evaluations.filter((ev) => {
     if (levelFilter !== 'ALL' && (ev.level || '').toUpperCase() !== levelFilter.toUpperCase()) return false;
     if (sourceFilter !== 'ALL') {
-      const src = (ev.evaluation_source || 'PUBLIC').toUpperCase();
-      if (src !== sourceFilter.toUpperCase()) return false;
+      if (resolveEvaluationSource(ev) !== sourceFilter) return false;
     }
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -147,7 +165,9 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
         (ev.material_type || '').toLowerCase().includes(q) ||
         (ev.display_id || ev.displayId || '').toLowerCase().includes(q) ||
         (ev.id || '').toLowerCase().includes(q) ||
-        (ev.institute_name && ev.institute_name.toLowerCase().includes(q))
+        (ev.institute_name && ev.institute_name.toLowerCase().includes(q)) ||
+        (ev.faculty_name && ev.faculty_name.toLowerCase().includes(q)) ||
+        (ev.faculty_mock_title && ev.faculty_mock_title.toLowerCase().includes(q))
       );
     }
     return true;
@@ -223,6 +243,17 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
               <Building2 className="w-3 h-3" />
               Institute
             </button>
+            <button
+              onClick={() => setSourceFilter('FACULTY_MOCK')}
+              className={`px-2.5 py-1 text-[11px] font-bold rounded-md transition flex items-center gap-1 ${
+                sourceFilter === 'FACULTY_MOCK'
+                  ? 'bg-white dark:bg-slate-700 text-violet-700 dark:text-violet-300 shadow-xs'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+              }`}
+            >
+              <GraduationCap className="w-3 h-3" />
+              Faculty Mock
+            </button>
           </div>
 
           <div className="flex items-center gap-1.5">
@@ -265,7 +296,9 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filtered.map((ev) => {
-                  const isInstitute = ev.evaluation_source === 'INSTITUTE';
+                  const evaluationSource = resolveEvaluationSource(ev);
+                  const isInstitute = evaluationSource === 'INSTITUTE';
+                  const isFacultyMock = evaluationSource === 'FACULTY_MOCK';
                   return (
                     <tr key={ev.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition">
                       <td className="py-3 px-4">
@@ -292,7 +325,22 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
                         )}
                       </td>
                       <td className="py-3 px-4">
-                        {isInstitute ? (
+                        {isFacultyMock ? (
+                          <div className="flex flex-col">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-800 px-1.5 py-0.5 rounded w-fit">
+                              <GraduationCap className="w-3 h-3" />
+                              Faculty Mock
+                            </span>
+                            <span className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5 truncate max-w-[180px]" title={ev.faculty_mock_title || ev.faculty_name}>
+                              {ev.faculty_mock_title || ev.faculty_name || 'Faculty mock test'}
+                            </span>
+                            {ev.faculty_name && ev.faculty_mock_title && (
+                              <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-[180px]">
+                                {ev.faculty_name}
+                              </span>
+                            )}
+                          </div>
+                        ) : isInstitute ? (
                           <div className="flex flex-col">
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 px-1.5 py-0.5 rounded w-fit">
                               <Building2 className="w-3 h-3" />
