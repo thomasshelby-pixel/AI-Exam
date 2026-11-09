@@ -132,24 +132,48 @@ function findSubQuestionInsideParent(
   subQ: string
 ): number {
   const target = String(Number(qNum));
-  const normalizedSub = subQ.toLowerCase();
+  const targetPath = getSubQuestionPath(subQ);
+  if (!targetPath.length) return -1;
   let activeParent = false;
+  let activePath: string[] = [];
 
   const namedHeader = /^\s*(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(\d{1,2})\b/i;
   const numberedHeader = /^\s*(\d{1,2})\s*[.)]\s*(?=\(|[A-Z]|$)/;
-
-  const explicitTarget = new RegExp(
-    `^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*)?${target}\\s*[.):\\-]?\\s*\\(\\s*${normalizedSub}\\s*\\)`,
-    'i'
-  );
-  const childHeader = new RegExp(
-    `^\\s*(?:\\(\\s*${normalizedSub}\\s*\\)|${normalizedSub}[.)])\\s*(?:[-–—:.)]\\s*)?(?=[A-Z(])`,
-    'i'
-  );
+  const partLabel = /^\s*(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*)?((?:\(\s*[a-zA-Z0-9]+\s*\)|\[\s*[a-zA-Z0-9]+\s*\])+|[a-zA-Z0-9]+[.)]|[a-zA-Z0-9]+)(?=\s|[-–—:]|$)/i;
+  const roman = new Set([
+    'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+    'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx',
+  ]);
+  const family = (token: string, depth: number): string => {
+    const value = token.toLowerCase();
+    if (/^\d+$/.test(value)) return 'numeric';
+    if (roman.has(value) && (value.length > 1 || depth > 0)) return 'roman';
+    if (/^[a-z]$/.test(value)) return 'alphabetic';
+    if (roman.has(value)) return 'roman';
+    return 'other:' + value;
+  };
+  const combine = (current: string[], incoming: string[]): string[] => {
+    if (!incoming.length) return current;
+    if (incoming.length > 1) return incoming;
+    if (!current.length) return incoming;
+    const token = incoming[0];
+    const last = current[current.length - 1];
+    if (family(token, current.length) === family(last, current.length - 1) ||
+        (last.toLowerCase() === 'i' && roman.has(token.toLowerCase()))) {
+      return current.slice(0, -1).concat(token);
+    }
+    if (current.length > 1 &&
+        (family(token, current.length) === family(current[0], 0) ||
+         (current[0].toLowerCase() === 'i' && roman.has(token.toLowerCase())))) {
+      return [token];
+    }
+    return current.concat(token);
+  };
+  const samePath = (left: string[], right: string[]) =>
+    left.length === right.length && left.every((part, index) => part.toLowerCase() === right[index].toLowerCase());
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
+    const trimmed = lines[index].trim();
     if (!trimmed) continue;
 
     const named = trimmed.match(namedHeader);
@@ -159,20 +183,28 @@ function findSubQuestionInsideParent(
     if (detectedParent) {
       const normalizedParent = String(Number(detectedParent));
       if (normalizedParent !== target) {
-        if (activeParent && Number(normalizedParent) > Number(target)) {
-          return -1;
-        }
+        if (activeParent && Number(normalizedParent) > Number(target)) return -1;
         activeParent = false;
+        activePath = [];
         continue;
       }
+
       activeParent = true;
-      if (explicitTarget.test(trimmed)) return index;
+      activePath = [];
+      const explicitIdentity = parseCanonicalQuestionIdentity(trimmed);
+      if (samePath(explicitIdentity.subQuestionPath || [], targetPath)) return index;
       continue;
     }
 
-    if (activeParent && childHeader.test(trimmed)) {
-      return index;
-    }
+    if (!activeParent) continue;
+    const labelMatch = trimmed.match(partLabel);
+    if (!labelMatch) continue;
+
+    const normalizedLabel = labelMatch[1];
+    const parsedLabel = parseCanonicalQuestionIdentity('Q' + target + normalizedLabel);
+    const incoming = parsedLabel.subQuestionPath || [];
+    activePath = combine(activePath, incoming);
+    if (samePath(activePath, targetPath)) return index;
   }
 
   return -1;
