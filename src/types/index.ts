@@ -811,6 +811,7 @@ export interface EvaluationRunPackage {
 export type CanonicalEvaluationStatus =
   | 'EVALUATED'
   | 'FAILED_TO_EVALUATE'
+  | 'NEEDS_REVIEW'
   | 'NEEDS_MAPPING_REVIEW'
   | 'UNATTEMPTED'
   | 'EXCLUDED_ALTERNATIVE'
