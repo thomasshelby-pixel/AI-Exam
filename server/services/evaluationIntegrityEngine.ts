@@ -1120,8 +1120,11 @@ export function processEvaluationIntegrity(
     );
     const finalNeedsHumanReview = needsHumanReview || unsupportedZeroNeedsReview;
 
-    if (attemptDetectedButClassifiedBlank && !questionFlags.includes('ATTEMPTED_ANSWER_CLASSIFIED_UNATTEMPTED')) {
-      questionFlags.push('ATTEMPTED_ANSWER_CLASSIFIED_UNATTEMPTED');
+    if (attemptDetectedButClassifiedBlank) {
+      if (!questionFlags.includes('ATTEMPTED_ANSWER_CLASSIFIED_UNATTEMPTED')) {
+        questionFlags.push('ATTEMPTED_ANSWER_CLASSIFIED_UNATTEMPTED');
+      }
+      if (!questionFlags.includes('REVIEW_REQUIRED')) questionFlags.push('REVIEW_REQUIRED');
     }
     if (unsupportedZeroNeedsReview) {
       questionFlags.push('UNSUPPORTED_ZERO_REQUIRES_REVIEW', 'REVIEW_REQUIRED');
@@ -1164,7 +1167,7 @@ export function processEvaluationIntegrity(
       : Math.max(0, Math.round((maxMarks - verifiedAwarded) * 4) / 4);
 
     let status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear' = 'correct';
-    if (finalNeedsHumanReview && rawQ.status !== 'not_attempted') {
+    if (finalNeedsHumanReview && (rawQ.status !== 'not_attempted' || attemptDetectedButClassifiedBlank)) {
       status = 'unclear';
     } else if (verifiedAwarded <= 0) {
       status = rawQ.status === 'not_attempted' ? 'not_attempted' : 'incorrect';
