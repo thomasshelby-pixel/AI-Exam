@@ -101,6 +101,10 @@ try {
       version: '1.0',
       status: 'ACTIVE',
       admin_approved: 1,
+      file_id: stored.suggested_answer_file_id,
+      question_material_id: stored.question_paper_reference_file_id,
+      suggested_answer_material_id: stored.suggested_answer_file_id,
+      marking_scheme_material_id: stored.marking_scheme_file_id,
       official_max_marks: stored.maximum_marks,
       question_paper_text: stored.question_paper_text,
       suggested_answers_text: stored.suggested_answers_text,
@@ -115,6 +119,9 @@ try {
   assert.equal(verified.officialPaperMaxMarks, 100, 'Mock maximum marks are preserved');
   assert.equal(verified.manifest.materialSource, 'FACULTY_MOCK', 'Faculty mock remains explicitly distinct from institute and global material');
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
+  assert.equal(verified.manifest.questionMaterialId, 'qp-text-file', 'Question Paper evidence binds to its own private TXT file');
+  assert.equal(verified.manifest.suggestedAnswerMaterialId, 'suggested-answer-file', 'Suggested Answer evidence binds to its own private TXT file');
+  assert.equal(verified.manifest.markingSchemeMaterialId, 'marking-scheme-file', 'Marking Scheme evidence binds to its own private TXT file');
 
   assert.throws(() => enforceMaterialHardGate({
     evaluationId: 'eval_unlocked_' + suffix,
