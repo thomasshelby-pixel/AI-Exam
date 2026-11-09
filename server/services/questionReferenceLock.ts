@@ -256,6 +256,27 @@ export function extractLockedQuestionSlice(
   // Define candidate search patterns for this question
   const startRegexes: RegExp[] = [];
 
+  // Generic full-path match for every numbering family: Q1(a)(ii), Q1(1)(A),
+  // Q1(i)(2)(b), and compact nested Q1(a(ii)). Do not special-case Roman parts.
+  if (subQ) {
+    const path = parseQuestionCode('Q' + qNum + '(' + subQ + ')').subQuestionPath;
+    if (path.length) {
+      const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\  // Define candidate search patterns for this question
+  const startRegexes: RegExp[] = [];
+
+  if (docType === 'MS') {');
+      const group = (value: string) => '\\s*[([{]\\s*' + escapeRegex(value) + '\\s*[)\\]}]';
+      const expandedSuffix = path.map(group).join('');
+      const compactSuffix = '\\s*\\(\\s*' + escapeRegex(path[0]) +
+        path.slice(1).map((part) => '\\s*\\(\\s*' + escapeRegex(part) + '\\s*\\)').join('') +
+        '\\s*\\)';
+      const questionPrefix = '^\\s*(?:(?:QUESTION\\s*(?:NO\\.?\\s*)?|Q\\.?\\s*|ANSWER\\s*|ANS\\.?\\s*)?'+
+        qNum + '\\s*(?:[.):]\\s*)?)';
+      startRegexes.push(new RegExp(questionPrefix + expandedSuffix, 'i'));
+      if (path.length > 1) startRegexes.push(new RegExp(questionPrefix + compactSuffix, 'i'));
+    }
+  }
+
   if (docType === 'MS') {
     // Marking scheme has explicit headings: "QUESTION 5(a) – 10 MARKS" or "QUESTION 1 – 15 MARKS"
     if (subQ) {
@@ -420,79 +441,55 @@ export function extractLockedQuestionSlice(
   const firstLine = lineOffset > 0 ? lines[startIndex].slice(lineOffset).trim() : lines[startIndex];
   const capturedLines: string[] = [firstLine];
 
-  // Next sub-question or next question stop patterns
-  const nextSubLetter = subQ ? String.fromCharCode(subQ.charCodeAt(0) + 1) : undefined;
-  const nextQ = String(num + 1);
+  // Keep the reference slice limited to this exact leaf path. The next sibling
+  // may be Roman, alphabetic, numeric, Greek, or another numbering style.
+  const targetPath = parseQuestionCode('Q' + qNum + (subQ ? '(' + subQ + ')' : '')).subQuestionPath;
+  const startIndent = lines[startIndex].length - lines[startIndex].trimStart().length;
+  const childHeader = /^(\s*)(?:(PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(\([\p{L}\p{N}]+\)|\[[\p{L}\p{N}]+\]|[\p{L}\p{N}]+[).])\s*/iu;
 
   for (let i = startIndex + 1; i < lines.length; i++) {
-    let line = lines[i];
+    const line = lines[i];
     const trimmed = line.trim();
-    const lower = trimmed.toLowerCase();
 
-    // A Division A Question Paper slice must not absorb Division B descriptive
-    // questions that restart their own numbering sequence.
-    if (docType === 'QP' && /^Division\s+B\b/i.test(trimmed)) {
-      break;
-    }
+    if (docType === 'QP' && /^Division\s+B\b/i.test(trimmed)) break;
 
-    let isStop = false;
+    const named = line.match(/^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?\s*|ANSWER\s*|ANS\.?\s*)(\d{1,3})(.*)$/i);
+    const bare = named ? null : line.match(/^(\s*)(\d{1,3})(.*)$/u);
+    let nextQuestionHeader: { number: string; path: string[] } | null = null;
 
-    // Check if next sub-question started
-    if (nextSubLetter) {
-      // If line contains embedded next subQ (e.g. line has "(b) Determine..."), cut off line before it
-      if (subQ === 'a' && nextSubLetter === 'b') {
-        const bIdx = line.search(/\(b\)\s+(?:Determine|Ministry|Indian|S\.No|Particulars)/i);
-        if (bIdx > 0) {
-          capturedLines.push(line.slice(0, bIdx).trim());
-          break;
-        }
-      }
-
-      if (
-        lower.startsWith(`(${nextSubLetter})`) ||
-        lower.includes(` (${nextSubLetter}) `) ||
-        lower.startsWith(`question ${qNum}(${nextSubLetter})`) ||
-        lower.startsWith(`question ${qNum} (${nextSubLetter})`) ||
-        lower.startsWith(`q.${qNum}(${nextSubLetter})`) ||
-        lower.startsWith(`q${qNum}(${nextSubLetter})`) ||
-        lower.startsWith(`question no. ${qNum}(${nextSubLetter})`) ||
-        (docType === 'MS' && lower.startsWith(`question ${qNum}(${nextSubLetter})`)) ||
-        (docType === 'SA' && isSectionB && qNum === '5' && nextSubLetter === 'b' && (lower.startsWith(`(b)`) || lower.includes(`- (b)`)))
-      ) {
-        isStop = true;
+    if (named) {
+      const suffix = String(named[2] || '').trim().replace(/^[-–—:.)]+\s*/, '');
+      const parsed = parseQuestionCode('Q' + named[1] + ' ' + suffix);
+      nextQuestionHeader = { number: String(Number(named[1])), path: parsed.subQuestionPath };
+    } else if (bare) {
+      const rawSuffix = String(bare[3] || '').replace(/^\s*/, '');
+      if (/^[.):\-–—]/u.test(rawSuffix) || /^[([{]/u.test(rawSuffix)) {
+        const suffix = rawSuffix.replace(/^[.):\-–—]+\s*/, '');
+        const parsed = parseQuestionCode('Q' + bare[2] + ' ' + suffix);
+        nextQuestionHeader = { number: String(Number(bare[2])), path: parsed.subQuestionPath };
       }
     }
 
-    // Check if next main question started
-    if (
-      lower.startsWith(`question ${nextQ}`) ||
-      lower.startsWith(`question no. ${nextQ}`) ||
-      lower.startsWith(`answer ${nextQ}`) ||
-      lower.startsWith(`ans. ${nextQ}`) ||
-      lower.startsWith(`q.${nextQ}`) ||
-      lower.startsWith(`q${nextQ}`) ||
-      lower.startsWith(`${nextQ}. `) ||
-      (docType === 'MS' && lower.startsWith(`question ${nextQ}`)) ||
-      (docType === 'MS' && lower.startsWith(`total q${qNum}`))
-    ) {
-      isStop = true;
+    if (nextQuestionHeader) {
+      if (nextQuestionHeader.number !== String(Number(qNum))) break;
+      const candidatePath = nextQuestionHeader.path || [];
+      const samePath = candidatePath.length === targetPath.length &&
+        candidatePath.every((part, index) => part === targetPath[index]);
+      const isDescendant = candidatePath.length > targetPath.length &&
+        targetPath.every((part, index) => candidatePath[index] === part);
+      if (!samePath && !isDescendant) break;
     }
 
-    // A new numbered question heading is an authoritative section boundary,
-    // even when the current answer contains only one captured line. Waiting for
-    // a second line here can bleed the following question (and later answers)
-    // into a short sub-question reference such as Q2(d).
-    const explicitNextMainQuestionHeader = new RegExp(
-      `^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*)?${nextQ}\\s*(?:[.):]?\\s*)(?:\\([a-z0-9]+\\)|[A-Z][a-z])`,
-      'i'
-    ).test(trimmed);
-
-    if ((isStop && capturedLines.length >= 2) || explicitNextMainQuestionHeader) {
+    const child = line.match(childHeader);
+    if (child && targetPath.length > 0 && child[1].length <= startIndent) {
+      // A same-level marker is the next sibling regardless of its numbering alphabet.
       break;
     }
+
+    if (docType === 'MS' && new RegExp('^\\\\s*total\\\\s+q' + qNum + '\\\\b', 'i').test(trimmed)) break;
 
     capturedLines.push(line);
-    if (capturedLines.length > 250) break; // Reasonable ceiling
+    if (capturedLines.length > 250) break;
   }
 
   const snippet = capturedLines.join('\n').trim();
