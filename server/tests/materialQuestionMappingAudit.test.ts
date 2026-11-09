@@ -112,4 +112,40 @@ assert.equal(missingMarkingScheme.status, 'PARTIAL');
 assert.equal(missingMarkingScheme.markingSchemeIndexed, false);
 assert.equal(missingMarkingScheme.markingSchemeCoveragePercent, null);
 
+const nestedQuestionPaper = [
+  'CA INTERMEDIATE - ADVANCED ACCOUNTING',
+  'PART II - DESCRIPTIVE QUESTIONS',
+  'Question 3. Prepare the required statement and supporting calculations.',
+  '(a) First-level requirement.',
+  '    (i) First nested requirement with its own answer.',
+  '    (ii) Second nested requirement with its own answer.',
+  '(b) Another independently marked first-level requirement.',
+].join('\n');
+const nestedSuggestedAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 3(a) - First-level suggested answer container.',
+  'Question 3(a)(i) - First nested answer and working.',
+  'Question 3(a)(ii) - Second nested answer and working.',
+  'Question 3(b) - Separate first-level answer.',
+].join('\n');
+const nestedMarkingScheme = [
+  'MARKING SCHEME',
+  'Question 3(a) - 5 Marks',
+  'Question 3(a)(i) - 2 Marks',
+  'Question 3(a)(ii) - 3 Marks',
+  'Question 3(b) - 4 Marks',
+].join('\n');
+
+const nestedAudit = buildMaterialQuestionMappingAudit({
+  questionPaperText: nestedQuestionPaper,
+  suggestedAnswersText: nestedSuggestedAnswers,
+  markingSchemeText: nestedMarkingScheme,
+});
+assert.equal(nestedAudit.status, 'MATCHED', JSON.stringify(nestedAudit, null, 2));
+assert.deepEqual(nestedAudit.questionPaperIds, ['Q3(a)(i)', 'Q3(a)(ii)', 'Q3(b)']);
+assert.deepEqual(nestedAudit.suggestedAnswerIds, ['Q3(a)(i)', 'Q3(a)(ii)', 'Q3(b)']);
+assert.deepEqual(nestedAudit.markingSchemeIds, ['Q3(a)(i)', 'Q3(a)(ii)', 'Q3(b)']);
+assert.deepEqual(nestedAudit.missingFromSuggestedAnswers, []);
+assert.deepEqual(nestedAudit.missingFromMarkingScheme, []);
+
 console.log('Material question mapping audit tests passed.');
