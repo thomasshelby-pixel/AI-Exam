@@ -1891,7 +1891,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // FREE mocks grant one first copy per student + exact mock; PAID mocks
     // require a captured one-copy purchase for every evaluation. Accounts with
     // a permanent-free entitlement bypass both copy-payment paths entirely.
-    if (isFacultyMockMode && !isPermanentFreeStudent) {
+    if (isFacultyMockMode && (!isPermanentFreeStudent || facultyMockReviewRetryPrevious)) {
       const selectedMockId = String(facultyMockRecord?.id || '').trim();
       if (facultyMockReviewRetryPrevious && facultyMockReviewRetryOfEvaluationId) {
         const claimed = await claimFacultyMockReviewRetry(
@@ -1932,6 +1932,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         }
         db.prepare('UPDATE evaluations SET retry_of_evaluation_id = ? WHERE id = ?')
           .run(facultyMockReviewRetryOfEvaluationId, evaluationId);
+        const linkedPreviousEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?')
+          .get(facultyMockReviewRetryOfEvaluationId) as any;
+        if (linkedPreviousEvaluation) {
+          await syncRecordToFirestore('evaluations', facultyMockReviewRetryOfEvaluationId, linkedPreviousEvaluation);
+        }
       } else {
       const mockAccessType = String(facultyMockRecord?.access_type || 'FREE').trim().toUpperCase() === 'PAID'
         ? 'PAID'
