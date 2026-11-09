@@ -10,6 +10,7 @@
  */
 
 import crypto from 'node:crypto';
+import { parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 
 export interface LockedReferenceSlice {
   found: boolean;
@@ -76,68 +77,19 @@ export function parseQuestionCode(code: string): {
   subQ?: string;
   questionNumber: string;
   subQuestion?: string;
+  subQuestionPath: string[];
   isMcq: boolean;
   cleanCode: string;
 } {
-  const trimmed = code.trim();
-  const isMcq = /^(?:MCQ|OBJECTIVE)/i.test(trimmed) || /MCQ/i.test(trimmed);
-
-  if (isMcq) {
-    const num = trimmed.replace(/[^0-9]/g, '');
-    return {
-      qNum: num || '1',
-      subQ: 'MCQ',
-      questionNumber: num || '1',
-      subQuestion: 'MCQ',
-      isMcq: true,
-      cleanCode: `MCQ${num || '1'}`,
-    };
-  }
-
-  // Handle standard and nested variants: "Question 5(a)", "Q5(a)", "5(a)", "5a", "Q6(a)(1)", "Q6(a)(2)", "6(a)(i)"
-  const qNumMatch = trimmed.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(.*)$/i);
-  if (qNumMatch) {
-    const qNum = qNumMatch[1];
-    const remaining = (qNumMatch[2] || '').trim();
-    let subQ: string | undefined;
-
-    if (remaining) {
-      // Nested sub-question: (a)(1) or (a)(i)
-      const nestedMatch = remaining.match(/^\(([a-zA-Z0-9]+)\)\s*\(([a-zA-Z0-9]+)\)/);
-      if (nestedMatch) {
-        subQ = `${nestedMatch[1].toLowerCase()}(${nestedMatch[2].toLowerCase()})`;
-      } else {
-        // Single bracket: (a) or [a]
-        const singleBracket = remaining.match(/^[\(\[]([a-zA-Z0-9]+)[\)\]]/);
-        if (singleBracket) {
-          subQ = singleBracket[1].toLowerCase();
-        } else {
-          // Direct token: a or a1 or a(1)
-          const directMatch = remaining.match(/^([a-zA-Z](?:\([a-zA-Z0-9]+\)|[0-9]+)?)/);
-          if (directMatch) {
-            subQ = directMatch[1].toLowerCase();
-          }
-        }
-      }
-    }
-
-    const cleanCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
-    return {
-      qNum,
-      subQ,
-      questionNumber: qNum,
-      subQuestion: subQ,
-      isMcq: false,
-      cleanCode,
-    };
-  }
-
-  const digits = trimmed.replace(/[^0-9]/g, '');
+  const identity = parseCanonicalQuestionIdentity(String(code || '').trim());
   return {
-    qNum: digits || '1',
-    questionNumber: digits || '1',
-    isMcq: false,
-    cleanCode: `Q${digits || '1'}`,
+    qNum: identity.questionNumber,
+    subQ: identity.subQuestion,
+    questionNumber: identity.questionNumber,
+    subQuestion: identity.subQuestion,
+    subQuestionPath: identity.subQuestionPath || [],
+    isMcq: identity.isMcq,
+    cleanCode: identity.canonicalId,
   };
 }
 
@@ -166,48 +118,89 @@ function findSubQuestionInsideParent(
   qNum: string,
   subQ: string
 ): number {
-  const target = String(Number(qNum));
-  const normalizedSub = subQ.toLowerCase();
+  const targetNumber = String(Number(qNum));
+  const targetCode = parseCanonicalQuestionIdentity(
+    'Q' + targetNumber + (/^[([{]/.test(subQ) ? subQ : '(' + subQ + ')')
+  );
+  const targetPath = targetCode.subQuestionPath || [];
+  if (!targetPath.length) return -1;
+
   let activeParent = false;
+  let activePath: string[] = [];
+  let activeIndent = 0;
 
-  const namedHeader = /^\s*(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(\d{1,2})\b/i;
-  const numberedHeader = /^\s*(\d{1,2})\s*[.)]\s*(?=\(|[A-Z]|$)/;
+  const namedHeader = /^\s*(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(\d{1,3})(.*)$/i;
+  const parseHeader = (line: string): { questionNumber: string; path: string[]; indent: number } | null => {
+    const named = line.match(namedHeader);
+    if (named) {
+      const suffix = String(named[2] || '').trim().replace(/^[-–—:.)]+\s*/, '');
+      const parsed = parseCanonicalQuestionIdentity('Q' + named[1] + ' ' + suffix);
+      return {
+        questionNumber: String(Number(named[1])),
+        path: parsed.subQuestionPath || [],
+        indent: line.length - line.trimStart().length,
+      };
+    }
 
-  const explicitTarget = new RegExp(
-    `^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*)?${target}\\s*[.):\\-]?\\s*\\(\\s*${normalizedSub}\\s*\\)`,
-    'i'
-  );
-  const childHeader = new RegExp(
-    `^\\s*(?:\\(\\s*${normalizedSub}\\s*\\)|${normalizedSub}[.)])\\s*(?:[-–—:.)]\\s*)?(?=[A-Z(])`,
-    'i'
-  );
+    const bare = line.match(/^(\s*)(\d{1,3})(.*)$/u);
+    if (!bare) return null;
+    const rawSuffix = String(bare[3] || '').replace(/^\s*/, '');
+    if (!/^[.):\-–—]/u.test(rawSuffix) && !/^[([{]/u.test(rawSuffix)) return null;
+    const suffix = rawSuffix.replace(/^[.):\-–—]+\s*/, '');
+    const parsed = parseCanonicalQuestionIdentity('Q' + bare[2] + ' ' + suffix);
+    return {
+      questionNumber: String(Number(bare[2])),
+      path: parsed.subQuestionPath || [],
+      indent: bare[1].length,
+    };
+  };
+
+  const childHeader = /^(\s*)(?:(PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(\([\p{L}\p{N}]+\)|\[[\p{L}\p{N}]+\]|[\p{L}\p{N}]+[).])\s*/iu;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    const named = trimmed.match(namedHeader);
-    const numbered = named ? null : trimmed.match(numberedHeader);
-    const detectedParent = named?.[1] || numbered?.[1];
-
-    if (detectedParent) {
-      const normalizedParent = String(Number(detectedParent));
-      if (normalizedParent !== target) {
-        if (activeParent && Number(normalizedParent) > Number(target)) {
-          return -1;
-        }
+    const header = parseHeader(line);
+    if (header) {
+      if (header.questionNumber !== targetNumber) {
+        if (activeParent && Number(header.questionNumber) > Number(targetNumber)) return -1;
         activeParent = false;
+        activePath = [];
+        activeIndent = 0;
         continue;
       }
+
       activeParent = true;
-      if (explicitTarget.test(trimmed)) return index;
+      activePath = header.path;
+      activeIndent = header.indent;
+      if (parseCanonicalQuestionIdentity('Q' + header.questionNumber +
+        activePath.map((part) => '(' + part + ')').join('')).canonicalId === targetCode.canonicalId) {
+        return index;
+      }
       continue;
     }
 
-    if (activeParent && childHeader.test(trimmed)) {
-      return index;
-    }
+    if (!activeParent) continue;
+    const child = line.match(childHeader);
+    if (!child) continue;
+    const markerCode = parseCanonicalQuestionIdentity('Q' + targetNumber + ' ' + child[3]);
+    const markerPath = markerCode.subQuestionPath || [];
+    if (!markerPath.length) continue;
+
+    const childIndent = child[1].length;
+    const explicitNested = String(child[2] || '').toUpperCase().startsWith('SUB');
+    const nestedByLayout = activePath.length > 0 && childIndent > activeIndent;
+    let nextPath: string[];
+    if (!activePath.length) nextPath = markerPath;
+    else if (explicitNested || nestedByLayout) nextPath = activePath.concat(markerPath);
+    else nextPath = activePath.slice(0, -1).concat(markerPath);
+
+    const candidate = parseCanonicalQuestionIdentity(
+      'Q' + targetNumber + nextPath.map((part) => '(' + part + ')').join('')
+    ).canonicalId;
+    if (candidate === targetCode.canonicalId) return index;
+
+    activePath = nextPath;
+    activeIndent = childIndent;
   }
 
   return -1;
