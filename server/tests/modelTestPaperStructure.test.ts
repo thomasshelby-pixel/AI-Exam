@@ -426,6 +426,24 @@ const optionalOverAttemptGate = validatePreEvaluationGate({
   } as any,
 });
 assert.ok(optionalOverAttemptGate.failedInvariants.some((message) => message.includes('OPTIONAL_ATTEMPT_LIMIT_EXCEEDED')));
+const oneAllowedOptionalAttemptGate = validatePreEvaluationGate({
+  paperStructure: optionalFacultyMock,
+  questionPaperText: 'Question Paper',
+  suggestedAnswersText: 'Suggested Answers',
+  markingSchemeText: 'Marking Scheme',
+  officialPaperMaxMarks: 40,
+  coverageMap: {
+    unmappedPages: [],
+    attemptedQuestions: [
+      { questionNumber: '3', subQuestionNumber: 'a', fullQuestionCode: 'Q3(a)', pages: [1] },
+    ],
+  } as any,
+});
+assert.equal(
+  oneAllowedOptionalAttemptGate.passed,
+  true,
+  'A cleanly mapped attempt within the source-backed optional limit must proceed without NEEDS_REVIEW.',
+);
 
 const unresolvedOptionalFacultyMock = getAuthoritativePaperStructure({
   level: 'INTERMEDIATE',
