@@ -1,10 +1,33 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
-import { enforceMaterialHardGate } from '../services/materialHardGateService.js';
+import { enforceMaterialHardGate, resolveOfficialPaperMaximumMarks } from '../services/materialHardGateService.js';
+import { resolveFacultyMockComponentSourceIds } from '../services/materialComponentSourceIds.js';
 import { buildFacultyMockEvaluationReference, parseFacultyMockEvaluationReference, validateFacultyMockReferenceSections } from '../services/facultyMockReferenceParser.js';
 
 initDatabase();
+
+// The hard gate may take the official total from the QP header. Worker
+// re-validation must apply this same precedence rather than comparing the
+// header-derived job total to only the raw Faculty Mock record field.
+assert.equal(
+  resolveOfficialPaperMaximumMarks(100, 'CA Mock Question Paper\\nMaximum Marks: 50'),
+  50,
+  'An explicit supported QP maximum overrides a stale/default configured maximum consistently.',
+);
+assert.equal(
+  resolveOfficialPaperMaximumMarks(80, 'CA Mock Question Paper with no maximum-marks header.'),
+  80,
+  'When the QP does not state a maximum, the configured mock maximum remains authoritative.',
+);
+
+const legacyMockSourceIds = resolveFacultyMockComponentSourceIds({
+  id: 'legacy-mock-no-component-file-ids',
+  marking_scheme_text: 'Marking scheme evidence with sufficient detail.',
+});
+assert.equal(legacyMockSourceIds.questionMaterialId, 'mat_qp_legacy-mock-no-component-file-ids');
+assert.equal(legacyMockSourceIds.suggestedAnswerMaterialId, 'mat_sa_legacy-mock-no-component-file-ids');
+assert.equal(legacyMockSourceIds.markingSchemeMaterialId, 'mat_ms_legacy-mock-no-component-file-ids');
 
 const suffix = crypto.randomBytes(6).toString('hex');
 const facultyId = `fmock_test_faculty_${suffix}`;
@@ -86,6 +109,11 @@ try {
   assert.equal(stored.suggested_answer_file_id, 'suggested-answer-file', 'Suggested Answers TXT metadata has its own file record');
   assert.equal(stored.marking_scheme_file_id, 'marking-scheme-file', 'Marking Scheme TXT metadata has its own file record');
   assert.equal(stored.access_type, 'FREE', 'Existing/default faculty mocks preserve free first-copy access');
+
+  const storedSourceIds = resolveFacultyMockComponentSourceIds(stored);
+  assert.equal(storedSourceIds.questionMaterialId, 'qp-text-file');
+  assert.equal(storedSourceIds.suggestedAnswerMaterialId, 'suggested-answer-file');
+  assert.equal(storedSourceIds.markingSchemeMaterialId, 'marking-scheme-file');
 
   const paidTestId = `fmock_paid_mode_${suffix}`;
   db.prepare(`
