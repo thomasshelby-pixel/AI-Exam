@@ -517,6 +517,11 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   };
   const normalizedSuffix = (value: string): string =>
     String(value || '').trim().replace(/^[-–—:./]+\s*/, '');
+  const stripTrailingMarkAllocation = (value: string): string =>
+    String(value || '').replace(
+      /\s*(?:\[\s*\d+(?:\.\d+)?\s*(?:Marks?|M)\s*\]|\(\s*\d+(?:\.\d+)?\s*(?:Marks?|M)\s*\)|\b\d+(?:\.\d+)?\s*(?:Marks?|M)\b|\bMarks?\s*[:=]\s*\d+(?:\.\d+)?\s*)\s*$/i,
+      ''
+    ).trim();
 
   let activeQuestionNumber: string | null = null;
   let activePath: string[] = [];
@@ -558,9 +563,10 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
 
     if (isExplicitQuestionLine && questionNumber) {
       activeQuestionNumber = questionNumber;
-      const hasSubPartLabel = startsWithPartLabel(suffix);
+      const structuralSuffix = stripTrailingMarkAllocation(suffix);
+      const hasSubPartLabel = startsWithPartLabel(structuralSuffix);
       const parsed = hasSubPartLabel
-        ? parseCanonicalQuestionIdentity('Q' + questionNumber + ' ' + suffix)
+        ? parseCanonicalQuestionIdentity('Q' + questionNumber + ' ' + structuralSuffix)
         : parseCanonicalQuestionIdentity('Q' + questionNumber);
       activePath = parsed.subQuestionPath || [];
       activePathIndent = indentation;
@@ -581,7 +587,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     if (!markerPath.length) continue;
 
     const childIndent = child[1].length;
-    const isExplicitNestedPart = partWord.startsWith('SUB');
+    const isExplicitNestedPart = partWord.length > 0;
     const isNestedByLayout = activePath.length > 0 && childIndent > activePathIndent;
     let nextPath: string[];
     if (!activePath.length) {
