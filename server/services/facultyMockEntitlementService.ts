@@ -38,6 +38,7 @@ export function isEligibleFacultyMockReviewRetry(
     String(previousEvaluation.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
     String(previousEvaluation.faculty_mock_test_id || '') === String(facultyMockTestId) &&
     String(previousEvaluation.answer_sheet_sha256 || '').trim() &&
+    !String(previousEvaluation.retry_of_evaluation_id || '').trim() &&
     !String(previousEvaluation.faculty_mock_review_retry_evaluation_id || '').trim()
   );
 }
