@@ -25,6 +25,32 @@ export interface FacultyMockReviewRetryClaim {
   createdAt: string;
 }
 
+export function isEligibleFacultyMockReviewRetry(
+  previousEvaluation: any,
+  studentId: string,
+  facultyMockTestId: string,
+): boolean {
+  return Boolean(
+    previousEvaluation &&
+    String(previousEvaluation.student_id || '') === String(studentId) &&
+    String(previousEvaluation.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
+    String(previousEvaluation.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK' &&
+    String(previousEvaluation.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
+    String(previousEvaluation.faculty_mock_test_id || '') === String(facultyMockTestId) &&
+    String(previousEvaluation.answer_sheet_sha256 || '').trim() &&
+    !String(previousEvaluation.faculty_mock_review_retry_evaluation_id || '').trim()
+  );
+}
+
+export function isExactFacultyMockReviewRetryCopy(
+  previousSha256: unknown,
+  submittedSha256: unknown,
+): boolean {
+  const previous = String(previousSha256 || '').trim().toLowerCase();
+  const submitted = String(submittedSha256 || '').trim().toLowerCase();
+  return Boolean(previous && submitted && /^[a-f0-9]{64}$/.test(previous) && previous === submitted);
+}
+
 /**
  * Allows exactly one no-charge retry of the same Faculty Mock answer sheet after
  * NEEDS_REVIEW. The Firestore transaction is authoritative across app instances.
