@@ -84,9 +84,10 @@ export interface EvaluationJobData {
   originalFileStorageConfirmed?: boolean;
 }
 
-// Keep the supervisor correction loop opt-in until its model/pipeline is validated.
-// This prevents extra model calls on the normal evaluation path by default.
-const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED === 'true';
+// Run a bounded supervisor pass by default. Clean papers incur no extra model calls;
+// only repairable question-level issues use at most four targeted correction calls.
+// Operators can explicitly disable the second pass with EVALUATION_SUPERVISOR_ENABLED=false.
+const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED !== 'false';
 
 // In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId.
 const activeJobs = new Map<string, Promise<void>>();
