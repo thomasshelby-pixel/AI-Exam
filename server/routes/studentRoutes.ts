@@ -1347,25 +1347,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           ? 'PAID'
           : 'FREE';
         if (mockAccessType === 'PAID') {
-        // Paid mocks never receive a first-copy free claim. Every submission
-        // must have its own verified single-copy Razorpay entitlement.
-        const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
-          studentId,
-          selectedTestId,
-          resolvedFacultyMockPaymentOrderId || undefined,
-        );
-        if (!suppliedPaidOrderId) {
-          return res.status(402).json({
-            error: `This faculty mock requires payment of ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to unlock one evaluation.`,
-            code: 'FACULTY_MOCK_PAYMENT_REQUIRED',
-            amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
-            facultyMockTestId: selectedTestId,
-          });
-        }
-        resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
-      } else {
-        const existingFreeCopy = await getFacultyMockFreeCopyClaim(studentId, selectedTestId);
-        if (existingFreeCopy && existingFreeCopy.evaluationId !== evaluationId) {
+          // Paid mocks require a verified one-copy Razorpay entitlement for
+          // ordinary accounts. Permanent-free accounts bypass this whole block.
           const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
             studentId,
             selectedTestId,
@@ -1373,17 +1356,33 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           );
           if (!suppliedPaidOrderId) {
             return res.status(402).json({
-              error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
-              code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
+              error: `This faculty mock requires payment of ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to unlock one evaluation.`,
+              code: 'FACULTY_MOCK_PAYMENT_REQUIRED',
               amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
               facultyMockTestId: selectedTestId,
             });
           }
           resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
+        } else {
+          const existingFreeCopy = await getFacultyMockFreeCopyClaim(studentId, selectedTestId);
+          if (existingFreeCopy && existingFreeCopy.evaluationId !== evaluationId) {
+            const suppliedPaidOrderId = await findAvailableFacultyMockPaidCopy(
+              studentId,
+              selectedTestId,
+              resolvedFacultyMockPaymentOrderId || undefined,
+            );
+            if (!suppliedPaidOrderId) {
+              return res.status(402).json({
+                error: `Your first copy of this faculty mock is already used. Pay ₹${CUSTOM_PRICE_PER_EVALUATION_INR} to evaluate another copy of the same mock.`,
+                code: 'FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED',
+                amountINR: CUSTOM_PRICE_PER_EVALUATION_INR,
+                facultyMockTestId: selectedTestId,
+              });
+            }
+            resolvedFacultyMockPaymentOrderId = suppliedPaidOrderId;
+          }
         }
       }
-      }
-
       if (
         String(facultyMockRecord.question_paper_text || '').trim().length < 50 ||
         String(facultyMockRecord.suggested_answers_text || '').trim().length < 50 ||
