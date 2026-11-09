@@ -691,6 +691,10 @@ async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promi
     if (!mock && !sharedSourceRequired) {
       mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
     }
+    const currentMockRevision = String(mock?.updated_at || mock?._updatedAt || mock?.created_at || '1.0');
+    const currentQuestionTextId = String(mock?.question_paper_reference_file_id || mock?.suggested_answer_file_id || '');
+    const currentSuggestedAnswerId = String(mock?.suggested_answer_file_id || '');
+    const currentMarkingSchemeId = String(mock?.marking_scheme_file_id || mock?.suggested_answer_file_id || '');
     if (!mock ||
         String(mock.status || '').toUpperCase() !== 'PUBLISHED' ||
         !same(mock.course_level, job.level) ||
@@ -698,6 +702,10 @@ async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promi
         !same(mock.subject_name, job.subjectName) ||
         !same(mock.paper || 'Paper 1', job.paper || 'Paper 1') ||
         !same(mock.attempt, job.attempt) ||
+        !same(currentMockRevision, job.referenceMaterialVersion || '1.0') ||
+        !same(currentQuestionTextId, job.questionMaterialId || job.suggestedAnswerMaterialId || '') ||
+        !same(currentSuggestedAnswerId, job.suggestedAnswerMaterialId || '') ||
+        !same(currentMarkingSchemeId, job.markingSchemeMaterialId || job.suggestedAnswerMaterialId || '') ||
         !sameText(mock.question_paper_text, job.referenceQuestionPaperText) ||
         !sameText(mock.suggested_answers_text, job.referenceSuggestedAnswersText) ||
         !sameText(mock.marking_scheme_text, job.markingSchemeText)) {
