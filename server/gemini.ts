@@ -1246,9 +1246,10 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
         }
 
         coverageMap = await buildAnswerSheetCoverageMap(pdfBuffer, paperStructure, {
-          // The extra targeted OCR/vision pass is scoped to PYQ checked-copy coverage.
-          // MTP and Model Test retain their existing page-audit call count.
-          enableTargetedRecovery: params.materialType === 'PYQ',
+          // All material types use the same bounded second-pass recovery for pages
+          // with missing answer blocks, unresolved sub-parts or unreadable MCQ options.
+          // It runs only on flagged pages and never repeats a failed provider chain.
+          enableTargetedRecovery: true,
         });
 
         const preGate = validatePreEvaluationGate({
@@ -1297,6 +1298,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               sourceMaterialTitle: params.referenceMaterialTitle || 'Authoritative Suggested Answers',
               sourceMaterialVersion: params.referenceMaterialVersion || 'UNSPECIFIED',
               sourceMaterialId: params.suggestedAnswerMaterialId || params.combinedSourceMaterialId || params.referenceMaterialId || 'UNSPECIFIED',
+              mcqNeedsReview: coverageMap.mcqNeedsReview || [],
               mcqPageNumbers: Object.fromEntries(
                 coverageMap.attemptedQuestions
                   .filter((attempt) => attempt.isMcq && attempt.pages.length > 0)
