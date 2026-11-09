@@ -94,7 +94,7 @@ export async function createRazorpayOrder(params: CreateOrderParams): Promise<Ra
     }
     finalQuantity = 1;
     finalAmountINR = CUSTOM_PRICE_PER_EVALUATION_INR;
-    purposeDescription = `CA Exam Checker AI - Faculty Mock Repeat Copy (₹${finalAmountINR})`;
+    purposeDescription = `EXAM CHECKER AI - Faculty Mock Copy Unlock (₹${finalAmountINR})`;
   } else if (purchaseType === 'COMBO_1' || purchaseType === 'COMBO_2') {
     courseLevel = params.courseLevel === 'FOUNDATION' ? 'FOUNDATION' : 'INTERMEDIATE';
     const plan = COMBO_PLANS[purchaseType][courseLevel];
