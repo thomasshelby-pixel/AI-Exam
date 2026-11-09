@@ -227,6 +227,18 @@ assert.deepEqual(
   'Deduplication must remove both intermediate and root containers while preserving nested leaf parts.',
 );
 
+// The integrity validator must catch intermediate nested parents too.
+const nestedParentValidation = validateQuestionDeduplication([
+  { fullQuestionCode: 'Q8', questionNumber: '8', maximumMarks: 20 },
+  { fullQuestionCode: 'Q8(a)', questionNumber: '8', subQuestion: 'a', maximumMarks: 10 },
+  { fullQuestionCode: 'Q8(a(i))', questionNumber: '8', subQuestion: 'a(i)', maximumMarks: 4 },
+  { fullQuestionCode: 'Q8(a(ii))', questionNumber: '8', subQuestion: 'a(ii)', maximumMarks: 6 },
+]);
+assert.equal(nestedParentValidation.isValid, false);
+assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8'));
+assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8(a)'),
+  'A nested leaf must flag its immediate parent container, not only the root question.');
+
 // Contextual numbering under a single parent header must also retain each level.
 const contextualParts = extractSubQuestionsFromText([
   'Question 9',
