@@ -27,7 +27,7 @@ import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
-import { resolveMaterialComponentSourceIds } from './materialComponentSourceIds.js';
+import { resolveMaterialComponentSourceIds, resolveFacultyMockComponentSourceIds } from './materialComponentSourceIds.js';
 import { markParakhEvaluationCompleted, markParakhEvaluationFailed } from './parakhLearningService.js';
 import {
   EvaluationEvidencePackage,
@@ -693,14 +693,7 @@ async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promi
     // resolving component IDs. This intentionally preserves synthetic legacy IDs
     // when a published mock predates separate component-file metadata.
     const expectedMockSourceIds = mock
-      ? resolveMaterialComponentSourceIds({
-          id: mock.id || mockId,
-          source_format: 'SEPARATE',
-          file_id: mock.suggested_answer_file_id,
-          question_material_id: mock.question_paper_reference_file_id || mock.suggested_answer_file_id,
-          suggested_answer_material_id: mock.suggested_answer_file_id,
-          marking_scheme_material_id: mock.marking_scheme_file_id || mock.suggested_answer_file_id,
-        }, mock.marking_scheme_text)
+      ? resolveFacultyMockComponentSourceIds(mock)
       : null;
     const expectedMaximumMarks = mock
       ? resolveOfficialPaperMaximumMarks(Number(mock.maximum_marks || 100), mock.question_paper_text)
