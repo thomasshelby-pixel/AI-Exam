@@ -2455,6 +2455,9 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
           resultJson.version = auditMeta.currentVersion || (resultJson as any).version || 'v1';
           resultJson.recheckHistory = auditMeta.recheckHistory || [];
           resultJson.originalEvaluationSnapshot = auditMeta.originalEvaluationSnapshot || null;
+          (resultJson as any).facultyMockTestId = record.faculty_mock_test_id || null;
+          (resultJson as any).facultyMockReviewRetryEvaluationId = record.faculty_mock_review_retry_evaluation_id || null;
+          (resultJson as any).retryOfEvaluationId = record.retry_of_evaluation_id || null;
 
           // Single Source of Truth: inject authoritative EvaluationRunPackage if available
           const realEvaluationId = record.id;
