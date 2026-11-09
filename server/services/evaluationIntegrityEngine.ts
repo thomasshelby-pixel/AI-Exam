@@ -1357,6 +1357,8 @@ export function processEvaluationIntegrity(
         evidence: att.studentSnippet || `Detected on page(s) ${(att.pages || [att.pageNumber || 1]).join(', ')}`,
         studentSnippet: att.studentSnippet,
         studentSelectedOption: att.studentSelectedOption,
+        mcqSelectionNeedsReview: att.mcqSelectionNeedsReview,
+        mappingReviewReason: att.mappingReviewReason,
         isMcq: parsed.isMcq,
       });
     }
@@ -1377,6 +1379,8 @@ export function processEvaluationIntegrity(
         evidence: snippet,
         studentSnippet: (q as any).studentSnippet,
         studentSelectedOption: q.candidateSelectedOption,
+        mcqSelectionNeedsReview: q.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED'),
+        mappingReviewReason: q.reasonForDeduction,
         isMcq: parsed.isMcq,
       });
     }
