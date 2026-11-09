@@ -563,7 +563,10 @@ export function resolveContextualQuestionIdentity(options: {
   // (a) => Q3(a)), or a nested part under the current leaf. Resolve only when
   // the supplied paper structure identifies exactly one of those candidates.
   const siblingCandidate = toCanonicalQuestionId(context.parentQuestionId, subPart, authoritativeLeaves);
-  const nestedCandidate = `${context.canonicalId}(${subPart})`.toLowerCase();
+  // Canonical IDs serialize nested paths as Q2(a(i)), not Q2(a)(i).
+  // Always compose nested continuation candidates through the shared canonical
+  // serializer; string concatenation silently failed to match valid source leaves.
+  const nestedCandidate = toCanonicalQuestionId(context.canonicalId, subPart, authoritativeLeaves).toLowerCase();
 
   const matches = authoritativeLeaves.filter((question) => {
     const code = question.fullQuestionCode.toLowerCase();
