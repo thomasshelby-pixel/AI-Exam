@@ -1241,6 +1241,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             coveredPages: [],
             is100PercentCovered: false,
             mcqSelections: {},
+            mcqNeedsReview: [],
           };
           return createTechnicalReview(emptyCoverageMap, sourcePreflight.failedInvariants);
         }
