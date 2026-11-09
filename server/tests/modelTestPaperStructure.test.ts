@@ -175,6 +175,8 @@ const universalPartSource = [
   'Question 2 Clause 2 - 4 Marks',
   'Question 3.1.1 - 1 Mark',
   'Question 3.1.2 - 2 Marks',
+  'Question 4.iv.1 - 2 Marks',
+  'Question 4.iv.2 - 3 Marks',
 ].join('\n');
 const universalParts = extractSubQuestionsFromText(universalPartSource);
 const universalMaxima = new Map(universalParts.map((part) => [part.fullQuestionCode, part.maximumMarks]));
@@ -188,6 +190,8 @@ for (const [code, marks] of [
   ['Q2(2)', 4],
   ['Q3(1)(1)', 1],
   ['Q3(1)(2)', 2],
+  ['Q4(iv)(1)', 2],
+  ['Q4(iv)(2)', 3],
 ] as const) {
   assert.equal(universalMaxima.get(code), marks, code + ' must retain its own official maximum marks.');
 }
