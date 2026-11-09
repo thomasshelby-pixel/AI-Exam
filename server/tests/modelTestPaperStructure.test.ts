@@ -181,17 +181,17 @@ const universalPartSource = [
 const universalParts = extractSubQuestionsFromText(universalPartSource);
 const universalMaxima = new Map(universalParts.map((part) => [part.fullQuestionCode, part.maximumMarks]));
 for (const [code, marks] of [
-  ['Q1(a)(i)', 2],
-  ['Q1(a)(ii)', 3],
-  ['Q1(a)(1)', 1],
-  ['Q1(a)(2)', 4],
+  ['Q1(a(i))', 2],
+  ['Q1(a(ii))', 3],
+  ['Q1(a(1))', 1],
+  ['Q1(a(2))', 4],
   ['Q1(b)', 5],
   ['Q2(iv)', 3],
   ['Q2(2)', 4],
-  ['Q3(1)(1)', 1],
-  ['Q3(1)(2)', 2],
-  ['Q4(iv)(1)', 2],
-  ['Q4(iv)(2)', 3],
+  ['Q3(1(1))', 1],
+  ['Q3(1(2))', 2],
+  ['Q4(iv(1))', 2],
+  ['Q4(iv(2))', 3],
 ] as const) {
   assert.equal(universalMaxima.get(code), marks, code + ' must retain its own official maximum marks.');
 }
@@ -202,28 +202,28 @@ assert.equal(
   'An unknown nested part must not be fuzzy-mapped to another part with the same leading letter.',
 );
 assert.notEqual(
-  toCanonicalQuestionId('Q1(a)(i)'),
-  toCanonicalQuestionId('Q1(a)(ii)'),
+  toCanonicalQuestionId('Q1(a(i))'),
+  toCanonicalQuestionId('Q1(a(ii))'),
   'Roman-numeral siblings must have independent canonical identities.',
 );
 assert.notEqual(
-  toCanonicalQuestionId('Q1(a)(1)'),
-  toCanonicalQuestionId('Q1(a)(2)'),
+  toCanonicalQuestionId('Q1(a(1))'),
+  toCanonicalQuestionId('Q1(a(2))'),
   'Arabic-numbered siblings must have independent canonical identities.',
 );
 assert.equal(
   parseCanonicalQuestionIdentity('Question 4 Part IV Clause 2').canonicalId,
-  'Q4(iv)(2)',
+  'Q4(iv(2))',
   'Named Part/Clause prefixes must produce a reusable hierarchical identity.',
 );
 const nestedParentDedup = deduplicateQuestionList([
   { fullQuestionCode: 'Q7(a)', questionNumber: '7', subQuestion: 'a', maximumMarks: 10 },
-  { fullQuestionCode: 'Q7(a)(i)', questionNumber: '7', subQuestion: 'a(i)', maximumMarks: 4 },
-  { fullQuestionCode: 'Q7(a)(ii)', questionNumber: '7', subQuestion: 'a(ii)', maximumMarks: 6 },
+  { fullQuestionCode: 'Q7(a(i))', questionNumber: '7', subQuestion: 'a(i)', maximumMarks: 4 },
+  { fullQuestionCode: 'Q7(a(ii))', questionNumber: '7', subQuestion: 'a(ii)', maximumMarks: 6 },
 ]);
 assert.deepEqual(
   nestedParentDedup.map((item) => item.fullQuestionCode).sort(),
-  ['Q7(a)(i)', 'Q7(a)(ii)'],
+  ['Q7(a(i))', 'Q7(a(ii))'],
   'Deduplication must remove both intermediate and root containers while preserving nested leaf parts.',
 );
 
@@ -236,7 +236,7 @@ const contextualParts = extractSubQuestionsFromText([
 ].join('\n'));
 assert.deepEqual(
   contextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-  [['Q9(a)(i)', 2], ['Q9(a)(ii)', 3]],
+  [['Q9(a(i))', 2], ['Q9(a(ii))', 3]],
   'Bare contextual sub-part labels must be attached to the active parent and retained as separate leaves.',
 );
 const namedContextualParts = extractSubQuestionsFromText([
@@ -246,7 +246,7 @@ const namedContextualParts = extractSubQuestionsFromText([
 ].join('\n'));
 assert.deepEqual(
   namedContextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-  [['Q10(iv)(1)', 2], ['Q10(iv)(2)', 3]],
+  [['Q10(iv(1))', 2], ['Q10(iv(2))', 3]],
   'A named parent heading and its named child clauses must create separately marked nested leaves.',
 );
 
