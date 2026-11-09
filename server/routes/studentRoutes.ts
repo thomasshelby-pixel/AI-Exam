@@ -4952,6 +4952,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
+    const isPermanentFreeStudent = checkPermanentFreeAccess(req.user!.email || '');
     const testId = req.params.id;
     const { fileBase64, mimeType, checkingMode } = req.body;
 
@@ -5105,7 +5106,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       referenceMaterialVersion: 'Institute Test Series',
       referenceMaterialId: test.id,
       officialPaperMaxMarks: test.total_marks || 100,
-      entitlementSource: 'INSTITUTE_ALLOCATION',
+      entitlementSource: isPermanentFreeStudent ? 'PERMANENT_FREE' : 'INSTITUTE_ALLOCATION',
       resolvedSponsoringInstituteId: test.institute_id,
       resolvedInstituteName: null,
       requestedEvalSource: 'INSTITUTE',
@@ -5144,6 +5145,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
+    const isPermanentFreeStudent = checkPermanentFreeAccess(req.user!.email || '');
     const materialId = req.params.id;
     const { fileBase64, mimeType, checkingMode } = req.body;
 
@@ -5265,7 +5267,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       referenceMaterialVersion: 'Institute Material',
       referenceMaterialId: material.id,
       officialPaperMaxMarks: material.total_marks || 100,
-      entitlementSource: 'INSTITUTE_ALLOCATION',
+      entitlementSource: isPermanentFreeStudent ? 'PERMANENT_FREE' : 'INSTITUTE_ALLOCATION',
       resolvedSponsoringInstituteId: material.institute_id,
       resolvedInstituteName: material.institute_name,
       requestedEvalSource: 'INSTITUTE',
