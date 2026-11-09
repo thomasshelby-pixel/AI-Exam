@@ -36,6 +36,7 @@ import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
   deduplicateQuestionList,
+  isCanonicalQuestionDescendant,
 } from './canonicalQuestionService.js';
 import { db, persistEvaluationRunPackageAtomic, loadEvaluationRunPackage } from '../db.js';
 
@@ -237,7 +238,8 @@ export function detectIndependentAttempts(options: {
       } else {
         // Topic keyword matching for inventory sub-questions of this parent
         const candidateItems = inventory.items.filter(
-          (it) => it.parentQuestionId === `Q${qDigits}` || it.questionId.startsWith(`Q${qDigits}(`)
+          (it) => it.parentQuestionId === `Q${qDigits}` ||
+            isCanonicalQuestionDescendant(it.questionId, `Q${qDigits}`)
         );
         let bestMatch: CanonicalQuestionInventoryItem | null = null;
         let bestScore = 0;
@@ -266,7 +268,9 @@ export function detectIndependentAttempts(options: {
       // resolve to the active parent if candidate code exists in inventory and matches content or was unattempted.
       const subOnlyMatch = snip.match(/^\s*\(?([a-d])\)?(?:\s|\.|\:|\-)/i);
       if (!hasExactInventoryMatch && occ.isContinuation && subOnlyMatch && subOnlyMatch[1] && lastActiveParent) {
-        const contextualCode = `${lastActiveParent}(${subOnlyMatch[1].toLowerCase()})`;
+        const contextualCode = toCanonicalQuestionId(
+          `${lastActiveParent}(${subOnlyMatch[1].toLowerCase()})`
+        );
         const candItem = inventoryMap.get(contextualCode.toLowerCase());
         if (candItem) {
           const currentCanon = toCanonicalQuestionId(rawCode);
@@ -354,13 +358,13 @@ export function detectIndependentAttempts(options: {
   const nonMcqAttemptKeys = Array.from(attempts.keys()).filter((k) => !k.startsWith('MCQ'));
   for (const parentKey of nonMcqAttemptKeys) {
     const hasChild = nonMcqAttemptKeys.some(
-      (childKey) => childKey !== parentKey && childKey.startsWith(`${parentKey}(`)
+      (childKey) => childKey !== parentKey && isCanonicalQuestionDescendant(childKey, parentKey)
     );
     if (hasChild) {
       const parentAttempt = attempts.get(parentKey)!;
       // Transfer pages to first child
       const firstChildKey = nonMcqAttemptKeys.find(
-        (childKey) => childKey !== parentKey && childKey.startsWith(`${parentKey}(`)
+        (childKey) => childKey !== parentKey && isCanonicalQuestionDescendant(childKey, parentKey)
       );
       if (firstChildKey) {
         const childAttempt = attempts.get(firstChildKey)!;
