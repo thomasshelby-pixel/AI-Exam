@@ -761,6 +761,8 @@ export async function buildAnswerSheetCoverageMap(
 
   const pageRecords: PageCoverageRecord[] = [];
   const mcqSelections: Record<string, string> = {};
+  const mcqSelectionCandidates = new Map<string, string>();
+  const mcqNeedsReview = new Set<string>();
   let activeQuestionContext: string | undefined = undefined;
   const priorQuestionContextMap = new Map<string, PriorQuestionContext>();
   let providerFailureCircuit: { failedOnPage: number; failure: PageAnalysisFailure } | undefined;
@@ -978,12 +980,29 @@ export async function buildAnswerSheetCoverageMap(
       activeQuestionContext = nonMcqs[nonMcqs.length - 1].fullQuestionCode;
     }
 
-    // Collect any MCQs found on this page
+    // Preserve every visible MCQ attempt. Unreadable or conflicting selections
+    // are explicitly held for review; they must never be downgraded to blank or
+    // overwritten by whichever page happened to be processed last.
     for (const q of analysis.detectedQuestions) {
-      if (q.studentSelectedOption && (q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ')) {
-        const mcqNum = q.questionNumber;
-        mcqSelections[mcqNum] = q.studentSelectedOption.toUpperCase();
+      if (!(q.isMcq || q.fullQuestionCode.startsWith('MCQ') || q.subQuestionNumber === 'MCQ')) continue;
+      const mcqNum = String(q.questionNumber || '').replace(/[^0-9]/g, '');
+      if (!mcqNum) continue;
+
+      if (q.mcqSelectionNeedsReview) {
+        mcqNeedsReview.add(mcqNum);
+        mcqSelectionCandidates.delete(mcqNum);
+        continue;
       }
+      if (!q.studentSelectedOption || mcqNeedsReview.has(mcqNum)) continue;
+
+      const selectedOption = q.studentSelectedOption.trim().toUpperCase();
+      const priorOption = mcqSelectionCandidates.get(mcqNum);
+      if (priorOption && priorOption !== selectedOption) {
+        mcqSelectionCandidates.delete(mcqNum);
+        mcqNeedsReview.add(mcqNum);
+        continue;
+      }
+      mcqSelectionCandidates.set(mcqNum, selectedOption);
     }
   }
 
@@ -1005,8 +1024,10 @@ export async function buildAnswerSheetCoverageMap(
           pages: [pageRec.pageNumber],
           status: det.status,
           studentSnippet: det.snippet,
-          studentSelectedOption: det.studentSelectedOption,
+          studentSelectedOption: det.mcqSelectionNeedsReview ? undefined : det.studentSelectedOption,
           isMcq: parsed.isMcq,
+          ...(det.mcqSelectionNeedsReview ? { mcqSelectionNeedsReview: true } : {}),
+          ...(det.mappingReviewReason ? { mappingReviewReason: det.mappingReviewReason } : {}),
         });
       } else {
         const existing = mappingMap.get(parsed.canonicalId)!;
@@ -1017,8 +1038,20 @@ export async function buildAnswerSheetCoverageMap(
         if (det.snippet && !existing.studentSnippet?.includes(det.snippet)) {
           existing.studentSnippet = (existing.studentSnippet ? `${existing.studentSnippet}\n\n` : '') + det.snippet;
         }
-        if (det.studentSelectedOption && !existing.studentSelectedOption) {
-          existing.studentSelectedOption = det.studentSelectedOption;
+        if (det.mappingReviewReason) existing.mappingReviewReason = det.mappingReviewReason;
+        if (det.mcqSelectionNeedsReview) {
+          existing.studentSelectedOption = undefined;
+          existing.mcqSelectionNeedsReview = true;
+        } else if (det.studentSelectedOption) {
+          const incomingOption = det.studentSelectedOption.toUpperCase();
+          const existingOption = String(existing.studentSelectedOption || '').toUpperCase();
+          if (existingOption && existingOption !== incomingOption) {
+            existing.studentSelectedOption = undefined;
+            existing.mcqSelectionNeedsReview = true;
+            existing.mappingReviewReason = 'Conflicting MCQ selections were detected across pages; manual verification is required.';
+          } else if (!existing.mcqSelectionNeedsReview) {
+            existing.studentSelectedOption = incomingOption;
+          }
         }
       }
     }
@@ -1028,6 +1061,16 @@ export async function buildAnswerSheetCoverageMap(
   // leaf exists. The helper removes only those proven containers and transfers
   // their source pages to the matching leaf tasks; unresolved parent-only
   // detections remain visible to the pre-evaluation review gate.
+  for (const [questionNumber, option] of mcqSelectionCandidates) {
+    if (!mcqNeedsReview.has(questionNumber)) mcqSelections[questionNumber] = option;
+  }
+  for (const attempt of mappingMap.values()) {
+    if (attempt.isMcq && attempt.mcqSelectionNeedsReview) {
+      mcqNeedsReview.add(attempt.questionNumber);
+      delete mcqSelections[attempt.questionNumber];
+    }
+  }
+
   const hierarchyNormalized = normalizeDetectedAttemptHierarchy(Array.from(mappingMap.values()));
   const attemptedQuestions = hierarchyNormalized.attemptedQuestions;
   const allDetectedCodes = attemptedQuestions.map((a) => a.fullQuestionCode);
@@ -1058,6 +1101,7 @@ export async function buildAnswerSheetCoverageMap(
     coveredPages,
     is100PercentCovered,
     mcqSelections,
+    mcqNeedsReview: Array.from(mcqNeedsReview).sort((a, b) => Number(a) - Number(b)),
   };
 
   coverageMapCache.set(cacheKey, coverageResult);
