@@ -1051,9 +1051,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       evaluationResult.coverageMap.attemptedQuestions = deduplicateQuestionList(evaluationResult.coverageMap.attemptedQuestions, paperStruct.subQuestions);
     }
 
-    // Stage 4B is opt-in while the supervisor correction pipeline is being validated.
-    // Main CA evaluation, deterministic integrity checks, PDF extraction, and report
-    // generation remain active when the flag is unset (the production-safe default).
+    // Run the bounded second-pass supervisor after the first complete evaluation.
+    // Clean results incur no extra model calls; only repairable question-level issues
+    // receive up to four targeted re-evaluations before unresolved cases stay in review.
     if (ENABLE_EVALUATION_SUPERVISOR) {
       const { runEvaluationSupervisor } = await import('./evaluationSupervisorService.js');
       evaluationResult = await runEvaluationSupervisor({
