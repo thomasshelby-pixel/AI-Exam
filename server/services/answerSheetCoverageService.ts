@@ -1424,8 +1424,8 @@ async function analyzeSinglePageCoverage(
     }
 
     // Map both flattened IDs and original nested Model Test labels to canonical MCQs.
+    const mappedSelections = new Map<string, string>();
     if (raw.mcqSelections && typeof raw.mcqSelections === 'object') {
-      const mappedSelections = new Map<string, string>();
       for (const [mcqKey, opt] of Object.entries(raw.mcqSelections)) {
         const num = resolveMcqSelectionNumber(mcqKey, paperStructure.mcqs || []);
         if (!num) {
