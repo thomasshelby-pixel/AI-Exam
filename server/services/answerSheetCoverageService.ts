@@ -189,17 +189,20 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
           : '';
       let questionNumber = '';
       let inferredSubQuestion = '';
+      let inferredSubQuestionPath: string[] = [];
       const mcqMatch = rawQuestionNumber.match(/^(?:MCQ|OBJECTIVE)\s*(\d+)$/i);
       const questionMatch = rawQuestionNumber.match(/^\s*(?:(?:QUESTION|Q|ANSWER|ANS)\.?\s*)?(\d+)(.*)\s*$/i);
       if (mcqMatch) {
         questionNumber = mcqMatch[1];
         inferredSubQuestion = 'MCQ';
+        inferredSubQuestionPath = ['MCQ'];
       } else if (questionMatch) {
         // Keep every parenthesized/bracketed level. Stripping the brackets from
         // Q1(a)(ii) used to turn it into the ambiguous label "aii".
         const identity = parseCanonicalQuestionIdentity(rawQuestionNumber);
         questionNumber = identity.questionNumber;
         inferredSubQuestion = identity.subQuestion || '';
+        inferredSubQuestionPath = identity.subQuestionPath || [];
       } else if (rawQuestionNumber) {
         warnings.push('A detected answer contained a question label that could not be safely normalized.');
         continue;
@@ -215,7 +218,25 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       if (question.subQuestion === null || question.subQuestion === undefined || question.subQuestion === '') {
         subQuestion = inferredSubQuestion;
       } else if (typeof question.subQuestion === 'string' || typeof question.subQuestion === 'number') {
-        subQuestion = String(question.subQuestion).trim();
+        const explicitSubQuestion = String(question.subQuestion).trim();
+        if (inferredSubQuestionPath.length > 0) {
+          const explicitPath = parseCanonicalQuestionIdentity(
+            'Q' + questionNumber + '(' + explicitSubQuestion + ')'
+          ).subQuestionPath || [];
+          const isSamePath = explicitPath.length === inferredSubQuestionPath.length &&
+            explicitPath.every((part, pathIndex) => part === inferredSubQuestionPath[pathIndex]);
+          const isLastPartEcho = explicitPath.length === 1 &&
+            explicitPath[0] === inferredSubQuestionPath[inferredSubQuestionPath.length - 1];
+          const isParentPathEcho = explicitPath.length < inferredSubQuestionPath.length &&
+            explicitPath.every((part, pathIndex) => part === inferredSubQuestionPath[pathIndex]);
+          // Some page auditors repeat only the final visible label in
+          // subQuestion after returning the complete Q1(a)(ii) identity.
+          subQuestion = isSamePath || isLastPartEcho || isParentPathEcho
+            ? inferredSubQuestion
+            : explicitSubQuestion;
+        } else {
+          subQuestion = explicitSubQuestion;
+        }
       } else {
         warnings.push('A detected answer contained an invalid sub-question label; that entry was left for manual mapping.');
         continue;
