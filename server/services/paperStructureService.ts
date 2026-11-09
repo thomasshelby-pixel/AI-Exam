@@ -621,8 +621,8 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
       activeParentQNum = parentMatch[1];
       const parentSuffix = String(parentMatch[2] || '')
         .trim()
-        .replace(/^[-–—:]\\s*/, '')
-        .replace(/^\\.(?=\\s*[\\(\\[])/, '');
+        .replace(/^[-–—:]\s*/, '')
+        .replace(/^\.(?=\s*[\(\[])/, '');
       activeSubQuestionPath = parseCanonicalQuestionIdentity(
         'Q' + activeParentQNum + parentSuffix
       ).subQuestionPath || [];
