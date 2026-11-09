@@ -660,11 +660,28 @@ export function getStudentEntitlement(
     };
   }
 
-  // Get user's monthly free evaluations and paid credits
+  // Permanent-free access is account-wide and takes precedence over monthly,
+  // promotional, purchased-credit and institute-quota billing. Course/material
+  // authorization remains enforced by the evaluation route.
+  const isPermanentFree = checkPermanentFreeAccess(user.email);
+  if (isPermanentFree) {
+    return {
+      canEvaluate: true,
+      tier: 'PERMANENT_FREE',
+      evaluationsRemaining: 9999,
+      freeEvaluationsRemaining: 9999,
+      purchasedCredits: 9999,
+      paidCredits: 0,
+      instituteSponsored: false,
+      hasPermanentFreeAccess: true,
+      reason: 'Permanent Free Entitlement Active',
+    };
+  }
+
+  // Load monthly free evaluations and paid credits only without a permanent grant.
   const monthlyStatus = ensureMonthlyFreeEvaluationsReset(userId);
   const freeRemaining = monthlyStatus.freeEvaluationsRemaining;
   const purchased = monthlyStatus.paidCredits;
-  const isPermanentFree = checkPermanentFreeAccess(user.email);
 
   // 1. Query all currently ACTIVE institute enrollments for this student
   const activeInstitutes = db.prepare(`
@@ -792,19 +809,6 @@ export function getStudentEntitlement(
   }
 
   // 4. Fallback to normal individual student rules (PUBLIC evaluation)
-  if (isPermanentFree) {
-    return {
-      canEvaluate: true,
-      tier: 'PERMANENT_FREE',
-      evaluationsRemaining: 9999,
-      freeEvaluationsRemaining: 9999,
-      purchasedCredits: 9999,
-      instituteSponsored: false,
-      hasPermanentFreeAccess: true,
-      reason: 'Permanent Free Entitlement Active',
-    };
-  }
-
   // Check active promotional referral code redemption (e.g. AI30)
   try {
     const activeReferral = db.prepare(`
