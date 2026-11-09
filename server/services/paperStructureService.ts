@@ -543,11 +543,12 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
       indentation = line.length - line.trimStart().length;
       isExplicitQuestionLine = true;
     } else if (numeric) {
-      const candidateSuffix = normalizedSuffix(numeric[3]);
+      const rawNumericSuffix = String(numeric[3] || '').replace(/^\s*/, '');
+      const candidateSuffix = normalizedSuffix(rawNumericSuffix);
       // Bare numbered headings are accepted only when they visibly use a
       // question delimiter / sub-part marker. Ordinary dates and table rows
       // must not become fabricated question identities.
-      if (/^[.):\-–—]/u.test(candidateSuffix) || startsWithPartLabel(candidateSuffix)) {
+      if (/^[.):\-–—]/u.test(rawNumericSuffix) || startsWithPartLabel(candidateSuffix)) {
         questionNumber = numeric[2];
         suffix = candidateSuffix.replace(/^[.):\-–—]+\s*/, '');
         indentation = numeric[1].length;
