@@ -519,17 +519,20 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
 
   // Repeated parenthetical levels are captured as one identity path:
   // Q1(a)(i)(1), Question 2(IV), Q3(a)(ii), etc.
-  const partToken = '[a-zA-Z0-9]+(?:\\s*\\.\\s*[a-zA-Z0-9]+){0,4}(?:\\s*\\(\\s*[a-zA-Z0-9]+\\s*\\))*';
-  const bracketPath = '(?:\\(\\s*' + partToken + '\\s*\\)|\\[\\s*' + partToken + '\\s*\\])+';
+  // Numbering labels must stay on one physical line. Using \s here would
+  // allow "Question 10 Part IV" to absorb "Clause 1" from the next line.
+  const horizontalSpace = '[ \\t]';
+  const partToken = '[a-zA-Z0-9]+(?:' + horizontalSpace + '*\\.' + horizontalSpace + '*[a-zA-Z0-9]+){0,4}(?:' + horizontalSpace + '*\\(' + horizontalSpace + '*[a-zA-Z0-9]+' + horizontalSpace + '*\\))*';
+  const bracketPath = '(?:\\(' + horizontalSpace + '*' + partToken + horizontalSpace + '*\\)|\\[' + horizontalSpace + '*' + partToken + horizontalSpace + '*\\])+';
   const labelledPrefixName = '(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)';
-  const labelledPartPrefix = '(?:' + labelledPrefixName + '\\s*)?';
-  const namedPrefixPath = labelledPrefixName + '\\s*[a-zA-Z0-9]+(?:\\s+' + labelledPrefixName + '\\s*[a-zA-Z0-9]+)*';
+  const labelledPartPrefix = '(?:' + labelledPrefixName + horizontalSpace + '*)?';
+  const namedPrefixPath = labelledPrefixName + horizontalSpace + '*[a-zA-Z0-9]+(?:' + horizontalSpace + '+' + labelledPrefixName + horizontalSpace + '*[a-zA-Z0-9]+)*';
 
   const explicitRegex = new RegExp(
-    '(?:QUESTION\\s*(?:NO\\.?\\s*)?|Q\\.?|Ans(?:wer)?\\.?)\\s*([0-9]+)\\s*' +
+    '(?:QUESTION[ \\t]*(?:NO\\.?[ \\t]*)?|Q\\.?|Ans(?:wer)?\\.?)\\s*([0-9]+)[ \\t]*' +
     '(?:(' + namedPrefixPath + ')|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]?))?\\s*' +
-    '(?:[-–—:]|\\b|is|carries?|carrying|worth|allotted|\\.)\\s*' +
-    '(?:(?:for|carrying|carries|worth|allotted|of)?\\s*)?(?:\\[\\s*|\\(\\s*)?([0-9]+(?:\\.[0-9]+)?)\\s*(?:Marks?|M)\\b',
+    '(?:[-–—:]|\\b|is|carries?|carrying|worth|allotted|\\.)[ \\t]*' +
+    '(?:(?:for|carrying|carries|worth|allotted|of)?[ \\t]*)?(?:\\[[ \\t]*|\\([ \\t]*)?([0-9]+(?:\\.[0-9]+)?)[ \\t]*(?:Marks?|M)\\b',
     'gi',
   );
   let match: RegExpExecArray | null;
