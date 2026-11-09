@@ -125,26 +125,63 @@ for (const [level, subjects] of Object.entries(levelSubjectMatrix)) {
 assert.equal(subjectCases, 18,
   'The shared PYQ/MTP parser contract must be exercised for all Foundation, Intermediate and Final subjects.');
 
-// Preserve the existing Taxation configuration: Model Test must follow the same
-// configured Taxation route as PYQ/MTP rather than a new dynamic Model Test parser.
-const taxation = getAuthoritativePaperStructure({
-  level: 'INTERMEDIATE',
-  subjectName: 'Taxation',
-  paper: 'Taxation',
-  materialType: 'MODEL_TEST_PAPER',
-  ...sourceBundle,
-});
-const taxationMtp = getAuthoritativePaperStructure({
-  level: 'INTERMEDIATE',
-  subjectName: 'Taxation',
-  paper: 'Taxation',
-  materialType: 'MTP',
-  ...sourceBundle,
-});
-assert.deepEqual(taxation, taxationMtp);
-assert.equal(taxation.mcqs.length, 16,
-  'Existing configured Taxation MCQ structure must remain unchanged.');
-
+// Taxation PYQ/MTP/Model Test must use the same universal source parser as
+// every other subject. Do not inject the legacy 16-MCQ / Q1-Q8 template.
+const taxationSourceBundle = {
+  questionPaperText: [
+    'CA Intermediate Taxation - Question Paper',
+    'SECTION A - MULTIPLE CHOICE QUESTIONS',
+    'Each MCQ carries 2 Marks.',
+    'MCQ 1 - Income tax objective question.',
+    'MCQ 2 - GST objective question.',
+    'SECTION B - DESCRIPTIVE QUESTIONS',
+    'Question 1(a) - 4 Marks',
+    'Question 1(b) - 6 Marks',
+    'Question 2(a)(i) - 2 Marks',
+    'Question 2(a)(ii) - 3 Marks',
+  ].join('\\n'),
+  suggestedAnswersText: [
+    'Taxation Suggested Answers',
+    'SECTION A - MULTIPLE CHOICE QUESTIONS',
+    '1. (C) Official source key for the selected PYQ/MTP.',
+    '2. (B) Official source key for the selected PYQ/MTP.',
+    'SECTION B - DESCRIPTIVE QUESTIONS',
+    'Question 1(a) - Official answer for Taxation sub-part 1(a).',
+    'Question 1(b) - Official answer for Taxation sub-part 1(b).',
+    'Question 2(a)(i) - Official answer for the first nested clause.',
+    'Question 2(a)(ii) - Official answer for the second nested clause.',
+  ].join('\\n'),
+  markingSchemeText: [
+    'Taxation Marking Scheme',
+    'Question 1(a) - 4 Marks',
+    'Question 1(b) - 6 Marks',
+    'Question 2(a)(i) - 2 Marks',
+    'Question 2(a)(ii) - 3 Marks',
+  ].join('\\n'),
+  officialPaperMaxMarks: 100,
+};
+const taxationStructures = Object.fromEntries(materialTypes.map((materialType) => [
+  materialType,
+  getAuthoritativePaperStructure({
+    ...taxationSourceBundle,
+    level: 'INTERMEDIATE',
+    subjectName: 'Taxation',
+    paper: 'Paper 3: Taxation',
+    materialType,
+  }),
+])) as Record<(typeof materialTypes)[number], ReturnType<typeof getAuthoritativePaperStructure>>;
+assert.deepEqual(taxationStructures.MODEL_TEST_PAPER, taxationStructures.MTP);
+assert.deepEqual(taxationStructures.PYQ, taxationStructures.MTP);
+assert.deepEqual(
+  taxationStructures.MTP.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 4], ['Q1(b)', 6], ['Q2(a(i))', 2], ['Q2(a(ii))', 3]],
+  'Taxation descriptive sub-question IDs and marks must be extracted from the supplied paper, including nested leaves.',
+);
+assert.deepEqual(
+  taxationStructures.MTP.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['MCQ1', 2], ['MCQ2', 2]],
+  'Taxation PYQ/MTP MCQ count and marks must come from the selected Suggested Answers and Question Paper, not a fixed 16-MCQ template.',
+);
 // CA Final Direct/Indirect Tax must never receive the CA Intermediate Paper 3
 // Taxation template merely because the subject title contains the word "tax".
 const caFinalTaxPaper = getAuthoritativePaperStructure({
