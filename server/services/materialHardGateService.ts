@@ -138,6 +138,32 @@ function computeSha256(content: string): string {
 }
 
 /**
+ * Resolve the official paper maximum using the same precedence at submission
+ * and worker re-validation time. The QP header is authoritative when it
+ * explicitly states one of the supported CA paper totals.
+ */
+export function resolveOfficialPaperMaximumMarks(
+  configuredMaximumMarks: unknown,
+  questionPaperText: unknown,
+): number {
+  let officialPaperMaxMarks = 100;
+  const configured = Number(configuredMaximumMarks);
+  if (Number.isFinite(configured) && configured > 0) {
+    officialPaperMaxMarks = configured;
+  }
+
+  const qpText = String(questionPaperText || '').trim();
+  const maxMarksHeaderMatch = qpText.match(/\b(maximum\s+marks|max\s+marks|marks)\s*[:\-–]?\s*(\d{2,3})\b/i);
+  if (maxMarksHeaderMatch && maxMarksHeaderMatch[2]) {
+    const parsedMax = parseInt(maxMarksHeaderMatch[2], 10);
+    if (parsedMax === 50 || parsedMax === 100 || parsedMax === 75 || parsedMax === 40) {
+      officialPaperMaxMarks = parsedMax;
+    }
+  }
+  return officialPaperMaxMarks;
+}
+
+/**
  * Executes the Authoritative Reference Material Hard-Gate check.
  * Throws a descriptive error if authoritative verified materials are not found.
  */
@@ -352,21 +378,8 @@ export function enforceMaterialHardGate(request: MaterialGateRequest): VerifiedR
     );
   }
 
-  // Determine official paper maximum marks
-  // Default for all ICAI papers is 100 marks unless explicitly configured otherwise
-  let officialPaperMaxMarks = 100;
-  if (rawMaterial.official_max_marks && Number(rawMaterial.official_max_marks) > 0) {
-    officialPaperMaxMarks = Number(rawMaterial.official_max_marks);
-  }
-
-  // Extract from question paper text if explicitly stated (e.g., "(50 MARKS)" or "MAXIMUM MARKS: 100")
-  const maxMarksHeaderMatch = qpText.match(/\b(maximum\s+marks|max\s+marks|marks)\s*[:\-–]?\s*(\d{2,3})\b/i);
-  if (maxMarksHeaderMatch && maxMarksHeaderMatch[2]) {
-    const parsedMax = parseInt(maxMarksHeaderMatch[2], 10);
-    if (parsedMax === 50 || parsedMax === 100 || parsedMax === 75 || parsedMax === 40) {
-      officialPaperMaxMarks = parsedMax;
-    }
-  }
+  // Keep the same authoritative precedence in submission and worker checks.
+  const officialPaperMaxMarks = resolveOfficialPaperMaximumMarks(rawMaterial.official_max_marks, qpText);
 
   // Compute checksums
   const qpChecksum = computeSha256(qpText);

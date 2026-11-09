@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
+import {
+  extractRelevantReferenceSnippets,
+  buildCheckedCopyScoreIndependenceInstruction,
+  assessQuestionReferenceForEvaluation,
+} from '../services/questionChunkEvaluator.js';
 
 const questionPaper = [
   'QUESTION 1',
@@ -47,6 +51,51 @@ assert.equal(facultyReference.referenceTrace.markingSchemeMaterialId, 'faculty-m
 assert.equal(facultyReference.referenceTrace.facultyMockTestId, 'fmock_test_abc123');
 assert.equal(facultyReference.referenceTrace.materialType, 'FACULTY_MOCK_TEST');
 assert.match(facultyReference.saSnippet, /Accounting Standard 1/i);
+
+const facultyCheckedCopyInstruction = buildCheckedCopyScoreIndependenceInstruction('FACULTY_MOCK_TEST');
+assert.match(facultyCheckedCopyInstruction, /faculty\/examiner ticks/i);
+assert.match(facultyCheckedCopyInstruction, /non-binding evidence/i);
+assert.match(facultyCheckedCopyInstruction, /exact selected Faculty Mock/i);
+const pyqCheckedCopyInstruction = buildCheckedCopyScoreIndependenceInstruction('PYQ');
+assert.match(pyqCheckedCopyInstruction, /ICAI examiner ticks/i);
+assert.match(pyqCheckedCopyInstruction, /non-binding evidence/i);
+assert.equal(buildCheckedCopyScoreIndependenceInstruction('MTP'), '');
+
+// Exact QP text-slice formatting misses must not create artificial review
+// states when the selected material's canonical leaf + maximum marks are
+// authoritative and its exact Suggested Answer lock succeeded.
+for (const materialType of ['PYQ', 'MTP', 'MODEL_TEST_PAPER', 'FACULTY_MOCK_TEST']) {
+  const disposition = assessQuestionReferenceForEvaluation({
+    questionPaperFound: false,
+    suggestedAnswerFound: true,
+    referenceNeedsReview: false,
+    materialType,
+    authoritativeQuestionStructureVerified: true,
+  });
+  assert.deepEqual(
+    disposition,
+    { canScoreProvisionally: true, requiresHumanReview: false },
+    materialType + ' must use the verified canonical structure instead of forcing NEEDS_REVIEW for a QP formatting mismatch.',
+  );
+}
+const unresolvedSourceDisposition = assessQuestionReferenceForEvaluation({
+  questionPaperFound: false,
+  suggestedAnswerFound: true,
+  referenceNeedsReview: false,
+  materialType: 'FACULTY_MOCK_TEST',
+  authoritativeQuestionStructureVerified: false,
+});
+assert.equal(unresolvedSourceDisposition.requiresHumanReview, true,
+  'A Faculty Mock without a verified canonical leaf/maximum must retain human review.');
+const missingSuggestedAnswerDisposition = assessQuestionReferenceForEvaluation({
+  questionPaperFound: false,
+  suggestedAnswerFound: false,
+  referenceNeedsReview: true,
+  materialType: 'FACULTY_MOCK_TEST',
+  authoritativeQuestionStructureVerified: true,
+});
+assert.equal(missingSuggestedAnswerDisposition.canScoreProvisionally, false,
+  'An unlinked Suggested Answer must never be auto-certified from a question identity alone.');
 
 const modelTestReference = extractRelevantReferenceSnippets(
   'Q1(a)',

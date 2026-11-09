@@ -55,3 +55,32 @@ export function resolveMaterialComponentSourceIds(
       : undefined,
   };
 }
+
+
+/**
+ * Resolve the three private Faculty Mock TXT component IDs using the same
+ * adapter shape used by the student submission route. Legacy mocks that do
+ * not yet have all component IDs receive deterministic synthetic identities;
+ * this keeps the worker's re-check consistent without weakening source locks.
+ */
+export function resolveFacultyMockComponentSourceIds(mock: any): MaterialComponentSourceIds {
+  const mockId = nonEmptyString(mock?.id) || 'unknown';
+  const suggestedAnswerFileId = nonEmptyString(
+    mock?.suggested_answer_file_id ?? mock?.suggestedAnswerFileId,
+  );
+  const questionPaperReferenceFileId = nonEmptyString(
+    mock?.question_paper_reference_file_id ?? mock?.questionPaperReferenceFileId,
+  );
+  const markingSchemeFileId = nonEmptyString(
+    mock?.marking_scheme_file_id ?? mock?.markingSchemeFileId,
+  );
+
+  return resolveMaterialComponentSourceIds({
+    id: mockId,
+    source_format: 'SEPARATE',
+    file_id: suggestedAnswerFileId,
+    question_material_id: questionPaperReferenceFileId || suggestedAnswerFileId,
+    suggested_answer_material_id: suggestedAnswerFileId,
+    marking_scheme_material_id: markingSchemeFileId || suggestedAnswerFileId,
+  }, mock?.marking_scheme_text ?? mock?.markingSchemeText);
+}

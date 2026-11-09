@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
-import { extractSubQuestionsFromText, getAuthoritativePaperStructure } from '../services/paperStructureService.js';
+import {
+  extractSubQuestionsFromText,
+  extractOptionalAttemptSelectionRule,
+  getAuthoritativePaperStructure,
+} from '../services/paperStructureService.js';
 import { deduplicateQuestionList, parseCanonicalQuestionIdentity, toCanonicalQuestionId, validateQuestionDeduplication } from '../services/canonicalQuestionService.js';
 import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
-import { buildCanonicalQuestionInventory } from '../services/canonicalQuestionInventoryService.js';
+import {
+  buildCanonicalQuestionInventory,
+  detectIndependentAttempts,
+} from '../services/canonicalQuestionInventoryService.js';
+import { normalizeDetectedAttemptHierarchy } from '../services/answerSheetCoverageService.js';
 
 const levelSubjectMatrix: Record<string, string[]> = {
   FOUNDATION: ['Accounting', 'Business Laws', 'Quantitative Aptitude', 'Business Economics'],
@@ -117,25 +125,93 @@ for (const [level, subjects] of Object.entries(levelSubjectMatrix)) {
 assert.equal(subjectCases, 18,
   'The shared PYQ/MTP parser contract must be exercised for all Foundation, Intermediate and Final subjects.');
 
-// Preserve the existing Taxation configuration: Model Test must follow the same
-// configured Taxation route as PYQ/MTP rather than a new dynamic Model Test parser.
-const taxation = getAuthoritativePaperStructure({
-  level: 'INTERMEDIATE',
-  subjectName: 'Taxation',
-  paper: 'Taxation',
-  materialType: 'MODEL_TEST_PAPER',
-  ...sourceBundle,
+// Taxation PYQ/MTP/Model Test must use the same universal source parser as
+// every other subject. Do not inject the legacy 16-MCQ / Q1-Q8 template.
+const taxationSourceBundle = {
+  questionPaperText: [
+    'CA Intermediate Taxation - Question Paper',
+    'SECTION A - MULTIPLE CHOICE QUESTIONS',
+    'Each MCQ carries 2 Marks.',
+    'MCQ 1 - Income tax objective question.',
+    'MCQ 2 - GST objective question.',
+    'SECTION B - DESCRIPTIVE QUESTIONS',
+    'Question 1(a) - 4 Marks',
+    'Question 1(b) - 6 Marks',
+    'Question 2(a)(i) - 2 Marks',
+    'Question 2(a)(ii) - 3 Marks',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Taxation Suggested Answers',
+    'SECTION A - MULTIPLE CHOICE QUESTIONS',
+    '1. (C) Official source key for the selected PYQ/MTP.',
+    '2. (B) Official source key for the selected PYQ/MTP.',
+    'SECTION B - DESCRIPTIVE QUESTIONS',
+    'Question 1(a) - Official answer for Taxation sub-part 1(a).',
+    'Question 1(b) - Official answer for Taxation sub-part 1(b).',
+    'Question 2(a)(i) - Official answer for the first nested clause.',
+    'Question 2(a)(ii) - Official answer for the second nested clause.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Taxation Marking Scheme',
+    'Question 1(a) - 4 Marks',
+    'Question 1(b) - 6 Marks',
+    'Question 2(a)(i) - 2 Marks',
+    'Question 2(a)(ii) - 3 Marks',
+  ].join('\n'),
+  officialPaperMaxMarks: 100,
+};
+const taxationStructures = Object.fromEntries(materialTypes.map((materialType) => [
+  materialType,
+  getAuthoritativePaperStructure({
+    ...taxationSourceBundle,
+    level: 'INTERMEDIATE',
+    subjectName: 'Taxation',
+    paper: 'Paper 3: Taxation',
+    materialType,
+  }),
+])) as Record<(typeof materialTypes)[number], ReturnType<typeof getAuthoritativePaperStructure>>;
+assert.deepEqual(taxationStructures.MODEL_TEST_PAPER, taxationStructures.MTP);
+assert.deepEqual(taxationStructures.PYQ, taxationStructures.MTP);
+assert.deepEqual(
+  taxationStructures.MTP.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 4], ['Q1(b)', 6], ['Q2(a(i))', 2], ['Q2(a(ii))', 3]],
+  'Taxation descriptive sub-question IDs and marks must be extracted from the supplied paper, including nested leaves.',
+);
+assert.deepEqual(
+  taxationStructures.MTP.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['MCQ1', 2], ['MCQ2', 2]],
+  'Taxation PYQ/MTP MCQ count and marks must come from the selected Suggested Answers and Question Paper, not a fixed 16-MCQ template.',
+);
+// CA Final Direct/Indirect Tax must never receive the CA Intermediate Paper 3
+// Taxation template merely because the subject title contains the word "tax".
+const caFinalTaxPaper = getAuthoritativePaperStructure({
+  level: 'FINAL',
+  subjectName: 'Direct Tax Laws and International Taxation',
+  paper: 'Paper 4',
+  materialType: 'PYQ',
+  questionPaperText: [
+    'CA Final Direct Tax Laws - Question Paper',
+    'Question 1(a) - 4 Marks',
+    'Question 2(a) - 6 Marks',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Question 1(a) - Source-backed answer for CA Final direct tax problem.',
+    'Question 2(a) - Source-backed answer for international tax problem.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Marking Scheme',
+    'Question 1(a) - 4 Marks',
+    'Question 2(a) - 6 Marks',
+  ].join('\n'),
+  officialPaperMaxMarks: 100,
 });
-const taxationMtp = getAuthoritativePaperStructure({
-  level: 'INTERMEDIATE',
-  subjectName: 'Taxation',
-  paper: 'Taxation',
-  materialType: 'MTP',
-  ...sourceBundle,
-});
-assert.deepEqual(taxation, taxationMtp);
-assert.equal(taxation.mcqs.length, 16,
-  'Existing configured Taxation MCQ structure must remain unchanged.');
+assert.notEqual(caFinalTaxPaper.paperTitle, 'CA Intermediate – Paper 3: Taxation');
+assert.deepEqual(
+  caFinalTaxPaper.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 4], ['Q2(a)', 6]],
+  'CA Final tax question identity/marks must be extracted from the selected paper, not the Intermediate template.',
+);
 
 // A Model Test with unparseable source text follows the same parser, but must not
 // inherit the generic PYQ/MTP guessed Q1-Q6 fallback with invented maxima.
@@ -239,6 +315,79 @@ assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8'));
 assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8(a)'),
   'A nested leaf must flag its immediate parent container, not only the root question.');
 
+const normalizedDetectedAttempts = normalizeDetectedAttemptHierarchy([
+  { fullQuestionCode: 'Q1', pages: [1] },
+  { fullQuestionCode: 'Q1(a)', pages: [1, 2] },
+  { fullQuestionCode: 'Q1(a(i))', pages: [2] },
+  { fullQuestionCode: 'Q1(a(ii))', pages: [3] },
+  { fullQuestionCode: 'Q1(b)', pages: [4] },
+  { fullQuestionCode: 'Q2(a)', pages: [5] },
+]);
+assert.deepEqual(
+  normalizedDetectedAttempts.attemptedQuestions.map((attempt) => attempt.fullQuestionCode).sort(),
+  ['Q1(a(i))', 'Q1(a(ii))', 'Q1(b)', 'Q2(a)'],
+  'Detected root/intermediate containers must be removed only when canonical descendant leaves are present.',
+);
+assert.deepEqual(
+  normalizedDetectedAttempts.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'Q1(a(i))')?.pages,
+  [1, 2],
+  'Parent/container pages must transfer to the nested leaf for complete answer-page context.',
+);
+assert.ok(
+  normalizedDetectedAttempts.attemptedQuestions.some((attempt) => attempt.fullQuestionCode === 'Q2(a)'),
+  'A parent-only detection with no detected child must be preserved for review rather than guessed.',
+);
+
+const nestedAttemptInventory = buildCanonicalQuestionInventory({
+  paperStructure: {
+    paperTitle: 'Nested Attempt Regression',
+    totalPaperMaxMarks: 10,
+    questions: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q1(a(i))', questionNumber: '1', maximumMarks: 2, compulsory: true, isMcq: false, section: 'A' },
+      { fullQuestionCode: 'Q1(a(ii))', questionNumber: '1', maximumMarks: 3, compulsory: true, isMcq: false, section: 'A' },
+    ],
+    mcqs: [],
+  } as any,
+  totalPaperMaxMarks: 10,
+});
+const nestedAttemptMap = detectIndependentAttempts({
+  inventory: nestedAttemptInventory,
+  rawPageOccurrences: [
+    { questionCode: 'Q1(a)', pageNumber: 1, studentSnippet: '(a) Workings are continued below.' },
+    { questionCode: 'Q1(a(i))', pageNumber: 2, studentSnippet: '(i) First calculation step.' },
+    { questionCode: 'Q1(a(ii))', pageNumber: 3, studentSnippet: '(ii) Second calculation step.' },
+  ],
+});
+assert.deepEqual(
+  Array.from(nestedAttemptMap.keys()).sort(),
+  ['Q1(a(i))', 'Q1(a(ii))'],
+  'Canonical attempt detection must remove intermediate parents with detected nested leaves.',
+);
+assert.deepEqual(
+  nestedAttemptMap.get('Q1(a(i))')?.sourcePages,
+  [1, 2],
+  'Intermediate parent pages must be transferred to the nested leaf in the durable attempt manifest.',
+);
+
+const nestedContinuationAttempts = detectIndependentAttempts({
+  inventory: nestedAttemptInventory,
+  rawPageOccurrences: [
+    { questionCode: 'Q1(a(i))', pageNumber: 1, studentSnippet: '(i) First clause solution.' },
+    {
+      questionCode: 'Q1(a)',
+      pageNumber: 2,
+      studentSnippet: '(ii) Second clause solution continues on this page.',
+      isContinuation: true,
+    },
+  ],
+});
+assert.deepEqual(
+  Array.from(nestedContinuationAttempts.keys()),
+  ['Q1(a(i))', 'Q1(a(ii))'],
+  'A continuation containing a Roman-numeral child label must resolve to that exact nested leaf.',
+);
+
 // Contextual numbering under a single parent header must also retain each level.
 const contextualParts = extractSubQuestionsFromText([
   'Question 9',
@@ -261,5 +410,250 @@ assert.deepEqual(
   [['Q10(iv(1))', 2], ['Q10(iv(2))', 3]],
   'A named parent heading and its named child clauses must create separately marked nested leaves.',
 );
+
+
+ // PYQ and MTP must not inherit the old hardcoded Q1-Q6 marks when their
+ // independently supplied source text cannot be parsed.
+for (const materialType of ['PYQ', 'MTP'] as const) {
+  const unparseable = getAuthoritativePaperStructure({
+    level: 'INTERMEDIATE',
+    subjectName: 'Advanced Accounting',
+    paper: 'Paper 1',
+    materialType,
+    questionPaperText: 'Question paper text without numbered questions or explicit marks.',
+    suggestedAnswersText: 'Suggested answers are present but question-wise identities are unreadable.',
+    markingSchemeText: 'Marking scheme is present but allocations are unreadable.',
+    officialPaperMaxMarks: 100,
+  });
+  assert.equal(unparseable.subQuestions.length, 0, materialType + ' must not fabricate Q1-Q6 identities.');
+  assert.equal(unparseable.mcqs.length, 0);
+  const gate = validatePreEvaluationGate({
+    paperStructure: unparseable,
+    questionPaperText: 'Question paper text without numbered questions.',
+    suggestedAnswersText: 'Suggested answers are present.',
+    markingSchemeText: 'Marking scheme is present.',
+  });
+  assert.ok(gate.failedInvariants.some((message) => message.includes('QUESTION_PAPER_NOT_PARSED')));
+}
+
+// MCQ maxima must be read from the exact source bundle for PYQ, MTP and
+// Faculty Mock. The same answer key must never silently imply 1 or 2 marks.
+const sourceBackedMcqBundle = {
+  questionPaperText: [
+    'CA Examination Question Paper',
+    'Division A - Multiple Choice Questions',
+    'MCQ 1 - 1 Mark',
+    'MCQ 2 - 2 Marks',
+    'Division B - Descriptive Questions',
+    'Question 1(a) - 5 Marks',
+    'Question 2(a) - 5 Marks',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Division A',
+    '1. (B)',
+    '2. (C)',
+    'Division B',
+    'Question 1(a) - Official explanatory answer and full technical reasoning.',
+    'Question 2(a) - Official explanatory answer and full technical reasoning.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Marking Scheme',
+    'MCQ 1 - 1 Mark',
+    'MCQ 2 - 2 Marks',
+    'Question 1(a) - 5 Marks',
+    'Question 2(a) - 5 Marks',
+  ].join('\n'),
+  officialPaperMaxMarks: 40,
+};
+for (const materialType of ['PYQ', 'MTP', 'FACULTY_MOCK_TEST'] as const) {
+  const structure = getAuthoritativePaperStructure({
+    ...sourceBackedMcqBundle,
+    level: 'INTERMEDIATE',
+    subjectName: 'Advanced Accounting',
+    paper: 'Paper 1',
+    materialType,
+  });
+  assert.deepEqual(
+    structure.mcqs.map((mcq) => [mcq.questionNumber, mcq.maximumMarks]),
+    [['1', 1], ['2', 2]],
+    materialType + ' MCQ maximum marks must come from that selected QP/marking scheme.',
+  );
+  const inventory = buildCanonicalQuestionInventory({
+    paperStructure: structure,
+    questionPaperText: sourceBackedMcqBundle.questionPaperText,
+    markingSchemeText: sourceBackedMcqBundle.markingSchemeText,
+    totalPaperMaxMarks: 40,
+  });
+  assert.deepEqual(
+    inventory.items.filter((item) => item.questionType === 'MCQ').map((item) => [item.questionId, item.maxMarks]),
+    [['MCQ1', 1], ['MCQ2', 2]],
+    materialType + ' canonical inventory must preserve source-backed MCQ allocations.',
+  );
+}
+
+// A recognized MCQ key is not enough to invent its maximum marks. Missing
+// allocation stays at zero and the pre-evaluation gate blocks scoring.
+const mcqWithoutMarks = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'PYQ',
+  questionPaperText: [
+    'Question Paper',
+    'Division A - Multiple Choice Questions',
+    'MCQ 1 - Select the correct option.',
+    'Division B - Descriptive Questions',
+    'Question 1(a) - 5 Marks',
+  ].join('\n'),
+  suggestedAnswersText: 'Suggested Answers\nDivision A\n1. (B)\nDivision B',
+  markingSchemeText: 'Marking Scheme\nQuestion 1(a) - 5 Marks',
+  officialPaperMaxMarks: 40,
+});
+assert.equal(mcqWithoutMarks.mcqs[0]?.maximumMarks, 0);
+const mcqWithoutMarksInventory = buildCanonicalQuestionInventory({
+  paperStructure: mcqWithoutMarks,
+  questionPaperText: '',
+  markingSchemeText: '',
+  totalPaperMaxMarks: 40,
+});
+assert.equal(
+  mcqWithoutMarksInventory.items.find((item) => item.questionId === 'MCQ1')?.maxMarks,
+  0,
+  'Canonical inventory must not replace a missing MCQ maximum with a guessed default.',
+);
+const mcqWithoutMarksGate = validatePreEvaluationGate({
+  paperStructure: mcqWithoutMarks,
+  questionPaperText: 'Question Paper',
+  suggestedAnswersText: 'Suggested Answers',
+  markingSchemeText: 'Marking Scheme',
+});
+assert.ok(mcqWithoutMarksGate.failedInvariants.some((message) => message.includes('INVALID_MCQ_MAX_MARKS')));
+
+// Optional-question instructions must be parsed into an exact allowed set.
+// If the source language cannot be resolved, do not silently count all options.
+const optionalFacultyMock = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Faculty Mock',
+  materialType: 'FACULTY_MOCK_TEST',
+  officialPaperMaxMarks: 40,
+  questionPaperText: [
+    'Faculty Mock Question Paper',
+    'Instructions: Attempt any one question from Q2, Q3 and Q4.',
+    'Question 1(a) - 10 Marks',
+    'Question 2(a) - 10 Marks',
+    'Question 3(a) - 10 Marks',
+    'Question 4(a) - 10 Marks',
+  ].join('\n'),
+  suggestedAnswersText: 'Faculty Mock Suggested Answers\nComplete question-wise answers are included.',
+  markingSchemeText: [
+    'Faculty Mock Marking Scheme',
+    'Question 1(a) - 10 Marks',
+    'Question 2(a) - 10 Marks',
+    'Question 3(a) - 10 Marks',
+    'Question 4(a) - 10 Marks',
+  ].join('\n'),
+});
+assert.equal(optionalFacultyMock.optionalSelectionRuleError, undefined);
+assert.match(
+  optionalFacultyMock.questions.find((question) => question.questionNumber === '2')?.choiceRule || '',
+  /Attempt any 1 of Q2, Q3, Q4/,
+);
+assert.equal(optionalFacultyMock.questions.find((question) => question.questionNumber === '1')?.compulsory, true);
+for (const questionNumber of ['2', '3', '4']) {
+  assert.equal(
+    optionalFacultyMock.questions.find((question) => question.questionNumber === questionNumber)?.compulsory,
+    false,
+    'The parent question must be optional when the selected QP allows choosing among it.',
+  );
+  assert.ok(
+    optionalFacultyMock.subQuestions
+      .filter((subQuestion) => subQuestion.questionNumber === questionNumber)
+      .every((subQuestion) => subQuestion.compulsory === false),
+    'Every leaf sub-part under an optional parent must also be marked optional.',
+  );
+}
+const optionalInventory = buildCanonicalQuestionInventory({
+  paperStructure: optionalFacultyMock,
+  totalPaperMaxMarks: 40,
+});
+assert.ok(
+  optionalInventory.items
+    .filter((item) => item.parentQuestionId === 'Q2' || item.parentQuestionId === 'Q3' || item.parentQuestionId === 'Q4')
+    .every((item) => item.isRequiredOrOptional === 'OPTIONAL'),
+  'Canonical leaf inventory must preserve optional selection metadata from the official source.',
+);
+for (const verb of ['Choose', 'Select']) {
+  const rule = extractOptionalAttemptSelectionRule(
+    `Instructions: ${verb} any one question from Q2, Q3 and Q4.`,
+    '',
+    ['1', '2', '3', '4'],
+  );
+  assert.deepEqual(
+    rule?.questionNumbers,
+    ['2', '3', '4'],
+    verb + ' any-one instruction must resolve the explicit allowed parent question set.',
+  );
+}
+const optionalOverAttemptGate = validatePreEvaluationGate({
+  paperStructure: optionalFacultyMock,
+  questionPaperText: 'Question Paper',
+  suggestedAnswersText: 'Suggested Answers',
+  markingSchemeText: 'Marking Scheme',
+  officialPaperMaxMarks: 40,
+  coverageMap: {
+    unmappedPages: [],
+    attemptedQuestions: [
+      { questionNumber: '2', subQuestionNumber: 'a', fullQuestionCode: 'Q2(a)', pages: [1] },
+      { questionNumber: '3', subQuestionNumber: 'a', fullQuestionCode: 'Q3(a)', pages: [2] },
+    ],
+  } as any,
+});
+assert.ok(optionalOverAttemptGate.failedInvariants.some((message) => message.includes('OPTIONAL_ATTEMPT_LIMIT_EXCEEDED')));
+const oneAllowedOptionalAttemptGate = validatePreEvaluationGate({
+  paperStructure: optionalFacultyMock,
+  questionPaperText: 'Question Paper',
+  suggestedAnswersText: 'Suggested Answers',
+  markingSchemeText: 'Marking Scheme',
+  officialPaperMaxMarks: 40,
+  coverageMap: {
+    unmappedPages: [],
+    attemptedQuestions: [
+      { questionNumber: '3', subQuestionNumber: 'a', fullQuestionCode: 'Q3(a)', pages: [1] },
+    ],
+  } as any,
+});
+assert.equal(
+  oneAllowedOptionalAttemptGate.passed,
+  true,
+  'A cleanly mapped attempt within the source-backed optional limit must proceed without NEEDS_REVIEW.',
+);
+
+const unresolvedOptionalFacultyMock = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Faculty Mock',
+  materialType: 'FACULTY_MOCK_TEST',
+  officialPaperMaxMarks: 40,
+  questionPaperText: [
+    'Faculty Mock Question Paper',
+    'Candidates should attempt any two of the following questions.',
+    'Question 1(a) - 10 Marks',
+    'Question 2(a) - 10 Marks',
+    'Question 3(a) - 10 Marks',
+    'Question 4(a) - 10 Marks',
+  ].join('\n'),
+  suggestedAnswersText: 'Faculty Mock Suggested Answers\nComplete question-wise answers are included.',
+  markingSchemeText: 'Faculty Mock Marking Scheme',
+});
+assert.ok(unresolvedOptionalFacultyMock.optionalSelectionRuleError);
+const unresolvedOptionalGate = validatePreEvaluationGate({
+  paperStructure: unresolvedOptionalFacultyMock,
+  questionPaperText: 'Question Paper',
+  suggestedAnswersText: 'Suggested Answers',
+  markingSchemeText: 'Marking Scheme',
+});
+assert.ok(unresolvedOptionalGate.failedInvariants.some((message) => message.includes('OPTIONAL_SELECTION_RULE_UNRESOLVED')));
 
 console.log('Model Test shared PYQ/MTP parser and universal sub-part contract tests passed.');

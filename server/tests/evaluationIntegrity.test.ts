@@ -596,6 +596,10 @@ console.log('\n--- TEST M: Report and Checked Copy Consistency Guarantee ---');
   const qReport = testEval.questions[0];
 
   assert(
+    testEval.validationStatus === 'VALID' && testEval.certificationStatus === 'CERTIFIED',
+    'TEST M.0: A fully mapped, mathematically reconciled, non-unclear evaluation is certified without unnecessary NEEDS_REVIEW.',
+  );
+  assert(
     qChecked.marksAwarded === qReport.marksAwarded &&
       qChecked.maximumMarks === qReport.maximumMarks &&
       qChecked.markingComponents?.length === qReport.markingComponents?.length,
@@ -802,17 +806,49 @@ Section B - Division A: Multiple Choice Questions
 Section B - Division B: Descriptive Questions
 `;
 
+  const selectedQuestionPaper = [
+    'CA Intermediate Paper 3: Taxation - Selected MTP Question Paper',
+    'SECTION A - MULTIPLE CHOICE QUESTIONS',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 1} - 2 Marks`),
+    'MCQ 8 - 1 Mark',
+    'SECTION B - DESCRIPTIVE QUESTIONS',
+    'SECTION C - MULTIPLE CHOICE QUESTIONS',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 9} - 2 Marks`),
+    'MCQ 16 - 1 Mark',
+    'SECTION D - DESCRIPTIVE QUESTIONS',
+  ].join('\n');
+  const selectedMarkingScheme = [
+    'Selected MTP Question-wise MCQ Marking Scheme',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 1} - 2 Marks`),
+    'MCQ 8 - 1 Mark',
+    ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 9} - 2 Marks`),
+    'MCQ 16 - 1 Mark',
+  ].join('\n');
+
   const paperStructure = getAuthoritativePaperStructure({
     subjectName: 'Taxation',
     paper: 'Paper 3: Taxation',
     level: 'INTERMEDIATE',
+    materialType: 'MTP',
+    questionPaperText: selectedQuestionPaper,
     suggestedAnswersText: selectedSuggestedAnswers,
+    markingSchemeText: selectedMarkingScheme,
     officialPaperMaxMarks: 100,
   });
 
   assert(
     paperStructure.mcqs.length === 16,
-    'TEST R.1: Authoritative Taxation paper has all 16 official MCQs (8 Income Tax + 8 GST)'
+    'TEST R.1: All 16 MCQs must be extracted from the selected MTP Suggested Answers.',
+  );
+  assert(
+    paperStructure.paperTitle !== 'CA Intermediate – Paper 3: Taxation',
+    'TEST R.2: An explicit MTP must not use the legacy subject-specific Taxation template.',
+  );
+  const expectedMtpMcqMarks = [2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1];
+  assert(
+    JSON.stringify(paperStructure.mcqs.map((question) => question.maximumMarks)) === JSON.stringify(expectedMtpMcqMarks),
+    'TEST R.3: Each MTP MCQ maximum must come from the exact selected Question Paper / Marking Scheme.',
+    'Expected ' + expectedMtpMcqMarks.join(',') + ' but received ' + paperStructure.mcqs.map((question) => question.maximumMarks).join(','),
   );
 
   // Candidate selections for the regression test
@@ -1225,6 +1261,7 @@ console.log('\n--- TEST X: Official Mark Ceiling Integrity (Dynamic Scheme Overr
   `;
 
   const paper = getAuthoritativePaperStructure({
+    level: 'INTERMEDIATE',
     subjectName: 'Taxation',
     paper: 'Paper 3',
     markingSchemeText: schemeText,

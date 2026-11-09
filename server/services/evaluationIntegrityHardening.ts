@@ -119,6 +119,13 @@ export function validatePreEvaluationGate(params: {
 
   const { paperStructure, coverageMap, questionPaperText, suggestedAnswersText, markingSchemeText } = params;
 
+  // An explicit optional-attempt instruction without a safely resolved choice
+  // set must not silently count every attempted alternative.
+  if (paperStructure?.optionalSelectionRuleError) {
+    failedInvariants.push(paperStructure.optionalSelectionRuleError);
+    criticalFailures.push(paperStructure.optionalSelectionRuleError);
+  }
+
   // 1. Question Paper parsed and non-empty
   const subQs = paperStructure?.subQuestions || [];
   const mcqs = paperStructure?.mcqs || [];

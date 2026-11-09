@@ -55,6 +55,8 @@ export interface AuthoritativePaperStructure {
   questions: PaperStructureQuestion[];
   subQuestions: PaperStructureSubQuestion[];
   mcqs: PaperStructureSubQuestion[];
+  /** Present when the official source states an optional-attempt rule that could not be parsed safely. */
+  optionalSelectionRuleError?: string;
 }
 
 /**
@@ -78,33 +80,56 @@ export function getAuthoritativePaperStructure(options: {
     suggestedAnswersText = '',
     subjectName = '',
     paper = '',
+    level = '',
     officialPaperMaxMarks = 100,
     materialType = '',
   } = options;
 
-  const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
   const isFacultyMock = String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
+  const normalizedLevel = String(level || '').trim().toUpperCase();
+  const normalizedPaperIdentity = `${subjectName} ${paper}`.trim().toLowerCase();
+  // This preconfigured template is specifically CA Intermediate Paper 3:
+  // Taxation. Never select it merely because a CA Final paper mentions tax,
+  // GST, or taxation in its subject title or answer text.
   const isTaxationPaper =
-    subjectName.toLowerCase().includes('tax') ||
-    paper.toLowerCase().includes('tax') ||
-    textCombined.includes('income tax law') ||
-    textCombined.includes('goods and services tax') ||
-    textCombined.includes('rudra') ||
-    textCombined.includes('dharani');
+    normalizedLevel === 'INTERMEDIATE' &&
+    /\btaxation\b/.test(normalizedPaperIdentity);
 
-  // Faculty Mock references are independently authored. Never substitute a
-  // preconfigured taxation/PYQ structure; the exact selected mock's private TXT
-  // files are the only authoritative source for question identity and marks.
-  const structure = isFacultyMock
-    ? buildGenericPaperStructure(options)
-    : isTaxationPaper
-      ? buildTaxationPaperStructure(options)
-      : buildGenericPaperStructure(options);
+  // Uploaded PYQ, MTP, Model Test and Faculty Mock materials must all use
+  // the same source-driven parser, for every subject including Taxation.
+  // A configured legacy Taxation template is retained only for older callers
+  // that do not identify a source-backed material type; it must never override
+  // the selected paper's own question/sub-question identities or mark maxima.
+  const sourceDrivenMaterialTypes = new Set([
+    'PYQ',
+    'MTP',
+    'MODEL_TEST_PAPER',
+    'FACULTY_MOCK_TEST',
+  ]);
+  const normalizedMaterialType = String(materialType || '').trim().toUpperCase();
+  const useUniversalSourceParser =
+    sourceDrivenMaterialTypes.has(normalizedMaterialType) || isFacultyMock;
+
+  const structure = isTaxationPaper && !useUniversalSourceParser
+    ? buildTaxationPaperStructure(options)
+    : buildGenericPaperStructure(options);
+
+  // An explicit optional-question instruction must be resolved into a known
+  // allowed set. Otherwise the ledger could count too many attempted choices.
+  const optionalInstructionPresent = /\b(?:attempt|answer|choose|select)\s+any\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i
+    .test(questionPaperText + '\n' + markingSchemeText);
+  const hasResolvedOptionalRule = (structure.questions || []).some((question) => Boolean(question.choiceRule?.trim()));
+  const optionalSelectionRuleError = optionalInstructionPresent && !hasResolvedOptionalRule
+    ? 'OPTIONAL_SELECTION_RULE_UNRESOLVED: The official source states an optional-attempt rule, but its allowed question set could not be parsed safely.'
+    : undefined;
 
   // Preserve the exact selected materials alongside the canonical IDs. The
   // page mapper needs real QP wording and SA anchors to identify answers in
   // arbitrary order; IDs and maximum marks alone are not enough.
-  return attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText);
+  return {
+    ...attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText),
+    optionalSelectionRuleError,
+  };
 }
 
 /**
@@ -497,7 +522,9 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
       questionNumber: parsed.questionNumber,
       subQuestionNumber: parsed.subQuestion,
       maximumMarks,
-      compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
+      // Generic paper parts are required by default. Only an explicit, parsed
+      // optional-selection rule may mark a parent and its leaf parts optional.
+      compulsory: true,
       isMcq: false,
       section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
       division: 'B',
@@ -706,7 +733,7 @@ export function extractOptionalAttemptSelectionRule(
     .sort((left, right) => Number(left) - Number(right));
   if (!available.length) return null;
 
-  const directPattern = /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+(?:questions?\s*)?((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
+  const directPattern = /\b(?:attempt|answer|choose|select)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+(?:questions?\s*)?((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
   const directMatch = sourceText.match(directPattern);
 
   let allowedCount = 0;
@@ -732,7 +759,7 @@ export function extractOptionalAttemptSelectionRule(
     // from the remaining five." Derive the remaining parent IDs only when
     // the explicit compulsory IDs and the stated remaining count reconcile.
     const remainingMatch = sourceText.match(
-      /\b(?:attempt|answer)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+questions?\s+from\s+(?:the\s+)?remaining\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i,
+      /\b(?:attempt|answer|choose|select)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+questions?\s+from\s+(?:the\s+)?remaining\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i,
     );
     if (!remainingMatch) return null;
 
@@ -764,7 +791,7 @@ export function extractOptionalAttemptSelectionRule(
   return { allowedCount, questionNumbers: allowedNumbers, choiceRule };
 }
 
-function getFacultyMockMcqMaximumMarks(
+function getSourceBackedMcqMaximumMarks(
   questionNumber: string,
   options: { questionPaperText?: string; markingSchemeText?: string },
 ): number {
@@ -830,7 +857,7 @@ function getFacultyMockMcqMaximumMarks(
   // Source-backed rules can define a uniform allocation for all MCQs.
   const combined = sources.join('\n');
   const sharedRules = [
-    /\b(?:each|every)\s+(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\s+(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
+    /\b(?:each|every)\s+(?:MCQs?|multiple[- ]choice|objective)\s*(?:(?:question|item)s?\s*)?(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
     /\b(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\b[^\n.]{0,60}\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per\s+question)\b/i,
     /\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per)\s+(?:MCQ|multiple[- ]choice|objective)\b/i,
   ];
@@ -854,25 +881,9 @@ function buildGenericPaperStructure(options: {
   const combined = `${options.markingSchemeText || ''}\n${options.questionPaperText || ''}\n${options.suggestedAnswersText || ''}`;
   let subQuestions = extractSubQuestionsFromText(combined);
 
-  // Preserve the existing PYQ/MTP fallback behaviour. Model Tests use the
-  // same parser, but an unparseable independently authored source must not be
-  // assigned fabricated Q1-Q6 identities or maximum marks.
-  const materialType = String(options.materialType || '').trim().toUpperCase();
-  const isIndependentlyAuthoredPaper = materialType === 'MODEL_TEST_PAPER' || materialType === 'FACULTY_MOCK_TEST';
-  if (subQuestions.length === 0 && !isIndependentlyAuthoredPaper) {
-    for (let i = 1; i <= 6; i++) {
-      subQuestions.push({
-        fullQuestionCode: `Q${i}`,
-        questionNumber: `${i}`,
-        maximumMarks: i === 1 ? 20 : 16,
-        compulsory: i === 1,
-        isMcq: false,
-        section: 'A',
-        division: 'B',
-      });
-    }
-  }
-
+  // Never fabricate question identities or maximum marks for PYQ, MTP,
+  // Model Test, or Faculty Mock papers. If the selected source cannot be
+  // parsed, the deterministic pre-evaluation gate must stop scoring.
   subQuestions = deduplicateQuestionList(subQuestions);
 
   const questionsMap = new Map<string, PaperStructureQuestion>();
@@ -901,9 +912,9 @@ function buildGenericPaperStructure(options: {
       fullQuestionCode: `MCQ${qNum}`,
       questionNumber: qNum,
       subQuestionNumber: 'MCQ',
-      maximumMarks: materialType === 'FACULTY_MOCK_TEST'
-        ? getFacultyMockMcqMaximumMarks(qNum, options)
-        : 2,
+      // MCQ maxima must be explicit in the selected QP / marking scheme.
+      // Zero is deliberate: pre-evaluation validation blocks guessed allocations.
+      maximumMarks: getSourceBackedMcqMaximumMarks(qNum, options),
       compulsory: true,
       isMcq: true,
       officialKey: data.officialKey,
@@ -922,17 +933,29 @@ function buildGenericPaperStructure(options: {
     baseQuestions.map((question) => question.questionNumber),
   );
   const optionalQuestionNumbers = new Set(attemptRule?.questionNumbers || []);
-  const questions = attemptRule
-    ? baseQuestions.map((question) => optionalQuestionNumbers.has(String(Number(question.questionNumber)))
-      ? { ...question, compulsory: false, choiceRule: attemptRule.choiceRule }
-      : question)
-    : baseQuestions;
+  const finalSubQuestions = subQuestions.map((subQuestion) => ({
+    ...subQuestion,
+    compulsory: !optionalQuestionNumbers.has(String(Number(subQuestion.questionNumber))),
+  }));
+  const questions = baseQuestions.map((question) => {
+    const isOptional = optionalQuestionNumbers.has(String(Number(question.questionNumber)));
+    return {
+      ...question,
+      compulsory: !isOptional,
+      ...(isOptional && attemptRule ? { choiceRule: attemptRule.choiceRule } : {}),
+      // Keep parent and leaf required/optional metadata in sync. The canonical
+      // score ledger consumes leaf entries, not only this parent summary.
+      subQuestions: finalSubQuestions.filter(
+        (subQuestion) => subQuestion.questionNumber === question.questionNumber,
+      ),
+    };
+  });
 
   return {
     paperTitle: 'Chartered Accountancy Examination',
     totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
     questions,
-    subQuestions,
+    subQuestions: finalSubQuestions,
     mcqs,
   };
 }

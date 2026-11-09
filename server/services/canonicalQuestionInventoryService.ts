@@ -36,6 +36,7 @@ import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
   deduplicateQuestionList,
+  isCanonicalQuestionDescendant,
 } from './canonicalQuestionService.js';
 import { db, persistEvaluationRunPackageAtomic, loadEvaluationRunPackage } from '../db.js';
 
@@ -91,7 +92,9 @@ export function buildCanonicalQuestionInventory(options: {
       parentQuestionId: 'DIV_A_MCQ',
       subQuestionId: rawNum,
       questionType: 'MCQ',
-      maxMarks: Number(mcq.maximumMarks) || (paperStructure.totalPaperMaxMarks === 30 ? 1 : 2),
+      // Preserve only source-backed MCQ allocations. Missing marks remain zero
+      // so validatePreEvaluationGate blocks scoring instead of guessing 1 or 2.
+      maxMarks: Number(mcq.maximumMarks) > 0 ? Number(mcq.maximumMarks) : 0,
       sourceOrder: sourceOrder++,
       canonicalTextAnchor: mcq.topic || `Multiple Choice Question ${rawNum}`,
       isAlternative: false,
@@ -235,7 +238,8 @@ export function detectIndependentAttempts(options: {
       } else {
         // Topic keyword matching for inventory sub-questions of this parent
         const candidateItems = inventory.items.filter(
-          (it) => it.parentQuestionId === `Q${qDigits}` || it.questionId.startsWith(`Q${qDigits}(`)
+          (it) => it.parentQuestionId === `Q${qDigits}` ||
+            isCanonicalQuestionDescendant(it.questionId, `Q${qDigits}`)
         );
         let bestMatch: CanonicalQuestionInventoryItem | null = null;
         let bestScore = 0;
@@ -262,9 +266,12 @@ export function detectIndependentAttempts(options: {
       // If student snippet begins with only sub-question letter like "(a)" or "(b)" without repeating parent question number,
       // and follows an active parent question (e.g. candidate did Q3(b), then wrote "(a)" with salary computation),
       // resolve to the active parent if candidate code exists in inventory and matches content or was unattempted.
-      const subOnlyMatch = snip.match(/^\s*\(?([a-d])\)?(?:\s|\.|\:|\-)/i);
-      if (!hasExactInventoryMatch && occ.isContinuation && subOnlyMatch && subOnlyMatch[1] && lastActiveParent) {
-        const contextualCode = `${lastActiveParent}(${subOnlyMatch[1].toLowerCase()})`;
+      const subOnlyMatch = snip.match(/^\s*(?:\(\s*([a-z0-9]+)\s*\)|\[\s*([a-z0-9]+)\s*\]|([a-z0-9]+)[.)])(?:\s|\.|\:|\-)/i);
+      const subOnlyLabel = subOnlyMatch?.[1] || subOnlyMatch?.[2] || subOnlyMatch?.[3];
+      if (!hasExactInventoryMatch && occ.isContinuation && subOnlyLabel && lastActiveParent) {
+        const contextualCode = toCanonicalQuestionId(
+          `${lastActiveParent}(${subOnlyLabel.toLowerCase()})`
+        );
         const candItem = inventoryMap.get(contextualCode.toLowerCase());
         if (candItem) {
           const currentCanon = toCanonicalQuestionId(rawCode);
@@ -352,13 +359,13 @@ export function detectIndependentAttempts(options: {
   const nonMcqAttemptKeys = Array.from(attempts.keys()).filter((k) => !k.startsWith('MCQ'));
   for (const parentKey of nonMcqAttemptKeys) {
     const hasChild = nonMcqAttemptKeys.some(
-      (childKey) => childKey !== parentKey && childKey.startsWith(`${parentKey}(`)
+      (childKey) => childKey !== parentKey && isCanonicalQuestionDescendant(childKey, parentKey)
     );
     if (hasChild) {
       const parentAttempt = attempts.get(parentKey)!;
       // Transfer pages to first child
       const firstChildKey = nonMcqAttemptKeys.find(
-        (childKey) => childKey !== parentKey && childKey.startsWith(`${parentKey}(`)
+        (childKey) => childKey !== parentKey && isCanonicalQuestionDescendant(childKey, parentKey)
       );
       if (firstChildKey) {
         const childAttempt = attempts.get(firstChildKey)!;

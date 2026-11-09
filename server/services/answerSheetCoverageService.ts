@@ -5,6 +5,7 @@ import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperS
 import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
+  isCanonicalQuestionDescendant,
 } from './canonicalQuestionService.js';
 
 // In-memory cache: 1 Answer Sheet = 1 Authoritative Coverage Map
@@ -12,6 +13,43 @@ const coverageMapCache = new Map<string, AnswerCoverageMap>();
 
 export function clearCoverageMapCache(): void {
   coverageMapCache.clear();
+}
+
+/**
+ * Remove detected parent/container labels only when an actual descendant leaf
+ * was also detected. This prevents a visible hierarchy header such as Q1(a)
+ * from becoming a phantom attempted question beside Q1(a)(i) / Q1(a)(ii).
+ * If no descendant is present, keep the parent so the pre-evaluation gate can
+ * request an explicit mapping rather than guessing which leaf was attempted.
+ */
+export function normalizeDetectedAttemptHierarchy<T extends {
+  fullQuestionCode: string;
+  pages: number[];
+}>(detectedAttempts: T[]): { attemptedQuestions: T[]; removedParentCodes: string[] } {
+  const normalized = (Array.isArray(detectedAttempts) ? detectedAttempts : []).map((attempt) => ({
+    ...attempt,
+    fullQuestionCode: toCanonicalQuestionId(attempt.fullQuestionCode),
+    pages: [...new Set((attempt.pages || []).filter((page) => Number.isInteger(page) && page > 0))].sort((a, b) => a - b),
+  }));
+  const removedParentCodes = new Set<string>();
+
+  for (const parent of normalized) {
+    const descendants = normalized.filter((candidate) =>
+      candidate.fullQuestionCode !== parent.fullQuestionCode &&
+      isCanonicalQuestionDescendant(candidate.fullQuestionCode, parent.fullQuestionCode)
+    );
+    if (descendants.length === 0) continue;
+
+    removedParentCodes.add(parent.fullQuestionCode);
+    for (const child of descendants) {
+      child.pages = [...new Set([...child.pages, ...parent.pages])].sort((a, b) => a - b);
+    }
+  }
+
+  return {
+    attemptedQuestions: normalized.filter((attempt) => !removedParentCodes.has(attempt.fullQuestionCode)),
+    removedParentCodes: Array.from(removedParentCodes),
+  };
 }
 
 export type PageAttemptStatus =
@@ -867,10 +905,12 @@ export async function buildAnswerSheetCoverageMap(
     }
   }
 
-  // Keep ambiguous parent-level detections visible for the pre-evaluation gate.
-  // They may be headings or attempts; transferring them to an arbitrary child
-  // would silently remap the student's work.
-  const attemptedQuestions = Array.from(mappingMap.values());
+  // Canonical parent containers are non-scorable once a detected descendant
+  // leaf exists. The helper removes only those proven containers and transfers
+  // their source pages to the matching leaf tasks; unresolved parent-only
+  // detections remain visible to the pre-evaluation review gate.
+  const hierarchyNormalized = normalizeDetectedAttemptHierarchy(Array.from(mappingMap.values()));
+  const attemptedQuestions = hierarchyNormalized.attemptedQuestions;
   const allDetectedCodes = attemptedQuestions.map((a) => a.fullQuestionCode);
 
   const unmappedPages = pageRecords

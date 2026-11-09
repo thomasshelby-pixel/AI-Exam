@@ -29,11 +29,17 @@ const missingStructureAnchor = assessQuestionReferenceForEvaluation({
 assert.equal(missingStructureAnchor.canScoreProvisionally, true);
 assert.equal(missingStructureAnchor.requiresHumanReview, true);
 
-const nonPyqMustKeepExistingStrictBehavior = assessQuestionReferenceForEvaluation({
-  ...baseReference,
-  materialType: 'MTP',
-});
-assert.equal(nonPyqMustKeepExistingStrictBehavior.requiresHumanReview, true);
+for (const materialType of ['PYQ', 'MTP', 'MODEL_TEST_PAPER', 'FACULTY_MOCK_TEST']) {
+  const sourceDisposition = assessQuestionReferenceForEvaluation({
+    ...baseReference,
+    materialType,
+  });
+  assert.equal(
+    sourceDisposition.requiresHumanReview,
+    false,
+    materialType + ' must not force review when its exact Suggested Answer is locked and its canonical leaf/maximum are verified.',
+  );
+}
 
 const missingSuggestedAnswer = assessQuestionReferenceForEvaluation({
   ...baseReference,
