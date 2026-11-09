@@ -485,7 +485,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
         suffix = label.replace(/^\./, '').split('.').map((part) => '(' + part + ')').join('');
       }
       else if (/^[a-zA-Z0-9]+[.)]$/.test(label)) suffix = '(' + label.slice(0, -1) + ')';
-      else if (/^(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARA)\\s+/i.test(label)) suffix = label;
+      else if (/^(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARA)\s+/i.test(label)) suffix = label;
       else suffix = '(' + label + ')';
     }
     const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
