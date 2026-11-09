@@ -68,6 +68,12 @@ export interface PageCoverageModelOutput {
   questionLabelEvidence?: string;
   /** Audit signal only; never used to override deterministic identity checks. */
   readingConfidence?: number;
+  /** Number of separate attempted answer blocks visibly present on this page. */
+  answerBlocksObserved?: number;
+  /** Visible answer blocks that could not safely be mapped to an authoritative question. */
+  unresolvedAnswerBlocks: string[];
+  /** MCQs visibly attempted, but whose chosen option could not be read confidently. */
+  mcqNeedsReview: string[];
   detectedQuestions: Array<{
     questionNumber?: string;
     subQuestion?: string | null;
@@ -206,6 +212,48 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   const isContinuation = typeof raw.isContinuation === 'boolean' ? raw.isContinuation : undefined;
   if (raw.isContinuation !== undefined && isContinuation === undefined) {
     warnings.push('The page auditor returned an invalid continuation flag.');
+  }
+
+  const answerBlocksObserved = Number.isInteger(raw.answerBlocksObserved) && raw.answerBlocksObserved >= 0
+    ? raw.answerBlocksObserved as number
+    : undefined;
+  if (raw.answerBlocksObserved !== undefined && answerBlocksObserved === undefined) {
+    warnings.push('The page auditor returned an invalid attempted-answer-block count.');
+  } else if (
+    raw.answerBlocksObserved === undefined &&
+    status !== 'CLEARLY_UNATTEMPTED'
+  ) {
+    warnings.push('The page auditor did not account for the number of separate attempted answer blocks.');
+  }
+
+  const unresolvedAnswerBlocks: string[] = [];
+  if (raw.unresolvedAnswerBlocks !== undefined && !Array.isArray(raw.unresolvedAnswerBlocks)) {
+    warnings.push('The page auditor returned an invalid unresolved-answer-block list.');
+  } else {
+    for (const value of raw.unresolvedAnswerBlocks || []) {
+      if (typeof value === 'string' && value.trim()) {
+        unresolvedAnswerBlocks.push(value.trim().slice(0, 240));
+      } else {
+        warnings.push('An unresolved answer block lacked literal evidence and was retained for review.');
+      }
+    }
+    if (unresolvedAnswerBlocks.length > 0) {
+      warnings.push('One or more visible answer blocks could not be mapped to an authoritative question.');
+    }
+  }
+
+  const mcqNeedsReview: string[] = [];
+  if (raw.mcqNeedsReview !== undefined && !Array.isArray(raw.mcqNeedsReview)) {
+    warnings.push('The page auditor returned an invalid MCQ review list.');
+  } else {
+    for (const value of raw.mcqNeedsReview || []) {
+      const label = typeof value === 'string' ? normalizeMcqSelectionLabel(value) : '';
+      if (!label || !/^(?:Q)?[0-9]{1,2}(?:\\([a-z0-9]+\\))?$/i.test(label)) {
+        warnings.push('An unreadable MCQ response had an invalid source label and was left for page-level review.');
+        continue;
+      }
+      if (!mcqNeedsReview.includes(label)) mcqNeedsReview.push(label);
+    }
   }
 
   // A malformed individual detection must not discard other confidently mapped
@@ -352,7 +400,24 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     }
   }
 
-  const hasDetectedAnswers = detectedQuestions.length > 0 || Object.keys(selections).length > 0;
+  const detectedDescriptiveCount = detectedQuestions.filter(
+    (question) => String(question.subQuestion || '').toUpperCase() !== 'MCQ' &&
+      !/^MCQ\\s*\\d+$/i.test(String(question.questionNumber || ''))
+  ).length;
+  const accountedAnswerBlocks = detectedDescriptiveCount +
+    Object.keys(selections).length +
+    mcqNeedsReview.length +
+    unresolvedAnswerBlocks.length;
+  if (answerBlocksObserved !== undefined && answerBlocksObserved !== accountedAnswerBlocks) {
+    warnings.push(
+      `The page auditor observed ${answerBlocksObserved} attempted answer block(s), but accounted for ${accountedAnswerBlocks}; missing or merged answer blocks require a second read/review.`
+    );
+  }
+
+  const hasDetectedAnswers = detectedQuestions.length > 0 ||
+    Object.keys(selections).length > 0 ||
+    mcqNeedsReview.length > 0 ||
+    unresolvedAnswerBlocks.length > 0;
   let normalizedHandwriting = hasHandwriting;
   if (hasDetectedAnswers && hasHandwriting === false) {
     normalizedHandwriting = true;
@@ -378,6 +443,9 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
     questionLabelEvidence,
     readingConfidence,
     isContinuation,
+    answerBlocksObserved,
+    unresolvedAnswerBlocks,
+    mcqNeedsReview,
     detectedQuestions,
     mcqSelections: selections,
     mappingWarnings: Array.from(new Set(warnings)),
@@ -394,6 +462,9 @@ export interface DetectedQuestionOccurrence {
   snippet?: string;
   studentSelectedOption?: string; // For MCQs
   isMcq?: boolean;
+  /** A visible MCQ response exists, but the option itself is unreadable/ambiguous. */
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
   mappingBasis?: 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION';
   labelMismatch?: boolean;
 }
@@ -601,6 +672,9 @@ export interface PageCoverageRecord {
   mappingReviewReason?: string;
   questionLabelEvidence?: string;
   readingConfidence?: number;
+  answerBlocksObserved?: number;
+  unresolvedAnswerBlocks?: string[];
+  mcqNeedsReview?: string[];
   /** Technical failure details are kept separate from handwriting/question ambiguity. */
   analysisFailure?: PageAnalysisFailure;
 }
@@ -630,6 +704,8 @@ export interface AttemptedQuestionMapping {
   studentSnippet?: string;
   studentSelectedOption?: string; // For MCQs
   isMcq: boolean;
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
 }
 
 export interface AnswerCoverageMap {
@@ -642,6 +718,7 @@ export interface AnswerCoverageMap {
   coveredPages?: number[];
   is100PercentCovered: boolean;
   mcqSelections: Record<string, string>; // e.g. { '1': 'C', '9': 'A' }
+  mcqNeedsReview: string[];
 }
 
 /**
