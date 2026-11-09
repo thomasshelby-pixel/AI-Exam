@@ -298,7 +298,7 @@ const sourceBackedMcqBundle = {
     'Division B - Descriptive Questions',
     'Question 1(a) - 5 Marks',
     'Question 2(a) - 5 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   suggestedAnswersText: [
     'Suggested Answers',
     'Division A',
@@ -307,14 +307,14 @@ const sourceBackedMcqBundle = {
     'Division B',
     'Question 1(a) - Official explanatory answer and full technical reasoning.',
     'Question 2(a) - Official explanatory answer and full technical reasoning.',
-  ].join('\\n'),
+  ].join('\n'),
   markingSchemeText: [
     'Marking Scheme',
     'MCQ 1 - 1 Mark',
     'MCQ 2 - 2 Marks',
     'Question 1(a) - 5 Marks',
     'Question 2(a) - 5 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   officialPaperMaxMarks: 40,
 };
 for (const materialType of ['PYQ', 'MTP', 'FACULTY_MOCK_TEST'] as const) {
@@ -356,9 +356,9 @@ const mcqWithoutMarks = getAuthoritativePaperStructure({
     'MCQ 1 - Select the correct option.',
     'Division B - Descriptive Questions',
     'Question 1(a) - 5 Marks',
-  ].join('\\n'),
-  suggestedAnswersText: 'Suggested Answers\\nDivision A\\n1. (B)\\nDivision B',
-  markingSchemeText: 'Marking Scheme\\nQuestion 1(a) - 5 Marks',
+  ].join('\n'),
+  suggestedAnswersText: 'Suggested Answers\nDivision A\n1. (B)\nDivision B',
+  markingSchemeText: 'Marking Scheme\nQuestion 1(a) - 5 Marks',
   officialPaperMaxMarks: 40,
 });
 assert.equal(mcqWithoutMarks.mcqs[0]?.maximumMarks, 0);
@@ -396,15 +396,15 @@ const optionalFacultyMock = getAuthoritativePaperStructure({
     'Question 2(a) - 10 Marks',
     'Question 3(a) - 10 Marks',
     'Question 4(a) - 10 Marks',
-  ].join('\\n'),
-  suggestedAnswersText: 'Faculty Mock Suggested Answers\\nComplete question-wise answers are included.',
+  ].join('\n'),
+  suggestedAnswersText: 'Faculty Mock Suggested Answers\nComplete question-wise answers are included.',
   markingSchemeText: [
     'Faculty Mock Marking Scheme',
     'Question 1(a) - 10 Marks',
     'Question 2(a) - 10 Marks',
     'Question 3(a) - 10 Marks',
     'Question 4(a) - 10 Marks',
-  ].join('\\n'),
+  ].join('\n'),
 });
 assert.equal(optionalFacultyMock.optionalSelectionRuleError, undefined);
 assert.match(
@@ -440,8 +440,8 @@ const unresolvedOptionalFacultyMock = getAuthoritativePaperStructure({
     'Question 2(a) - 10 Marks',
     'Question 3(a) - 10 Marks',
     'Question 4(a) - 10 Marks',
-  ].join('\\n'),
-  suggestedAnswersText: 'Faculty Mock Suggested Answers\\nComplete question-wise answers are included.',
+  ].join('\n'),
+  suggestedAnswersText: 'Faculty Mock Suggested Answers\nComplete question-wise answers are included.',
   markingSchemeText: 'Faculty Mock Marking Scheme',
 });
 assert.ok(unresolvedOptionalFacultyMock.optionalSelectionRuleError);
