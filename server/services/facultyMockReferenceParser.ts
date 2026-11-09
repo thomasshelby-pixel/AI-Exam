@@ -56,7 +56,7 @@ export function validateFacultyMockReferenceSections(
   sections: FacultyMockReferenceSections,
 ): FacultyMockReferenceSections {
   const result: FacultyMockReferenceSections = {
-    questionPaperText: String(sections.questionPaperText || '').replace(/^\\uFEFF/, '').trim(),
+    questionPaperText: String(sections.questionPaperText || '').replace(/^\uFEFF/, '').trim(),
     suggestedAnswersText: String(sections.suggestedAnswersText || '').replace(/^\\uFEFF/, '').trim(),
     markingSchemeText: String(sections.markingSchemeText || '').replace(/^\\uFEFF/, '').trim(),
   };
