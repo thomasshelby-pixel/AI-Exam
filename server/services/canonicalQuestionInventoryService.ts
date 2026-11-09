@@ -266,10 +266,11 @@ export function detectIndependentAttempts(options: {
       // If student snippet begins with only sub-question letter like "(a)" or "(b)" without repeating parent question number,
       // and follows an active parent question (e.g. candidate did Q3(b), then wrote "(a)" with salary computation),
       // resolve to the active parent if candidate code exists in inventory and matches content or was unattempted.
-      const subOnlyMatch = snip.match(/^\s*\(?([a-d])\)?(?:\s|\.|\:|\-)/i);
-      if (!hasExactInventoryMatch && occ.isContinuation && subOnlyMatch && subOnlyMatch[1] && lastActiveParent) {
+      const subOnlyMatch = snip.match(/^\\s*(?:\\(\\s*([a-z0-9]+)\\s*\\)|\\[\\s*([a-z0-9]+)\\s*\\]|([a-z0-9]+)[.)])(?:\\s|\\.|\\:|\\-)/i);
+      const subOnlyLabel = subOnlyMatch?.[1] || subOnlyMatch?.[2] || subOnlyMatch?.[3];
+      if (!hasExactInventoryMatch && occ.isContinuation && subOnlyLabel && lastActiveParent) {
         const contextualCode = toCanonicalQuestionId(
-          `${lastActiveParent}(${subOnlyMatch[1].toLowerCase()})`
+          `${lastActiveParent}(${subOnlyLabel.toLowerCase()})`
         );
         const candItem = inventoryMap.get(contextualCode.toLowerCase());
         if (candItem) {
