@@ -1345,6 +1345,8 @@ export function processEvaluationIntegrity(
             hasReplacement: dq.hasReplacement,
             selectedOption: dq.studentSelectedOption,
             isPartial: dq.status === 'ATTEMPTED_PARTIALLY_READABLE',
+            mcqSelectionNeedsReview: dq.mcqSelectionNeedsReview,
+            mappingReviewReason: dq.mappingReviewReason,
           });
         }
       }
@@ -1358,6 +1360,8 @@ export function processEvaluationIntegrity(
           evidenceText: att.studentSnippet,
           studentSnippet: att.studentSnippet,
           selectedOption: att.studentSelectedOption,
+          mcqSelectionNeedsReview: att.mcqSelectionNeedsReview,
+          mappingReviewReason: att.mappingReviewReason,
         });
       }
     }
