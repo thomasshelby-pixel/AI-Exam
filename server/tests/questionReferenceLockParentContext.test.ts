@@ -185,4 +185,19 @@ assert.equal(mixedLabelTwo.found, true, 'The sibling mixed-format numeric child 
 assert.match(mixedLabelTwo.snippet, /Only mixed two evidence/);
 assert.doesNotMatch(mixedLabelTwo.snippet, /Only mixed one evidence/);
 
+const nestedBracketAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 6(a(i)) First nested-parenthesis answer with its own working and conclusion.',
+  'Only nested-bracket evidence.',
+  'Question 6(a(ii)) Second nested-parenthesis answer with separate working and conclusion.',
+  'Only nested-bracket sibling evidence.',
+].join('\n');
+const nestedBracketOne = extractLockedQuestionSlice(nestedBracketAnswers, '6', 'a(i)', 'SA');
+assert.equal(nestedBracketOne.found, true, 'The compact nested-bracket heading (a(i)) must resolve to Q6(a)(i).');
+assert.match(nestedBracketOne.snippet, /Only nested-bracket evidence/);
+assert.doesNotMatch(nestedBracketOne.snippet, /Only nested-bracket sibling evidence/);
+const nestedBracketTwo = extractLockedQuestionSlice(nestedBracketAnswers, '6', 'a(ii)', 'SA');
+assert.equal(nestedBracketTwo.found, true, 'Sibling nested-bracket headings must remain independently retrievable.');
+assert.match(nestedBracketTwo.snippet, /Only nested-bracket sibling evidence/);
+assert.doesNotMatch(nestedBracketTwo.snippet, /Only nested-bracket evidence/);
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');
