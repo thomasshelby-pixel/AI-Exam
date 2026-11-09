@@ -724,7 +724,7 @@ async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promi
 
     if (sourceMismatchFields.length > 0) {
       console.error('[AsyncEval] Faculty Mock source binding mismatch:', {
-        evaluationId,
+        evaluationId: job.evaluationId,
         mockId,
         mismatchFields: sourceMismatchFields,
         expectedMaximumMarks,
