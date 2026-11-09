@@ -747,6 +747,76 @@ console.log('\n--- REAL RUNTIME REGRESSIONS: FOUNDATION, INTERMEDIATE, FINAL ---
   assert(processedResult.integrityAudit?.mathConsistent === true, 'TEST RT.9: Mathematical integrity consistency verified');
 }
 
+// --------------------------------------------------------------------------
+// TEST RT.10: Faculty Mock independent sub-part formats stay split.
+// --------------------------------------------------------------------------
+console.log('\n--- TEST RT.10: Faculty Mock Sub-Part Parsing ---');
+{
+  const facultyMockPaper = `
+  FACULTY MOCK — ADVANCED ACCOUNTING
+  QUESTION NO. 1 — 20 MARKS
+  Part (a): Calculate the value of goodwill and show workings — 12 marks
+  Part (b): Explain the accounting treatment — [8 Marks]
+
+  QUESTION 2 — 10 MARKS
+  a) Prepare the journal entries — (6 Marks)
+  b) State the disclosure requirements — Marks: 4
+  `;
+
+  const parsed = extractSubQuestionsFromText(facultyMockPaper);
+  const parsedCodes = parsed.map((question) => question.fullQuestionCode);
+  assert(parsedCodes.includes('Q1(a)'), `TEST RT.10.1: Q1(a) is extracted independently (got ${parsedCodes.join(', ')} )`);
+  assert(parsedCodes.includes('Q1(b)'), `TEST RT.10.2: Q1(b) is extracted independently (got ${parsedCodes.join(', ')} )`);
+  assert(parsedCodes.includes('Q2(a)'), `TEST RT.10.3: Q2(a) is extracted from "a)" format (got ${parsedCodes.join(', ')} )`);
+  assert(parsedCodes.includes('Q2(b)'), `TEST RT.10.4: Q2(b) is extracted from "Marks: 4" format (got ${parsedCodes.join(', ')} )`);
+  assert(!parsedCodes.includes('Q1') && !parsedCodes.includes('Q2'), 'TEST RT.10.5: Parent containers are removed when child parts exist');
+
+  const q1a = parsed.find((question) => question.fullQuestionCode === 'Q1(a)');
+  const q1b = parsed.find((question) => question.fullQuestionCode === 'Q1(b)');
+  const q2a = parsed.find((question) => question.fullQuestionCode === 'Q2(a)');
+  const q2b = parsed.find((question) => question.fullQuestionCode === 'Q2(b)');
+  assert(q1a?.maximumMarks === 12, `TEST RT.10.6: Q1(a) maximum is 12 (got ${q1a?.maximumMarks})`);
+  assert(q1b?.maximumMarks === 8, `TEST RT.10.7: Q1(b) maximum is 8 (got ${q1b?.maximumMarks})`);
+  assert(q2a?.maximumMarks === 6, `TEST RT.10.8: Q2(a) maximum is 6 (got ${q2a?.maximumMarks})`);
+  assert(q2b?.maximumMarks === 4, `TEST RT.10.9: Q2(b) maximum is 4 (got ${q2b?.maximumMarks})`);
+}
+
+// --------------------------------------------------------------------------
+// TEST RT.11: Do not generate a paper score above its official maximum.
+// --------------------------------------------------------------------------
+console.log('\n--- TEST RT.11: Attempted Maximum Paper Guard ---');
+{
+  const paperStructure: any = {
+    paperTitle: 'Faculty Mock Optional Paper',
+    totalPaperMaxMarks: 100,
+    questions: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+      { fullQuestionCode: 'Q3(a)', questionNumber: '3', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+      { fullQuestionCode: 'Q4(a)', questionNumber: '4', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+    ],
+    mcqs: [],
+  };
+  const coverageMap: any = {
+    attemptedQuestions: [
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', pages: [1], isMcq: false },
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', pages: [2], isMcq: false },
+      { fullQuestionCode: 'Q3(a)', questionNumber: '3', subQuestionNumber: 'a', pages: [3], isMcq: false },
+      { fullQuestionCode: 'Q4(a)', questionNumber: '4', subQuestionNumber: 'a', pages: [4], isMcq: false },
+    ],
+    unmappedPages: [],
+    unclearPages: [],
+    is100PercentCovered: true,
+  };
+  const preGate = validatePreEvaluationGate({ paperStructure, coverageMap, officialPaperMaxMarks: 100 });
+  assert(preGate.passed === false, 'TEST RT.11.1: Four attempted 30-mark answers cannot be scored as a 100-mark paper');
+  assert(
+    preGate.criticalFailures.some((failure) => failure.includes('ATTEMPTED_MAX_MARKS_EXCEED_PAPER_MAX') && failure.includes('120')),
+    'TEST RT.11.2: Exact attempted maximum and paper maximum are reported for manual review',
+  );
+}
+
 console.log('\n================================================================');
 console.log(`--- TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED ---`);
 console.log('================================================================');
