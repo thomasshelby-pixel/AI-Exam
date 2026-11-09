@@ -84,7 +84,6 @@ export function getAuthoritativePaperStructure(options: {
     materialType = '',
   } = options;
 
-  const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
   const isFacultyMock = String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
   const normalizedLevel = String(level || '').trim().toUpperCase();
   const normalizedPaperIdentity = `${subjectName} ${paper}`.trim().toLowerCase();
