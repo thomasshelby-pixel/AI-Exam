@@ -11,7 +11,7 @@ initDatabase();
 // re-validation must apply this same precedence rather than comparing the
 // header-derived job total to only the raw Faculty Mock record field.
 assert.equal(
-  resolveOfficialPaperMaximumMarks(100, 'CA Mock Question Paper\\nMaximum Marks: 50'),
+  resolveOfficialPaperMaximumMarks(100, 'CA Mock Question Paper\nMaximum Marks: 50'),
   50,
   'An explicit supported QP maximum overrides a stale/default configured maximum consistently.',
 );
