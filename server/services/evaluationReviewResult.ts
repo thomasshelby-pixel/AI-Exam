@@ -54,6 +54,8 @@ export function createEvaluationReviewResult(options: {
 
   const attemptedCount = options.coverageMap?.attemptedQuestions?.length || questions.length;
   const evaluatedCount = questions.filter((q) => q.status !== 'unclear' && !q.flags?.includes('FAILED_TO_EVALUATE')).length;
+  const reviewTimeframeMessage =
+    'You will receive your reviewed result within 24–48 working hours. We will notify you when the review is complete.';
 
   return {
     evaluationId: options.evaluationId,
@@ -76,8 +78,8 @@ export function createEvaluationReviewResult(options: {
     confidenceScore,
     checkingMode: options.checkingMode,
     overallSummary: questions.length > 0
-      ? `Evaluation completed with ${evaluatedCount} of ${attemptedCount} attempted question(s) evaluated (${totalMarks}/${maximumMarks} marks). Consistency verification or question mapping review is required before final official certification.`
-      : 'The uploaded answer pages are preserved and require question-mapping or integrity review before final score certification.',
+      ? `Evaluation completed with ${evaluatedCount} of ${attemptedCount} attempted question(s) evaluated (${totalMarks}/${maximumMarks} marks). Consistency verification or question mapping review is required before final official certification. ${reviewTimeframeMessage}`
+      : `The uploaded answer pages are preserved and require question-mapping or integrity review before final score certification. ${reviewTimeframeMessage}`,
     strengths: questions.length > 0 ? ['Answer sheet pages successfully mapped and preserved'] : [],
     weaknesses: ['Resolve pending question-mapping or verification checks before final copy download'],
     topicPerformance: [],
