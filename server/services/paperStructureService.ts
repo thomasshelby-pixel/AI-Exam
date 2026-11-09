@@ -564,7 +564,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     '(?:' + labelledPrefixName + '\\s*)?' + bracketPath + '|' +
     '(?:\\.?[a-zA-Z0-9]+)(?:\\.[a-zA-Z0-9]+){1,4}|' +
     '(?:' + labelledPrefixName + '\\s*)?[a-zA-Z0-9]+[.)]|' +
-    '[a-zA-Z0-9]+)' +
+    '[a-zA-Z0-9]+[.)])' +
     '(?:\\s*[-–—:]\\s*|\\s+|$)',
     'i',
   );
