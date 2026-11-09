@@ -1187,6 +1187,9 @@ function runMigrations() {
   addColumnIfNotExists('faculty_mock_tests', 'access_type', "TEXT NOT NULL DEFAULT 'FREE'");
   addColumnIfNotExists('evaluations', 'faculty_mock_test_id', 'TEXT');
   addColumnIfNotExists('evaluations', 'faculty_mock_payment_order_id', 'TEXT');
+  // A one-time, same-file Faculty Mock review retry is linked to its original evaluation.
+  addColumnIfNotExists('evaluations', 'retry_of_evaluation_id', 'TEXT');
+  addColumnIfNotExists('evaluations', 'faculty_mock_review_retry_evaluation_id', 'TEXT');
 
   // Ensure evaluation_materials has all enhanced columns
   addColumnIfNotExists('evaluation_materials', 'source_type', "TEXT NOT NULL DEFAULT 'ADMIN'");
