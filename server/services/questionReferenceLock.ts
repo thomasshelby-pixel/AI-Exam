@@ -95,11 +95,16 @@ function subQuestionSuffixPattern(subQuestion: string): string {
       '|\\s*' + namedPrefixes + '\\s*' + token +
       ')';
   }).join('');
+  const nestedParentheses = path.length > 1
+    ? '\\s*\\(\\s*' + escapeRegex(path[0]) +
+      path.slice(1).map((part) => '\\s*\\(\\s*' + escapeRegex(part) + '\\s*\\)').join('') +
+      '\\s*\\)'
+    : '';
   const compact = path.length === 1
     ? '\\s*' + escapeRegex(path[0]) + '(?=\\s|[-–—:.)]|$)'
     : '';
 
-  return '(?:' + pathPattern + (compact ? '|' + compact : '') + ')';
+  return '(?:' + [pathPattern, nestedParentheses, compact].filter(Boolean).join('|') + ')';
 }
 
 export function parseQuestionCode(code: string): {
