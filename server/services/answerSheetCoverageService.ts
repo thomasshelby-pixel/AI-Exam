@@ -248,7 +248,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
   } else {
     for (const value of raw.mcqNeedsReview || []) {
       const label = typeof value === 'string' ? normalizeMcqSelectionLabel(value) : '';
-      if (!label || !/^(?:Q)?[0-9]{1,2}(?:\([a-z0-9]+\))?$/i.test(label)) {
+      if (!label || !/^(?:Q)?[0-9]{1,3}(?:\([a-z0-9]+\))*$/i.test(label)) {
         warnings.push('An unreadable MCQ response had an invalid source label and was left for page-level review.');
         continue;
       }
