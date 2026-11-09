@@ -473,15 +473,15 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   if (!text || typeof text !== 'string') return subQuestions;
 
   const seen = new Set<string>();
-  const addQuestion = (questionNumber: string, subQuestion: string | undefined, maximumMarks: number) => {
-    if (!questionNumber || !Number.isFinite(maximumMarks) || maximumMarks <= 0) return;
-    const rawCode = subQuestion ? 'Q' + questionNumber + '(' + subQuestion + ')' : 'Q' + questionNumber;
-    const canonicalId = toCanonicalQuestionId(rawCode);
+  const addQuestion = (rawCode: string, maximumMarks: number) => {
+    if (!Number.isFinite(maximumMarks) || maximumMarks <= 0) return;
+    const parsed = parseCanonicalQuestionIdentity(rawCode);
+    if (!parsed.questionNumber || parsed.isMcq) return;
+    const canonicalId = parsed.canonicalId;
     if (seen.has(canonicalId)) return;
     seen.add(canonicalId);
-    const parsed = parseCanonicalQuestionIdentity(canonicalId);
     subQuestions.push({
-      fullQuestionCode: parsed.canonicalId,
+      fullQuestionCode: canonicalId,
       questionNumber: parsed.questionNumber,
       subQuestionNumber: parsed.subQuestion,
       maximumMarks,
@@ -499,61 +499,110 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
       source.match(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i) ||
       source.match(/\b(?:Marks?|M)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)/i) ||
       source.match(/\b(?:carries?|carrying|worth|allotted)\s+([0-9]+(?:\.[0-9]+)?)(?:\s*(?:Marks?|M))?\b/i);
-    const valueText = match?.[1];
-    if (!valueText) return undefined;
-    const marks = Number(valueText);
+    const number = match?.[1];
+    if (!number) return undefined;
+    const marks = Number(number);
     return Number.isFinite(marks) && marks > 0 ? marks : undefined;
   };
 
-  // Explicit parent/part labels, including "QUESTION NO. 1 (a) carries 5 marks".
-  const explicitRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\))?\s*(?:[-–—:]|\b|is|carries?|carrying|worth|allotted|\.)\s*(?:(?:for|carrying|carries|worth|allotted|of)?\s*)?(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
-  let match: RegExpExecArray | null;
-  while ((match = explicitRegex.exec(text)) !== null) {
-    addQuestion(match[1], match[2], Number(match[3]));
-  }
+  const sectionBoundary = /^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER|MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\s*[-–—:]?\s*(?:MCQ|OBJECTIVE))\b/i;
+  const namedQuestionLine = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|ANS(?:WER)?\.?)\s*(\d{1,3})(.*)$/i;
+  const numericQuestionLine = /^(\s*)(\d{1,3})(.*)$/u;
+  const partLabelLine = /^(\s*)(?:(PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(\([\p{L}\p{N}]+\)|\[[\p{L}\p{N}]+\]|[\p{L}\p{N}]+[).])\s*(.*)$/iu;
+  const startsWithPartLabel = (value: string): boolean => {
+    const normalized = String(value || '').trim().replace(/^[-–—:./]+\s*/, '');
+    return /^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\b/i.test(normalized) ||
+      /^[([{]/u.test(normalized) ||
+      /^[\p{L}\p{N}]{1,4}\s*[).:\-–—]/u.test(normalized);
+  };
+  const normalizedSuffix = (value: string): string =>
+    String(value || '').trim().replace(/^[-–—:./]+\s*/, '');
 
-  // Explicit Q1(a) lines can place the allocation after descriptive wording:
-  // "Q1(a) Calculate NPV — 5 marks" or "Question 1 Part (b): 4 marks".
-  const explicitPartRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)([^\r\n]*)/gi;
-  while ((match = explicitPartRegex.exec(text)) !== null) {
-    const marks = extractMarks(match[3]);
-    if (marks !== undefined) addQuestion(match[1], match[2], marks);
-  }
+  let activeQuestionNumber: string | null = null;
+  let activePath: string[] = [];
+  let activePathIndent = 0;
 
-  // Numeric line labels: "4(b) - 3 Marks", "6(a)(2) [3 Marks]".
-  const numericRegex = /(?:^|\n)\s*([0-9]+)\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\)\s*[-–—:]?\s*(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
-  while ((match = numericRegex.exec(text)) !== null) {
-    addQuestion(match[1], match[2], Number(match[3]));
-  }
-
-  // Contextual formats under a parent heading:
-  // "(a) Description [10 Marks]", "a) Description — 5 marks",
-  // "Part (b): Description (4 Marks)" and "Sub-part (i) — Marks: 2".
-  const lines = text.split(/\r?\n/);
-  let activeParentQNum: string | null = null;
-  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b))/i;
-  const childSubQRegex = /^\s*(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(?:\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)|\[\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\]|([a-zA-Z0-9]+)\s*[.)])(?:\s*[-–—:]\s*|\s+|$)/i;
-
-  for (const line of lines) {
-    if (/^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER|MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\s*[-–—:]?\s*(?:MCQ|OBJECTIVE))\b/i.test(line)) {
-      activeParentQNum = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (sectionBoundary.test(line)) {
+      activeQuestionNumber = null;
+      activePath = [];
+      activePathIndent = 0;
+      continue;
     }
 
-    const parentMatch = line.match(parentHeaderRegex);
-    if (parentMatch) activeParentQNum = parentMatch[1];
+    const named = line.match(namedQuestionLine);
+    const numeric = named ? null : line.match(numericQuestionLine);
+    let questionNumber: string | null = null;
+    let suffix = '';
+    let indentation = 0;
+    let isExplicitQuestionLine = false;
 
-    if (!activeParentQNum) continue;
-    const childMatch = line.match(childSubQRegex);
-    if (!childMatch) continue;
+    if (named) {
+      questionNumber = named[1];
+      suffix = normalizedSuffix(named[2]);
+      indentation = line.length - line.trimStart().length;
+      isExplicitQuestionLine = true;
+    } else if (numeric) {
+      const candidateSuffix = normalizedSuffix(numeric[3]);
+      // Bare numbered headings are accepted only when they visibly use a
+      // question delimiter / sub-part marker. Ordinary dates and table rows
+      // must not become fabricated question identities.
+      if (/^[.):\-–—]/u.test(candidateSuffix) || startsWithPartLabel(candidateSuffix)) {
+        questionNumber = numeric[2];
+        suffix = candidateSuffix.replace(/^[.):\-–—]+\s*/, '');
+        indentation = numeric[1].length;
+        isExplicitQuestionLine = true;
+      }
+    }
 
-    const subQuestion = childMatch[1] || childMatch[2] || childMatch[3];
-    const remainder = line.slice(childMatch[0].length);
+    if (isExplicitQuestionLine && questionNumber) {
+      activeQuestionNumber = questionNumber;
+      const hasSubPartLabel = startsWithPartLabel(suffix);
+      const parsed = hasSubPartLabel
+        ? parseCanonicalQuestionIdentity('Q' + questionNumber + ' ' + suffix)
+        : parseCanonicalQuestionIdentity('Q' + questionNumber);
+      activePath = parsed.subQuestionPath || [];
+      activePathIndent = indentation;
+
+      const marks = extractMarks(suffix || line);
+      if (marks !== undefined) addQuestion(parsed.canonicalId, marks);
+      continue;
+    }
+
+    if (!activeQuestionNumber) continue;
+    const child = line.match(partLabelLine);
+    if (!child) continue;
+
+    const marker = child[3];
+    const partWord = String(child[2] || '').toUpperCase();
+    const markerCode = parseCanonicalQuestionIdentity('Q' + activeQuestionNumber + ' ' + marker);
+    const markerPath = markerCode.subQuestionPath || [];
+    if (!markerPath.length) continue;
+
+    const childIndent = child[1].length;
+    const isExplicitNestedPart = partWord.startsWith('SUB');
+    const isNestedByLayout = activePath.length > 0 && childIndent > activePathIndent;
+    let nextPath: string[];
+    if (!activePath.length) {
+      nextPath = markerPath;
+    } else if (isExplicitNestedPart || isNestedByLayout) {
+      nextPath = activePath.concat(markerPath);
+    } else {
+      nextPath = activePath.slice(0, -1).concat(markerPath);
+    }
+
+    const canonicalId = 'Q' + activeQuestionNumber + nextPath.map((part) => '(' + part + ')').join('');
+    const remainder = child[4] || '';
     const marks = extractMarks(remainder);
-    if (marks !== undefined) addQuestion(activeParentQNum, subQuestion, marks);
+    if (marks !== undefined) addQuestion(canonicalId, marks);
+
+    activePath = nextPath;
+    activePathIndent = childIndent;
   }
 
-  return deduplicateQuestionList(subQuestions);
+  return subQuestions;
 }
+
 interface OptionalAttemptSelectionRule {
   allowedCount: number;
   questionNumbers: string[];
