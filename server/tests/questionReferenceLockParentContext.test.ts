@@ -145,7 +145,7 @@ const dottedAnswers = [
   'Only dotted two evidence.',
 ].join('\n');
 const dottedOne = extractLockedQuestionSlice(dottedAnswers, '3', '1(1)', 'SA');
-assert.equal(dottedOne.found, true, 'Q3.1.1 must be retrievable through canonical Q3(1)(1).');
+assert.equal(dottedOne.found, true, 'Q3.1.1 must be retrievable through canonical Q3(1(1)).');
 assert.match(dottedOne.snippet, /Only dotted one evidence/);
 assert.doesNotMatch(dottedOne.snippet, /Only dotted two evidence/);
 const dottedTwo = extractLockedQuestionSlice(dottedAnswers, '3', '1(2)', 'SA');
