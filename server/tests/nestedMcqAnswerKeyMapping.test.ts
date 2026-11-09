@@ -50,11 +50,23 @@ const paper = getAuthoritativePaperStructure({
   level: 'INTERMEDIATE',
   subjectName: 'Advanced Accounting',
   paper: 'Paper 1',
+  materialType: 'MODEL_TEST_PAPER',
+  questionPaperText: [
+    'MODEL TEST PAPER 1 QUESTION PAPER',
+    'Division A (30 Marks)',
+    'Each MCQ carries 2 Marks.',
+    'Division B',
+    'Question 1(a) - 10 Marks',
+  ].join('\\n'),
   suggestedAnswersText: suggestedAnswers,
   officialPaperMaxMarks: 100,
 });
 assert.equal(paper.mcqs.length, 15, 'Generic Advanced Accounting structure must contain all extracted MCQs');
 assert.equal(paper.mcqs.find((mcq) => mcq.fullQuestionCode === 'MCQ4')?.officialKey, 'C');
+assert.ok(
+  paper.mcqs.every((mcq) => mcq.maximumMarks === 2),
+  'Every nested MCQ must receive only the 2-mark allocation explicitly stated by its selected Question Paper.',
+);
 assert.equal(paper.mcqs.find((mcq) => mcq.fullQuestionCode === 'MCQ4')?.sourceQuestionLabel, 'Question 1(iv)', 'The fourth flat key must retain its original nested Q1(iv) label.');
 assert.equal(paper.mcqs.find((mcq) => mcq.fullQuestionCode === 'MCQ13')?.sourceQuestionLabel, 'Question 4', 'Standalone Question 4 must retain its own label rather than collide with Q1(iv).');
 
