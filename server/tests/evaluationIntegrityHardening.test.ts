@@ -157,6 +157,15 @@ console.log('\n--- TEST B: Malformed Question IDs ---');
   // Legitimate nested question Q6(a)(1) preserved
   const parsed4 = parseCanonicalQuestionIdentity('Q6(a)(1)');
   assert(parsed4.canonicalId === 'Q6(a(1))', `TEST B.4: Valid nested sub-question Q6(a(1)) preserved (got ${parsed4.canonicalId})`);
+
+  const parsed5 = parseCanonicalQuestionIdentity('1(a)(i)');
+  assert(parsed5.canonicalId === 'Q1(a(i))', `TEST B.5: Letter-to-Roman nested numbering 1(a)(i) preserved (got ${parsed5.canonicalId})`);
+
+  const parsed6 = parseCanonicalQuestionIdentity('Q3.1.1');
+  assert(parsed6.canonicalId === 'Q3(1(1))', `TEST B.6: Repeated numeric levels in dotted numbering are preserved (got ${parsed6.canonicalId})`);
+
+  const parsed7 = parseCanonicalQuestionIdentity('Q4(iv(iv))');
+  assert(parsed7.canonicalId === 'Q4(iv(iv))', `TEST B.7: Repeated Roman levels remain separate hierarchical identities (got ${parsed7.canonicalId})`);
 }
 
 // --------------------------------------------------------------------------
