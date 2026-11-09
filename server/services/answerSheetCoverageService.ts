@@ -753,7 +753,7 @@ export async function buildAnswerSheetCoverageMap(
   const structureHash = crypto.createHash('sha256').update(structureSignature).digest('hex');
   const enableTargetedRecovery = options.enableTargetedRecovery === true;
   // Keep normal and PYQ-recovery coverage maps isolated for the same PDF/paper.
-  const cacheKey = `${pdfHash}:${structureHash}:pyqRecovery=${enableTargetedRecovery ? '1' : '0'}`;
+  const cacheKey = `${pdfHash}:${structureHash}:targetedRecovery=${enableTargetedRecovery ? '1' : '0'}`;
   if (coverageMapCache.has(cacheKey)) {
     return coverageMapCache.get(cacheKey)!;
   }
