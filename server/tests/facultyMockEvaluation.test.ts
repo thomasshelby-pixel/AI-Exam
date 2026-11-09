@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import { enforceMaterialHardGate } from '../services/materialHardGateService.js';
-import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
+import { buildFacultyMockEvaluationReference, parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
 
 initDatabase();
 
@@ -26,14 +26,11 @@ const markingSchemeText = [
   'Question 1: 5 marks for correct treatment, supporting standard and journal entries.',
   'Question 2: 5 marks for correct formula, workings, calculation and conclusion.',
 ].join('\n\n');
-const combinedReferenceTxt = [
-  '[QUESTION PAPER]',
+const combinedReferenceTxt = buildFacultyMockEvaluationReference({
   questionPaperText,
-  '[SUGGESTED ANSWERS]',
   suggestedAnswersText,
-  '[MARKING SCHEME]',
   markingSchemeText,
-].join('\n\n');
+});
 const parsedReference = parseFacultyMockEvaluationReference(combinedReferenceTxt);
 assert.equal(parsedReference.questionPaperText, questionPaperText, 'Parser separates the Question Paper section from the single TXT');
 assert.equal(parsedReference.suggestedAnswersText, suggestedAnswersText, 'Parser separates Suggested Answers from the single TXT');
@@ -59,18 +56,26 @@ try {
       id, faculty_id, course_level, attempt, model_group, subject_key, subject_name, paper,
       mock_number, title, maximum_marks, syllabus_version, question_paper_text, suggested_answers_text,
       marking_scheme_text, question_paper_file_id, question_paper_file_name, question_paper_file_size,
+      question_paper_reference_file_id, question_paper_reference_file_name, question_paper_reference_file_size,
       suggested_answer_file_id, suggested_answer_file_name, suggested_answer_file_size,
+      marking_scheme_file_id, marking_scheme_file_name, marking_scheme_file_size,
       status, created_by, created_at, updated_at
     ) VALUES (?, ?, 'INTERMEDIATE', 'May 2027', 'GROUP_1', 'inter_advanced_accounting',
       'Advanced Accounting', 'Paper 1', 1, 'Test Faculty Mock 01', 100, 'New Scheme 2024',
       ?, ?, ?,
-      'qp-file', 'question-paper.pdf', 1000, 'reference-file', 'faculty-mock-reference.txt', 1600,
+      'qp-file', 'question-paper.pdf', 1000,
+      'qp-text-file', 'question-paper-reference.txt', 1200,
+      'suggested-answer-file', 'suggested-answers.txt', 1400,
+      'marking-scheme-file', 'marking-scheme.txt', 800,
       'PUBLISHED', 'test-admin', ?, ?)
   `).run(testId, facultyId, questionPaperText, suggestedAnswersText, markingSchemeText, now, now);
 
   const stored = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
   assert.equal(stored.mock_number, 1, 'Faculty mock stores its sequence number');
   assert.equal(stored.status, 'PUBLISHED', 'Published faculty mock is active for students');
+  assert.equal(stored.question_paper_reference_file_id, 'qp-text-file', 'Private evaluation Question Paper TXT metadata is stored independently from the student PDF');
+  assert.equal(stored.suggested_answer_file_id, 'suggested-answer-file', 'Suggested Answers TXT metadata has its own file record');
+  assert.equal(stored.marking_scheme_file_id, 'marking-scheme-file', 'Marking Scheme TXT metadata has its own file record');
 
   const verified = enforceMaterialHardGate({
     evaluationId: 'eval_' + suffix,
@@ -96,6 +101,10 @@ try {
       version: '1.0',
       status: 'ACTIVE',
       admin_approved: 1,
+      file_id: stored.suggested_answer_file_id,
+      question_material_id: stored.question_paper_reference_file_id,
+      suggested_answer_material_id: stored.suggested_answer_file_id,
+      marking_scheme_material_id: stored.marking_scheme_file_id,
       official_max_marks: stored.maximum_marks,
       question_paper_text: stored.question_paper_text,
       suggested_answers_text: stored.suggested_answers_text,
@@ -110,6 +119,9 @@ try {
   assert.equal(verified.officialPaperMaxMarks, 100, 'Mock maximum marks are preserved');
   assert.equal(verified.manifest.materialSource, 'FACULTY_MOCK', 'Faculty mock remains explicitly distinct from institute and global material');
   assert.equal(verified.manifest.materialType, 'FACULTY_MOCK_TEST', 'Evaluation evidence identifies the faculty mock material type');
+  assert.equal(verified.manifest.questionMaterialId, 'qp-text-file', 'Question Paper evidence binds to its own private TXT file');
+  assert.equal(verified.manifest.suggestedAnswerMaterialId, 'suggested-answer-file', 'Suggested Answer evidence binds to its own private TXT file');
+  assert.equal(verified.manifest.markingSchemeMaterialId, 'marking-scheme-file', 'Marking Scheme evidence binds to its own private TXT file');
 
   assert.throws(() => enforceMaterialHardGate({
     evaluationId: 'eval_unlocked_' + suffix,

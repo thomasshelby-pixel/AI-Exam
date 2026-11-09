@@ -15,40 +15,6 @@ type StoredPdf = { name: string; type: string; size: number; base64: string };
 type StoredText = { name: string; type: 'text/plain'; size: number; base64: string; text: string };
 
 
-function detectFacultyReferenceSections(rawText: string) {
-  const aliases = {
-    questionPaper: new Set(['QUESTION PAPER', 'QUESTION PAPER TEXT']),
-    suggestedAnswers: new Set(['SUGGESTED ANSWER', 'SUGGESTED ANSWERS', 'SUGGESTED ANSWER TEXT', 'SUGGESTED ANSWERS TEXT']),
-    markingScheme: new Set(['MARKING SCHEME', 'MARKING SCHEME TEXT']),
-  };
-  const headings = rawText.split(/\r?\n/).map((line) => line.trim()
-    .replace(/^#{1,6}\s*/, '')
-    .replace(/^[=\-_*]{2,}\s*/, '')
-    .replace(/\s*[=\-_*]{2,}\s*$/, '')
-    .replace(/^\d+[.)\-]\s*/, '')
-    .replace(/^\[(.*)\]$/, '$1')
-    .replace(/^SECTION\s*:\s*/i, '')
-    .replace(/[:：]\s*$/, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase());
-  const locate = (set: Set<string>) => { const matches = headings.flatMap((heading, index) => set.has(heading) ? [index] : []); return matches.length === 1 ? matches[0] : -1; };
-  const markers = [
-    { key: 'questionPaper', line: locate(aliases.questionPaper) },
-    { key: 'suggestedAnswers', line: locate(aliases.suggestedAnswers) },
-    { key: 'markingScheme', line: locate(aliases.markingScheme) },
-  ];
-  const lines = rawText.replace(/\r\n?/g, '\n').split('\n');
-  const sections: Record<string, string> = {};
-  for (const marker of markers) {
-    if (marker.line < 0) { sections[marker.key] = ''; continue; }
-    const nextLines = markers.filter((item) => item.line > marker.line).map((item) => item.line);
-    const nextLine = nextLines.length ? Math.min(...nextLines) : lines.length;
-    sections[marker.key] = lines.slice(marker.line + 1, nextLine).join('\n').trim();
-  }
-  return sections as { questionPaper: string; suggestedAnswers: string; markingScheme: string };
-}
-
 async function fileToBase64(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -75,7 +41,9 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   const [title, setTitle] = useState('');
   const [maximumMarks, setMaximumMarks] = useState('100');
   const [questionPaper, setQuestionPaper] = useState<StoredPdf | null>(null);
-  const [evaluationReference, setEvaluationReference] = useState<StoredText | null>(null);
+  const [questionPaperReference, setQuestionPaperReference] = useState<StoredText | null>(null);
+  const [suggestedAnswersReference, setSuggestedAnswersReference] = useState<StoredText | null>(null);
+  const [markingSchemeReference, setMarkingSchemeReference] = useState<StoredText | null>(null);
   const [readingFile, setReadingFile] = useState<string | null>(null);
   const [filterFaculty, setFilterFaculty] = useState('ALL');
   const [filterLevel, setFilterLevel] = useState('ALL');
@@ -179,32 +147,46 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     }
   };
 
-  const chooseEvaluationReference = async (file?: File) => {
+  const chooseReferenceText = async (
+    kind: 'QUESTION_PAPER_TEXT' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME',
+    file?: File,
+  ) => {
     if (!file) return;
     setError('');
+
+    const referenceConfig = {
+      QUESTION_PAPER_TEXT: { label: 'Question Paper Text', minimumCharacters: 50, setter: setQuestionPaperReference },
+      SUGGESTED_ANSWERS: { label: 'Suggested Answers', minimumCharacters: 50, setter: setSuggestedAnswersReference },
+      MARKING_SCHEME: { label: 'Marking Scheme', minimumCharacters: 10, setter: setMarkingSchemeReference },
+    } as const;
+    const config = referenceConfig[kind];
+
     if (!file.name.toLowerCase().endsWith('.txt')) {
-      setError('AI Evaluation Reference must be a .txt file.');
+      setError(`${config.label} must be uploaded as a plain .txt file.`);
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setError('AI Evaluation Reference TXT must be 10 MB or smaller.');
+    // Together with the 20 MB original PDF, three 4 MB TXT files stay below
+    // the server's existing 50 MB JSON request-body limit after base64 encoding.
+    if (file.size > 4 * 1024 * 1024) {
+      setError(`${config.label} TXT must be 4 MB or smaller.`);
       return;
     }
-    setReadingFile('EVALUATION_REFERENCE');
+
+    setReadingFile(kind);
     try {
       const [rawText, base64] = await Promise.all([file.text(), fileToBase64(file)]);
       const text = rawText.replace(/^\uFEFF/, '').trim();
-      const sections = detectFacultyReferenceSections(text);
-      if (!sections.questionPaper || !sections.suggestedAnswers || !sections.markingScheme) {
-        throw new Error('The TXT must contain all three headings: [QUESTION PAPER], [SUGGESTED ANSWERS], and [MARKING SCHEME].');
+      if (text.includes('\0')) {
+        throw new Error(`${config.label} TXT contains invalid binary characters. Upload a UTF-8 plain-text file.`);
       }
-      if (sections.questionPaper.length < 50 || sections.suggestedAnswers.length < 50 || sections.markingScheme.length < 10) {
-        throw new Error('Add enough content under each TXT heading: Question Paper (50+ chars), Suggested Answers (50+ chars), Marking Scheme (10+ chars).');
+      if (text.length < config.minimumCharacters) {
+        throw new Error(`${config.label} must contain at least ${config.minimumCharacters} characters.`);
       }
-      setEvaluationReference({ name: file.name, type: 'text/plain', size: file.size, base64, text });
-      onNotify?.(`${file.name} loaded. All three evaluation sections are present; no AI extraction is used.`, 'success');
+
+      config.setter({ name: file.name, type: 'text/plain', size: file.size, base64, text });
+      onNotify?.(`${config.label} TXT loaded (${text.length.toLocaleString()} characters). It remains private and is not extracted from a PDF.`, 'success');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not read the AI Evaluation Reference TXT.';
+      const message = err instanceof Error ? err.message : `Could not read ${config.label} TXT.`;
       setError(message);
       onNotify?.(message, 'error');
     } finally {
@@ -217,7 +199,9 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     setError('');
     if (!facultyId) return setError('Add/select a faculty first.');
     if (!attempt.trim()) return setError('Enter the exam attempt, for example May 2027.');
-    if (!questionPaper || !evaluationReference) return setError('Upload the original Question Paper PDF and the AI Evaluation Reference TXT.');
+    if (!questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference) {
+      return setError('Upload the original Question Paper PDF and all three private reference TXT files.');
+    }
     setSavingTest(true);
     try {
       const result = await apiRequest<{ test: MockTest }>('/api/admin/faculty-mocks/tests', {
@@ -227,14 +211,18 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
           subjectKey, subjectName: selectedSubject?.name || '', paper, mockNumber, title,
           maximumMarks: Number(maximumMarks), syllabusVersion: 'New Scheme 2024',
           questionPaperFile: questionPaper,
-          evaluationReferenceFile: evaluationReference,
+          questionPaperReferenceFile: questionPaperReference,
+          suggestedAnswersFile: suggestedAnswersReference,
+          markingSchemeFile: markingSchemeReference,
         }),
       });
       onNotify?.(`${result.test.faculty_name}: Mock ${String(result.test.mock_number).padStart(2, '0')} published for ${attempt}.`, 'success');
       setMockNumber('');
       setTitle('');
       setQuestionPaper(null);
-      setEvaluationReference(null);
+      setQuestionPaperReference(null);
+      setSuggestedAnswersReference(null);
+      setMarkingSchemeReference(null);
       await loadData();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not publish mock test.';
@@ -272,12 +260,17 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     </label>
   );
 
-  const renderReferenceInput = () => (
+  const renderTextInput = (
+    label: string,
+    kind: 'QUESTION_PAPER_TEXT' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME',
+    value: StoredText | null,
+    description: string,
+  ) => (
     <label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50/60 p-3 cursor-pointer hover:border-violet-500 hover:bg-violet-50 transition">
-      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />Evaluation Reference TXT (QP + Answers + Marking Scheme) *</span>
-      <span className="mt-1 block text-[11px] text-slate-500">{evaluationReference ? evaluationReference.name : 'Choose one .txt file (max 10 MB) containing all 3 sections.'}</span>
-      {evaluationReference && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{evaluationReference.text.length.toLocaleString()} characters · QP ✓ · Answers ✓ · Marking Scheme ✓ · private</span>}
-      <input className="hidden" type="file" accept=".txt,text/plain" onChange={(event) => { void chooseEvaluationReference(event.target.files?.[0]); event.currentTarget.value = ''; }} />
+      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />{label} *</span>
+      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : description}</span>
+      {value && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{value.text.length.toLocaleString()} characters · private · separate source</span>}
+      <input className="hidden" type="file" accept=".txt,text/plain" onChange={(event) => { void chooseReferenceText(kind, event.target.files?.[0]); event.currentTarget.value = ''; }} />
     </label>
   );
 
@@ -286,7 +279,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900">Faculty Mock Evaluation</h2>
-          <p className="text-xs text-slate-500">Upload one original Question Paper PDF for student download and one private TXT containing all evaluation references.</p>
+          <p className="text-xs text-slate-500">Upload the student-download PDF and three private TXT references separately for accurate, independently validated evaluation inputs.</p>
           <p className="mt-1 text-[11px] font-semibold text-indigo-700">Student access: first copy of each faculty mock is free; repeat copies are ₹35 each (same as the current custom evaluation rate).</p>
         </div>
         <button type="button" onClick={() => void loadData()} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50">
@@ -350,12 +343,16 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Auto-generated if blank" maxLength={160} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" />
             </label>
           </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {renderPdfInput('Downloadable Question Paper PDF', questionPaper)}
-            {renderReferenceInput()}
+            {renderTextInput('Private Question Paper Text TXT', 'QUESTION_PAPER_TEXT', questionPaperReference, 'Upload the exact question text matching the downloadable PDF (max 4 MB).')}
+            {renderTextInput('Private Suggested Answers TXT', 'SUGGESTED_ANSWERS', suggestedAnswersReference, 'Upload model answers, workings and conclusions (max 4 MB).')}
+            {renderTextInput('Private Marking Scheme TXT', 'MARKING_SCHEME', markingSchemeReference, 'Upload step-wise marks, criteria and partial-credit rules (max 4 MB).')}
           </div>
-          <p className="text-[10px] leading-5 text-slate-500">The original Question Paper PDF is stored byte-for-byte for student download only. It is never extracted or sent to AI. All evaluation text comes from the private TXT. Use exactly these headings, each on its own line: [QUESTION PAPER], [SUGGESTED ANSWERS], and [MARKING SCHEME]. Put the complete question paper, model solutions and step-wise mark allocation under their respective headings.</p>
-          <button disabled={savingTest || !!readingFile || !facultyId || !attempt.trim() || !questionPaper || !evaluationReference} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+          <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[10px] leading-5 text-slate-600">
+            <strong className="text-slate-800">Reference separation:</strong> The original PDF is stored unchanged for student download only and is never extracted or sent to AI. The three private TXT files are stored independently and supply the exact Question Paper text, Suggested Answers and Marking Scheme to the existing evaluator. Keep the Question Paper TXT identical to the downloadable PDF; verify all three references before publishing.
+          </div>
+          <button disabled={savingTest || !!readingFile || !facultyId || !attempt.trim() || !questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
             {savingTest ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             {savingTest ? 'Publishing mock…' : readingFile ? `Reading ${readingFile.replace('_', ' ').toLowerCase()}…` : 'Publish Faculty Mock'}
           </button>

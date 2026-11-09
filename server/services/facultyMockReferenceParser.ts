@@ -48,9 +48,27 @@ function identifySectionHeading(line: string): FacultyMockReferenceSectionKey | 
 }
 
 /**
- * Parse the one private Faculty Mock TXT into the three reference components
- * consumed by the existing CA evaluation pipeline. No AI or PDF extraction is used.
- *
+ * Serialize independently uploaded private TXT sections into the legacy
+ * canonical reference format consumed by the existing parser and evaluator.
+ * The browser uploads/stores each section separately; this serialization is
+ * only an in-memory validation adapter and does not merge the stored files.
+ */
+export function buildFacultyMockEvaluationReference(sections: FacultyMockReferenceSections): string {
+  return [
+    '[QUESTION PAPER]',
+    String(sections.questionPaperText || '').trim(),
+    '[SUGGESTED ANSWERS]',
+    String(sections.suggestedAnswersText || '').trim(),
+    '[MARKING SCHEME]',
+    String(sections.markingSchemeText || '').trim(),
+  ].join('\n\n');
+}
+
+/**
+ * Parse the canonical private Faculty Mock reference package into the three
+ * components consumed by the existing CA evaluation pipeline. New admin uploads
+ * are serialized in-memory from separate TXT files; legacy combined TXT files remain supported.
+ * No AI or PDF extraction is used.
  * Required TXT format (headings may use Markdown, square brackets, or === fences):
  * [QUESTION PAPER]
  * ...

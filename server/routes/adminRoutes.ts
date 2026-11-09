@@ -23,7 +23,7 @@ import {
 } from '../services/featureControlPersistenceService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
+import { buildFacultyMockEvaluationReference, parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { buildMaterialQuestionMappingAudit } from '../services/materialQuestionMappingAudit.js';
@@ -659,6 +659,15 @@ router.get('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       question_paper_text: undefined,
       suggested_answers_text: undefined,
       marking_scheme_text: undefined,
+      question_paper_reference_file_id: undefined,
+      question_paper_reference_file_name: undefined,
+      question_paper_reference_file_size: undefined,
+      suggested_answer_file_id: undefined,
+      suggested_answer_file_name: undefined,
+      suggested_answer_file_size: undefined,
+      marking_scheme_file_id: undefined,
+      marking_scheme_file_name: undefined,
+      marking_scheme_file_size: undefined,
     })).sort((a: any, b: any) =>
       String(a.course_level).localeCompare(String(b.course_level)) ||
       String(a.attempt).localeCompare(String(b.attempt)) ||
@@ -703,58 +712,100 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     }
 
     const qpFile = body.questionPaperFile;
-    const evaluationReferenceFile = body.evaluationReferenceFile;
+    const questionPaperReferenceFile = body.questionPaperReferenceFile;
+    const suggestedAnswersFile = body.suggestedAnswersFile;
+    const markingSchemeFile = body.markingSchemeFile;
+    const legacyEvaluationReferenceFile = body.evaluationReferenceFile;
 
-    // The PDF is stored byte-for-byte only for student download. It is never
-    // sent to an AI extractor or used as evaluation reference material.
+    // The original PDF is stored byte-for-byte for student download only.
+    // It is never extracted or sent to an AI model.
     if (!qpFile || typeof qpFile.base64 !== 'string' || !qpFile.base64.trim()) {
-      throw new Error('The original downloadable Question Paper PDF is required.');
+      return res.status(400).json({ error: 'The original downloadable Question Paper PDF is required.' });
     }
-    const qpBuffer = Buffer.from(qpFile.base64.includes(',') ? qpFile.base64.split(',')[1] : qpFile.base64, 'base64');
+    const qpBase64 = qpFile.base64.includes(',') ? qpFile.base64.split(',')[1] : qpFile.base64;
+    if (qpBase64.length > Math.ceil((20 * 1024 * 1024) * 4 / 3) + 16) {
+      return res.status(413).json({ error: 'Question Paper PDF must be 20 MB or smaller.' });
+    }
+    const qpBuffer = Buffer.from(qpBase64, 'base64');
     const qpMime = String(qpFile.type || 'application/pdf').toLowerCase();
     const qpFilename = String(qpFile.name || 'Question_Paper.pdf').slice(0, 180);
     if (!qpBuffer.length || qpBuffer.length > 20 * 1024 * 1024 || qpMime !== 'application/pdf' ||
         !qpFilename.toLowerCase().endsWith('.pdf') || qpBuffer.subarray(0, 4).toString() !== '%PDF') {
-      throw new Error('Question Paper must be a valid original PDF between 1 byte and 20 MB.');
+      return res.status(400).json({ error: 'Question Paper must be a valid original PDF between 1 byte and 20 MB.' });
     }
     const qp = { buffer: qpBuffer, mime: 'application/pdf', filename: qpFilename };
 
-    if (!evaluationReferenceFile || typeof evaluationReferenceFile.base64 !== 'string' || !evaluationReferenceFile.base64.trim()) {
-      throw new Error('The private AI Evaluation Reference TXT is required.');
-    }
-    const referenceBuffer = Buffer.from(
-      evaluationReferenceFile.base64.includes(',')
-        ? evaluationReferenceFile.base64.split(',')[1]
-        : evaluationReferenceFile.base64,
-      'base64'
+    const hasAnySeparateReference = Boolean(
+      questionPaperReferenceFile || suggestedAnswersFile || markingSchemeFile
     );
-    const referenceFilename = String(evaluationReferenceFile.name || 'AI_Evaluation_Reference.txt').slice(0, 180);
-    const referenceMime = String(evaluationReferenceFile.type || 'text/plain').toLowerCase();
-    if (!referenceFilename.toLowerCase().endsWith('.txt') ||
-        !['text/plain', 'application/octet-stream'].includes(referenceMime) ||
-        !referenceBuffer.length || referenceBuffer.length > 10 * 1024 * 1024) {
-      throw new Error('AI Evaluation Reference must be a plain .txt file up to 10 MB.');
+    const hasAllSeparateReferences = Boolean(
+      questionPaperReferenceFile && suggestedAnswersFile && markingSchemeFile
+    );
+    const isLegacyCombinedUpload = !hasAnySeparateReference && Boolean(legacyEvaluationReferenceFile);
+
+    if (hasAnySeparateReference && !hasAllSeparateReferences) {
+      return res.status(400).json({
+        error: 'Upload all three private TXT references: Question Paper Text, Suggested Answers and Marking Scheme.',
+        code: 'FACULTY_MOCK_REFERENCE_FILES_INCOMPLETE',
+      });
     }
-    const evaluationReferenceText = referenceBuffer.toString('utf8').replace(/^\uFEFF/, '').trim();
-    if (evaluationReferenceText.length < 100 || referenceBuffer.includes(0)) {
-      throw new Error('AI Evaluation Reference TXT must contain the Question Paper, Suggested Answers and Marking Scheme sections.');
+    if (!hasAllSeparateReferences && !isLegacyCombinedUpload) {
+      return res.status(400).json({
+        error: 'The three separate private reference TXT files are required.',
+        code: 'FACULTY_MOCK_REFERENCE_FILES_REQUIRED',
+      });
     }
-    const reference = {
-      buffer: referenceBuffer,
-      mime: 'text/plain',
-      filename: referenceFilename,
-      text: evaluationReferenceText,
+
+    const readPrivateTextFile = (file: any, label: string, maxBytes = 4 * 1024 * 1024) => {
+      if (!file || typeof file.base64 !== 'string' || !file.base64.trim()) {
+        throw new Error(`${label} TXT is required.`);
+      }
+      const rawBase64 = file.base64.includes(',') ? file.base64.split(',')[1] : file.base64;
+      if (rawBase64.length > Math.ceil(maxBytes * 4 / 3) + 16) {
+        throw new Error(`${label} TXT must be ${Math.floor(maxBytes / (1024 * 1024))} MB or smaller.`);
+      }
+      const buffer = Buffer.from(rawBase64, 'base64');
+      const filename = String(file.name || `${label.replace(/\s+/g, '_')}.txt`).slice(0, 180);
+      const mime = String(file.type || 'text/plain').toLowerCase();
+      if (!filename.toLowerCase().endsWith('.txt') ||
+          !['text/plain', 'application/octet-stream'].includes(mime) ||
+          !buffer.length || buffer.length > maxBytes || buffer.includes(0)) {
+        throw new Error(`${label} must be a valid UTF-8 plain .txt file within the allowed size limit.`);
+      }
+      const text = buffer.toString('utf8').replace(/^\uFEFF/, '').trim();
+      return { buffer, mime: 'text/plain', filename, text };
     };
 
+    let questionPaperReference: ReturnType<typeof readPrivateTextFile> | null = null;
+    let suggestedAnswersReference: ReturnType<typeof readPrivateTextFile> | null = null;
+    let markingSchemeReference: ReturnType<typeof readPrivateTextFile> | null = null;
+    let legacyReference: ReturnType<typeof readPrivateTextFile> | null = null;
     let parsedReference: ReturnType<typeof parseFacultyMockEvaluationReference>;
+
     try {
-      parsedReference = parseFacultyMockEvaluationReference(reference.text);
-    } catch (parseError) {
+      if (hasAllSeparateReferences) {
+        questionPaperReference = readPrivateTextFile(questionPaperReferenceFile, 'Question Paper Text');
+        suggestedAnswersReference = readPrivateTextFile(suggestedAnswersFile, 'Suggested Answers');
+        markingSchemeReference = readPrivateTextFile(markingSchemeFile, 'Marking Scheme');
+        const canonicalReferenceText = buildFacultyMockEvaluationReference({
+          questionPaperText: questionPaperReference.text,
+          suggestedAnswersText: suggestedAnswersReference.text,
+          markingSchemeText: markingSchemeReference.text,
+        });
+        parsedReference = parseFacultyMockEvaluationReference(canonicalReferenceText);
+      } else {
+        // Backward compatibility for already-open older admin clients.
+        // New clients upload and persist all three private TXT files separately.
+        legacyReference = readPrivateTextFile(legacyEvaluationReferenceFile, 'Legacy AI Evaluation Reference', 10 * 1024 * 1024);
+        parsedReference = parseFacultyMockEvaluationReference(legacyReference.text);
+      }
+    } catch (referenceError) {
       return res.status(422).json({
-        error: parseError instanceof Error ? parseError.message : 'The evaluation TXT sections are incomplete or incorrectly formatted.',
+        error: referenceError instanceof Error ? referenceError.message : 'The private reference TXT files are invalid.',
         code: 'FACULTY_MOCK_REFERENCE_TXT_INVALID',
       });
     }
+
     const questionPaperText = parsedReference.questionPaperText;
     const suggestedAnswersText = parsedReference.suggestedAnswersText;
     const markingSchemeText = parsedReference.markingSchemeText;
@@ -797,7 +848,15 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
     };
 
     const qpSaved = await saveFile(qp, `${id}_question_paper`, 'MATERIAL_QUESTION_PAPER');
-    const referenceSaved = await saveFile(reference, `${id}_evaluation_reference`, 'MATERIAL_MODEL_ANSWER');
+    const questionPaperReferenceSaved = questionPaperReference
+      ? await saveFile(questionPaperReference, `${id}_question_paper_reference_text`, 'MATERIAL_MODEL_ANSWER')
+      : null;
+    const suggestedAnswersSaved = suggestedAnswersReference
+      ? await saveFile(suggestedAnswersReference, `${id}_suggested_answers`, 'MATERIAL_MODEL_ANSWER')
+      : await saveFile(legacyReference!, `${id}_evaluation_reference`, 'MATERIAL_MODEL_ANSWER');
+    const markingSchemeSaved = markingSchemeReference
+      ? await saveFile(markingSchemeReference, `${id}_marking_scheme`, 'MATERIAL_MODEL_ANSWER')
+      : null;
     const test = {
       id,
       faculty_id: facultyId,
@@ -818,12 +877,15 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       question_paper_file_id: qpSaved.fileId,
       question_paper_file_name: qpSaved.originalFilename || qp.filename,
       question_paper_file_size: qpSaved.size,
-      suggested_answer_file_id: referenceSaved.fileId,
-      suggested_answer_file_name: referenceSaved.originalFilename || reference.filename,
-      suggested_answer_file_size: referenceSaved.size,
-      marking_scheme_file_id: null,
-      marking_scheme_file_name: null,
-      marking_scheme_file_size: null,
+      question_paper_reference_file_id: questionPaperReferenceSaved?.fileId || null,
+      question_paper_reference_file_name: questionPaperReferenceSaved?.originalFilename || questionPaperReference?.filename || null,
+      question_paper_reference_file_size: questionPaperReferenceSaved?.size || null,
+      suggested_answer_file_id: suggestedAnswersSaved.fileId,
+      suggested_answer_file_name: suggestedAnswersSaved.originalFilename || suggestedAnswersReference?.filename || legacyReference?.filename || null,
+      suggested_answer_file_size: suggestedAnswersSaved.size,
+      marking_scheme_file_id: markingSchemeSaved?.fileId || null,
+      marking_scheme_file_name: markingSchemeSaved?.originalFilename || markingSchemeReference?.filename || null,
+      marking_scheme_file_size: markingSchemeSaved?.size || null,
       status: 'PUBLISHED',
       created_by: req.user!.id,
       created_at: now,
@@ -834,16 +896,24 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         id, faculty_id, course_level, attempt, model_group, subject_key, subject_name, paper, mock_number, title,
         maximum_marks, syllabus_version, question_paper_text, suggested_answers_text, marking_scheme_text,
         question_paper_file_id, question_paper_file_name, question_paper_file_size,
+        question_paper_reference_file_id, question_paper_reference_file_name, question_paper_reference_file_size,
         suggested_answer_file_id, suggested_answer_file_name, suggested_answer_file_size,
         marking_scheme_file_id, marking_scheme_file_name, marking_scheme_file_size,
         status, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, facultyId, courseLevel, attempt, modelGroup || null, subjectKey, subjectName, paper, mockNumber, test.title,
       maximumMarks, test.syllabus_version, questionPaperText, suggestedAnswersText, markingSchemeText || null,
       qpSaved.fileId, qpSaved.originalFilename || qp.filename, qpSaved.size,
-      referenceSaved.fileId, referenceSaved.originalFilename || reference.filename, referenceSaved.size,
-      null, null, null,
+      questionPaperReferenceSaved?.fileId || null,
+      questionPaperReferenceSaved?.originalFilename || questionPaperReference?.filename || null,
+      questionPaperReferenceSaved?.size || null,
+      suggestedAnswersSaved.fileId,
+      suggestedAnswersSaved.originalFilename || suggestedAnswersReference?.filename || legacyReference?.filename || null,
+      suggestedAnswersSaved.size,
+      markingSchemeSaved?.fileId || null,
+      markingSchemeSaved?.originalFilename || markingSchemeReference?.filename || null,
+      markingSchemeSaved?.size || null,
       test.status, test.created_by, now, now
     );
     const persisted = await setFirestoreDoc('faculty_mock_tests', id, test);
@@ -855,8 +925,22 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'FACULTY_MOCK_TEST_PUBLISHED', 'FACULTY_MOCK_TEST', ?, ?)
     `).run(`aud_${crypto.randomBytes(8).toString('hex')}`, req.user!.id, id,
-      `Published ${faculty.name} / ${courseLevel} / ${attempt} / ${subjectName} / Mock ${String(mockNumber).padStart(2, '0')} with an unchanged download-only QP PDF and a private TXT containing the Question Paper, Suggested Answers and Marking Scheme.`);
-    return res.status(201).json({ success: true, test: { ...test, question_paper_text: undefined, suggested_answers_text: undefined, marking_scheme_text: undefined } });
+      `Published ${faculty.name} / ${courseLevel} / ${attempt} / ${subjectName} / Mock ${String(mockNumber).padStart(2, '0')} with an unchanged download-only QP PDF and ${hasAllSeparateReferences ? 'three independently stored private TXT references (Question Paper Text, Suggested Answers and Marking Scheme)' : 'a legacy private combined evaluation reference TXT'}.`);
+    return res.status(201).json({ success: true, test: {
+      ...test,
+      question_paper_text: undefined,
+      suggested_answers_text: undefined,
+      marking_scheme_text: undefined,
+      question_paper_reference_file_id: undefined,
+      question_paper_reference_file_name: undefined,
+      question_paper_reference_file_size: undefined,
+      suggested_answer_file_id: undefined,
+      suggested_answer_file_name: undefined,
+      suggested_answer_file_size: undefined,
+      marking_scheme_file_id: undefined,
+      marking_scheme_file_name: undefined,
+      marking_scheme_file_size: undefined,
+    } });
   } catch (error) {
     for (const fileId of uploadedFileIds) await deletePersistentFile(fileId).catch(() => {});
     console.error('[FacultyMocks] Create test error:', error);
