@@ -665,7 +665,7 @@ export function validateQuestionDeduplication(
   const parentChildCollisions: string[] = [];
   for (const childId of nonMcqCanonicalIds) {
     for (const potentialParentId of nonMcqCanonicalIds) {
-      if (childId !== potentialParentId && childId.startsWith(`${potentialParentId}(`)) {
+      if (childId !== potentialParentId && isCanonicalQuestionDescendant(childId, potentialParentId)) {
         if (!parentChildCollisions.includes(potentialParentId)) {
           parentChildCollisions.push(potentialParentId);
         }
