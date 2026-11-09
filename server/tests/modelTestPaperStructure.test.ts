@@ -229,10 +229,10 @@ assert.deepEqual(
 
 // The integrity validator must catch intermediate nested parents too.
 const nestedParentValidation = validateQuestionDeduplication([
-  { fullQuestionCode: 'Q8', questionNumber: '8', maximumMarks: 20 },
-  { fullQuestionCode: 'Q8(a)', questionNumber: '8', subQuestion: 'a', maximumMarks: 10 },
-  { fullQuestionCode: 'Q8(a(i))', questionNumber: '8', subQuestion: 'a(i)', maximumMarks: 4 },
-  { fullQuestionCode: 'Q8(a(ii))', questionNumber: '8', subQuestion: 'a(ii)', maximumMarks: 6 },
+  { fullQuestionCode: 'Q8', questionNumber: '8' },
+  { fullQuestionCode: 'Q8(a)', questionNumber: '8', subQuestion: 'a' },
+  { fullQuestionCode: 'Q8(a(i))', questionNumber: '8', subQuestion: 'a(i)' },
+  { fullQuestionCode: 'Q8(a(ii))', questionNumber: '8', subQuestion: 'a(ii)' },
 ]);
 assert.equal(nestedParentValidation.isValid, false);
 assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8'));
