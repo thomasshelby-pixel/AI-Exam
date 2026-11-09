@@ -43,6 +43,14 @@ const realAdmitCard = normalizeAiAnswerSheetDocumentValidation({
 });
 assert.equal(realAdmitCard.isValidAnswerSheet, false, 'Explicit non-answer-sheet documents must remain rejected.');
 
+const admitCardWithCursiveNotes = normalizeAiAnswerSheetDocumentValidation({
+  isValidAnswerSheet: false,
+  documentTypeDetected: 'Invalid Document',
+  isHandwritten: true,
+  rejectionReason: 'This file is a hall ticket and also contains cursive notes.',
+});
+assert.equal(admitCardWithCursiveNotes.isValidAnswerSheet, false, 'Cursive wording must never override a clearly identified invalid document.');
+
 const realMarksheet = normalizeAiAnswerSheetDocumentValidation({
   isValidAnswerSheet: false,
   documentTypeDetected: 'Marksheet / Certificate',
