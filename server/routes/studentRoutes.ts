@@ -3220,8 +3220,19 @@ router.get(
       }
     }
 
-    // Graceful fallback: If original file was not on disk (e.g. server restart or test evaluations),
-    // dynamically generate an authentic ICAI candidate submission answer booklet archive PDF
+    // A Faculty Mock review retry must use the exact uploaded answer-sheet bytes so
+    // its SHA-256 can be verified against the original evaluation. Never synthesize a
+    // replacement booklet here: it would look like an original download but fail the
+    // server's exact-copy check (or, worse, could mislead the student).
+    if (String(record.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK') {
+      return res.status(404).json({
+        error: 'The original Faculty Mock answer-sheet file is no longer available in storage, so an exact same-copy retry cannot be started. Please contact support to arrange the review.',
+        code: 'FACULTY_MOCK_ORIGINAL_COPY_UNAVAILABLE',
+      });
+    }
+
+    // For other legacy evaluations only, gracefully generate a candidate-submission
+    // archive if the original upload is no longer available.
     let resultJson: any = null;
     if (record.result_json) {
       try {
