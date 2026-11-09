@@ -55,6 +55,8 @@ export interface AuthoritativePaperStructure {
   questions: PaperStructureQuestion[];
   subQuestions: PaperStructureSubQuestion[];
   mcqs: PaperStructureSubQuestion[];
+  /** Present when the official source states an optional-attempt rule that could not be parsed safely. */
+  optionalSelectionRuleError?: string;
 }
 
 /**
@@ -101,10 +103,22 @@ export function getAuthoritativePaperStructure(options: {
       ? buildTaxationPaperStructure(options)
       : buildGenericPaperStructure(options);
 
+  // An explicit optional-question instruction must be resolved into a known
+  // allowed set. Otherwise the ledger could count too many attempted choices.
+  const optionalInstructionPresent = /\\b(?:attempt|answer|choose|select)\\s+any\\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|\\d{1,2})\\b/i
+    .test(questionPaperText + '\\n' + markingSchemeText);
+  const hasResolvedOptionalRule = (structure.questions || []).some((question) => Boolean(question.choiceRule?.trim()));
+  const optionalSelectionRuleError = optionalInstructionPresent && !hasResolvedOptionalRule
+    ? 'OPTIONAL_SELECTION_RULE_UNRESOLVED: The official source states an optional-attempt rule, but its allowed question set could not be parsed safely.'
+    : undefined;
+
   // Preserve the exact selected materials alongside the canonical IDs. The
   // page mapper needs real QP wording and SA anchors to identify answers in
   // arbitrary order; IDs and maximum marks alone are not enough.
-  return attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText);
+  return {
+    ...attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText),
+    optionalSelectionRuleError,
+  };
 }
 
 /**
@@ -764,7 +778,7 @@ export function extractOptionalAttemptSelectionRule(
   return { allowedCount, questionNumbers: allowedNumbers, choiceRule };
 }
 
-function getFacultyMockMcqMaximumMarks(
+function getSourceBackedMcqMaximumMarks(
   questionNumber: string,
   options: { questionPaperText?: string; markingSchemeText?: string },
 ): number {
@@ -854,24 +868,10 @@ function buildGenericPaperStructure(options: {
   const combined = `${options.markingSchemeText || ''}\n${options.questionPaperText || ''}\n${options.suggestedAnswersText || ''}`;
   let subQuestions = extractSubQuestionsFromText(combined);
 
-  // Preserve the existing PYQ/MTP fallback behaviour. Model Tests use the
-  // same parser, but an unparseable independently authored source must not be
-  // assigned fabricated Q1-Q6 identities or maximum marks.
+  // Never fabricate question identities or maximum marks for PYQ, MTP,
+  // Model Test, or Faculty Mock papers. If the selected source cannot be
+  // parsed, the deterministic pre-evaluation gate must stop scoring.
   const materialType = String(options.materialType || '').trim().toUpperCase();
-  const isIndependentlyAuthoredPaper = materialType === 'MODEL_TEST_PAPER' || materialType === 'FACULTY_MOCK_TEST';
-  if (subQuestions.length === 0 && !isIndependentlyAuthoredPaper) {
-    for (let i = 1; i <= 6; i++) {
-      subQuestions.push({
-        fullQuestionCode: `Q${i}`,
-        questionNumber: `${i}`,
-        maximumMarks: i === 1 ? 20 : 16,
-        compulsory: i === 1,
-        isMcq: false,
-        section: 'A',
-        division: 'B',
-      });
-    }
-  }
 
   subQuestions = deduplicateQuestionList(subQuestions);
 
@@ -901,9 +901,9 @@ function buildGenericPaperStructure(options: {
       fullQuestionCode: `MCQ${qNum}`,
       questionNumber: qNum,
       subQuestionNumber: 'MCQ',
-      maximumMarks: materialType === 'FACULTY_MOCK_TEST'
-        ? getFacultyMockMcqMaximumMarks(qNum, options)
-        : 2,
+      // MCQ maxima must be explicit in the selected QP / marking scheme.
+      // Zero is deliberate: pre-evaluation validation blocks guessed allocations.
+      maximumMarks: getSourceBackedMcqMaximumMarks(qNum, options),
       compulsory: true,
       isMcq: true,
       officialKey: data.officialKey,
