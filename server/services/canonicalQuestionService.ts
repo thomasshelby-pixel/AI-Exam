@@ -265,9 +265,19 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
     // "_duplicate" or "(cont)". These are metadata, not another scoreable leaf.
     rest = rest.replace(/(?:[_-](?:duplicate|dup))$/i, '');
     let parsedParts = parseQuestionPartPath(rest);
-    parsedParts = parsedParts.filter((part, index) =>
-      index === 0 || part.toLowerCase() !== parsedParts[index - 1].toLowerCase()
-    );
+    const romanNumberingTokens = new Set([
+      'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+      'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx',
+      'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxx', 'xl', 'l', 'lx', 'lxx', 'xc', 'c',
+    ]);
+    parsedParts = parsedParts.filter((part, index) => {
+      if (index === 0 || part.toLowerCase() !== parsedParts[index - 1].toLowerCase()) return true;
+      const token = part.toLowerCase();
+      // Repeated alphabetic labels can be OCR echoes (e.g. Q3(b(b))).
+      // Numeric and Roman levels, however, may legitimately restart at each
+      // nested level: Q3(1(1)) / Q3(iv(iv)) must retain both identities.
+      return /^\\d+$/.test(token) || romanNumberingTokens.has(token);
+    });
     if (parsedParts.length > 1 && /^(?:cont|contd|continued|continuation)$/i.test(parsedParts[parsedParts.length - 1])) {
       parsedParts = parsedParts.slice(0, -1);
     }
