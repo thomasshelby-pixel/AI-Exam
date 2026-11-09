@@ -623,9 +623,13 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
         .trim()
         .replace(/^[-–—:]\s*/, '')
         .replace(/^\.(?=\s*[\(\[])/, '');
-      activeSubQuestionPath = parseCanonicalQuestionIdentity(
-        'Q' + activeParentQNum + parentSuffix
-      ).subQuestionPath || [];
+      const startsWithExplicitPartPath =
+        /^[([{]/.test(parentSuffix) ||
+        /^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\b/i.test(parentSuffix) ||
+        /^\.[a-zA-Z0-9]+/.test(parentSuffix);
+      activeSubQuestionPath = startsWithExplicitPartPath
+        ? (parseCanonicalQuestionIdentity('Q' + activeParentQNum + ' ' + parentSuffix).subQuestionPath || [])
+        : [];
     }
 
     if (!activeParentQNum) continue;
@@ -634,9 +638,13 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
 
     const label = childMatch[1];
     const cleanLabel = String(label || '').trim();
+    const isNamedPartLabel =
+      /^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\b/i.test(cleanLabel);
+    const labelSuffix = /^[([{]/.test(cleanLabel) || isNamedPartLabel
+      ? cleanLabel
+      : '(' + cleanLabel.replace(/[.)]$/, '') + ')';
     const parsedLabel = parseCanonicalQuestionIdentity(
-      'Q' + activeParentQNum +
-      (/^[([{]/.test(cleanLabel) ? cleanLabel : '(' + cleanLabel.replace(/[.)]$/, '') + ')')
+      'Q' + activeParentQNum + ' ' + labelSuffix
     );
     const incomingPath = parsedLabel.subQuestionPath || [];
     activeSubQuestionPath = combineContextPath(activeSubQuestionPath, incomingPath);
