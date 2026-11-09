@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
+import {
+  extractRelevantReferenceSnippets,
+  buildCheckedCopyScoreIndependenceInstruction,
+} from '../services/questionChunkEvaluator.js';
 
 const questionPaper = [
   'QUESTION 1',
@@ -47,6 +50,15 @@ assert.equal(facultyReference.referenceTrace.markingSchemeMaterialId, 'faculty-m
 assert.equal(facultyReference.referenceTrace.facultyMockTestId, 'fmock_test_abc123');
 assert.equal(facultyReference.referenceTrace.materialType, 'FACULTY_MOCK_TEST');
 assert.match(facultyReference.saSnippet, /Accounting Standard 1/i);
+
+const facultyCheckedCopyInstruction = buildCheckedCopyScoreIndependenceInstruction('FACULTY_MOCK_TEST');
+assert.match(facultyCheckedCopyInstruction, /faculty\/examiner ticks/i);
+assert.match(facultyCheckedCopyInstruction, /non-binding evidence/i);
+assert.match(facultyCheckedCopyInstruction, /exact selected Faculty Mock/i);
+const pyqCheckedCopyInstruction = buildCheckedCopyScoreIndependenceInstruction('PYQ');
+assert.match(pyqCheckedCopyInstruction, /ICAI examiner ticks/i);
+assert.match(pyqCheckedCopyInstruction, /non-binding evidence/i);
+assert.equal(buildCheckedCopyScoreIndependenceInstruction('MTP'), '');
 
 const modelTestReference = extractRelevantReferenceSnippets(
   'Q1(a)',
