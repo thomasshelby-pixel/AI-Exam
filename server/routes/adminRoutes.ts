@@ -53,7 +53,7 @@ import {
   deleteEvaluation,
   bulkDeleteEvaluations,
 } from '../services/evaluationDeleteService.js';
-import { setFirestoreDoc, setFirestoreDocsAtomically, deleteFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { setFirestoreDoc, setFirestoreDocsAtomically, deleteFirestoreDoc, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs } from '../services/firestoreDbService.js';
 import {
   applyModelRoutingConfiguration,
   buildModelRoutingConfiguration,
@@ -1147,6 +1147,26 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     if (!existing) return res.status(404).json({ error: 'Faculty mock test not found.' });
     const inFlight = db.prepare(`SELECT id FROM evaluations WHERE faculty_mock_test_id = ? AND UPPER(COALESCE(status, '')) IN ('PROCESSING', 'QUEUED', 'PENDING') LIMIT 1`).get(testId) as any;
     if (inFlight) return res.status(409).json({ error: 'This mock has an evaluation in progress. Wait for it to finish before editing the mock.', code: 'FACULTY_MOCK_EVALUATION_IN_PROGRESS' });
+    let sharedEvaluations: any[] = [];
+    try {
+      sharedEvaluations = await queryFirestoreDocs<any>('evaluations', [
+        { field: 'faculty_mock_test_id', op: '==', value: testId },
+      ], { failOnError: true });
+    } catch (evaluationReadError) {
+      console.error('[FacultyMocks] Could not verify shared evaluation state before edit:', evaluationReadError);
+      return res.status(503).json({
+        error: 'Evaluation history could not be checked across app instances. Retry the edit when the shared database is available.',
+        code: 'FACULTY_MOCK_EVALUATION_LOOKUP_UNAVAILABLE',
+      });
+    }
+    if (sharedEvaluations.some((evaluation: any) =>
+      ['PROCESSING', 'QUEUED', 'PENDING'].includes(String(evaluation.status || '').toUpperCase())
+    )) {
+      return res.status(409).json({
+        error: 'This mock has an evaluation in progress on another app instance. Wait for it to finish before editing the mock.',
+        code: 'FACULTY_MOCK_EVALUATION_IN_PROGRESS',
+      });
+    }
     const body = req.body || {};
     const title = String(body.title ?? existing.title ?? '').trim().slice(0, 160) || `${String(existing.faculty_name || 'Faculty')} — ${String(existing.subject_name || 'Subject')} Mock ${String(existing.mock_number || '').padStart(2, '0')}`;
     const maximumMarks = Number(body.maximumMarks ?? existing.maximum_marks ?? 100);
@@ -1160,7 +1180,7 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
         EXISTS(SELECT 1 FROM faculty_mock_free_uses WHERE faculty_mock_test_id = ?) AS has_free_claims,
         EXISTS(SELECT 1 FROM faculty_mock_copy_purchases WHERE faculty_mock_test_id = ?) AS has_paid_copies,
         EXISTS(SELECT 1 FROM payment_orders WHERE faculty_mock_test_id = ?) AS has_payment_orders`).get(testId, testId, testId, testId) as any;
-      if (activity?.has_evaluations || activity?.has_free_claims || activity?.has_paid_copies || activity?.has_payment_orders) {
+      if (sharedEvaluations.length > 0 || activity?.has_evaluations || activity?.has_free_claims || activity?.has_paid_copies || activity?.has_payment_orders) {
         return res.status(409).json({ error: 'Free/Paid access cannot be changed after a student evaluation, free-copy claim or payment order exists. This protects previously issued student entitlements.', code: 'FACULTY_MOCK_ACCESS_TYPE_LOCKED' });
       }
       let freeLedgers: any[] = [];
