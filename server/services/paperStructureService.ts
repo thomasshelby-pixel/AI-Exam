@@ -564,7 +564,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     'gi',
   );
   while ((match = numericRegex.exec(text)) !== null) {
-    const suffix = match[2].startsWith('.') ? match[2].replace(/\\./g, ')(').replace(/^/, '(').concat(')') : match[2];
+    const suffix = match[2].startsWith('.') ? match[2].replace(/\./g, ')(').replace(/^/, '(').concat(')') : match[2];
     addQuestion(match[1], suffix, Number(match[3]));
   }
 
