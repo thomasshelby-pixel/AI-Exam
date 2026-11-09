@@ -817,6 +817,63 @@ console.log('\n--- TEST RT.11: Attempted Maximum Paper Guard ---');
   );
 }
 
+
+console.log('\n--- TEST RT.12: Faculty Mock Uses Only Its Uploaded Paper Structure ---');
+{
+  const facultyTaxStructure = getAuthoritativePaperStructure({
+    materialType: 'FACULTY_MOCK_TEST',
+    level: 'INTERMEDIATE',
+    paper: 'Paper 3',
+    subjectName: 'Income Tax and Goods and Services Tax',
+    questionPaperText: `
+      FACULTY MOCK — TAXATION
+      QUESTION 1 — 5 MARKS
+      Part (a): Compute taxable income under the given facts [3 Marks]
+      Part (b): State the applicable disclosure requirement [2 Marks]
+      MULTIPLE CHOICE QUESTIONS
+      MCQ 1: Select the correct GST treatment [1 Mark]
+    `,
+    suggestedAnswersText: `
+      Suggested Answers
+      Multiple Choice Questions
+      1. (b) Correct treatment under the given facts.
+    `,
+    markingSchemeText: 'Each MCQ carries 1 mark. Q1(a) carries 3 marks and Q1(b) carries 2 marks.',
+    officialPaperMaxMarks: 100,
+  });
+
+  const facultyCodes = facultyTaxStructure.subQuestions.map((question) => question.fullQuestionCode);
+  assert(facultyCodes.includes('Q1(a)'), `TEST RT.12.1: Faculty Taxation mock retains its uploaded Q1(a) (got ${facultyCodes.join(', ')})`);
+  assert(facultyCodes.includes('Q1(b)'), `TEST RT.12.2: Faculty Taxation mock retains its uploaded Q1(b) (got ${facultyCodes.join(', ')})`);
+  assert(!facultyCodes.includes('Q5(a)'), 'TEST RT.12.3: Preconfigured Taxation Q5(a) is not injected into the Faculty Mock');
+  assert(facultyTaxStructure.mcqs.length === 1, `TEST RT.12.4: Only the uploaded mock MCQ is retained (got ${facultyTaxStructure.mcqs.length})`);
+  assert(facultyTaxStructure.mcqs[0]?.maximumMarks === 1, `TEST RT.12.5: Faculty Mock MCQ maximum comes from its own source (got ${facultyTaxStructure.mcqs[0]?.maximumMarks})`);
+}
+
+console.log('\n--- TEST RT.13: Unparseable Faculty Mock Must Not Receive Synthetic Questions ---');
+{
+  const facultyStructure = getAuthoritativePaperStructure({
+    materialType: 'FACULTY_MOCK_TEST',
+    level: 'INTERMEDIATE',
+    paper: 'Paper 3',
+    subjectName: 'Income Tax and GST',
+    questionPaperText: 'Faculty Mock Taxation paper. Use the instructions printed on the paper.',
+    suggestedAnswersText: 'Suggested Answers: refer to the uploaded question paper.',
+    markingSchemeText: 'Award marks as per the stated scheme.',
+    officialPaperMaxMarks: 100,
+  });
+  assert(facultyStructure.subQuestions.length === 0, `TEST RT.13.1: Unparsed Faculty Mock has no fabricated Q1-Q6 nodes (got ${facultyStructure.subQuestions.length})`);
+  const gate = validatePreEvaluationGate({
+    paperStructure: facultyStructure,
+    questionPaperText: 'Faculty Mock Taxation paper. Use the instructions printed on the paper.',
+    suggestedAnswersText: 'Suggested Answers: refer to the uploaded question paper.',
+    markingSchemeText: 'Award marks as per the stated scheme.',
+    officialPaperMaxMarks: 100,
+  });
+  assert(gate.passed === false, 'TEST RT.13.2: Unparseable Faculty Mock stops before scoring');
+  assert(gate.criticalFailures.some((failure) => failure.includes('QUESTION_PAPER_NOT_PARSED')), 'TEST RT.13.3: Unparseable source reports the exact hard-gate failure');
+}
+
 console.log('\n================================================================');
 console.log(`--- TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED ---`);
 console.log('================================================================');
