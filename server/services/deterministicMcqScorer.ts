@@ -166,6 +166,16 @@ export function applyDeterministicMcqScoring(
   return questions.map((q) => {
     const isQuestionMcq = isMcqItem(q);
 
+    // A visible MCQ attempt with an unreadable/ambiguous option is not wrong
+    // or blank. Preserve its provisional state and never apply binary or
+    // Foundation negative marking until a human verifies the selected option.
+    if (
+      isQuestionMcq &&
+      (q.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED') || q.flags?.includes('REVIEW_REQUIRED') || q.status === 'unclear')
+    ) {
+      return q;
+    }
+
     const updatedComponents = (q.markingComponents || []).map((c) => {
       if (isQuestionMcq || isMcqItem(q, c)) {
         return scoreMcqComponent(c, config);
