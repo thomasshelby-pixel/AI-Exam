@@ -686,6 +686,21 @@ router.delete('/faculty-mocks/faculties/:id', async (req: AuthRequest, res: Resp
       });
     }
 
+    // A checkout may be open while deletion is requested. Do not remove the
+    // mock beneath an unpaid Razorpay order that could still be captured.
+    const pendingPaymentOrder = testIdList.length
+      ? db.prepare(`SELECT id, status FROM payment_orders
+          WHERE faculty_mock_test_id IN (${testIdList.map(() => '?').join(',')})
+            AND UPPER(COALESCE(status, 'PENDING')) NOT IN ('SUCCESS', 'FAILED', 'CANCELLED', 'REFUNDED')
+          LIMIT 1`).get(...testIdList) as any
+      : null;
+    if (pendingPaymentOrder) {
+      return res.status(409).json({
+        error: 'A payment checkout for one of this faculty’s mocks is still pending. Resolve or let that payment expire before deleting the faculty.',
+        code: 'FACULTY_MOCK_PENDING_PAYMENT_EXISTS',
+      });
+    }
+
     if (testIdList.length) {
       const inFlight = db.prepare(`SELECT id FROM evaluations
         WHERE faculty_mock_test_id IN (${testIdList.map(() => '?').join(',')})
