@@ -466,95 +466,87 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   if (!text || typeof text !== 'string') return subQuestions;
 
   const seen = new Set<string>();
+  const addQuestion = (questionNumber: string, subQuestion: string | undefined, maximumMarks: number) => {
+    if (!questionNumber || !Number.isFinite(maximumMarks) || maximumMarks <= 0) return;
+    const rawCode = subQuestion ? \`Q\${questionNumber}(\${subQuestion})\` : \`Q\${questionNumber}\`;
+    const canonicalId = toCanonicalQuestionId(rawCode);
+    if (seen.has(canonicalId)) return;
+    seen.add(canonicalId);
+    const parsed = parseCanonicalQuestionIdentity(canonicalId);
+    subQuestions.push({
+      fullQuestionCode: parsed.canonicalId,
+      questionNumber: parsed.questionNumber,
+      subQuestionNumber: parsed.subQuestion,
+      maximumMarks,
+      compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
+      isMcq: false,
+      section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
+      division: 'B',
+    });
+  };
 
-  // Regex 1: Explicit question indicators: "QUESTION 4(b) – 3 MARKS", "Q4(b) [3 Marks]", "Question 6(a)(2) - 3 Marks"
-  const regex1 = /(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\))?\s*(?:[-–—:]|\b|is|\.)\s*(?:(?:for|carrying)?\s*)?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  const extractMarks = (value: string): number | undefined => {
+    const source = String(value || '');
+    const match =
+      source.match(/(?:\[\s*|\(\s*)([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i) ||
+      source.match(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i) ||
+      source.match(/\b(?:Marks?|M)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)/i) ||
+      source.match(/\b(?:carries?|carrying|worth|allotted)\s+([0-9]+(?:\.[0-9+)?)(?:\s*(?:Marks?|M))?\b/i);
+    const valueText = match?.[1];
+    if (!valueText) return undefined;
+    const marks = Number(valueText);
+    return Number.isFinite(marks) && marks > 0 ? marks : undefined;
+  };
+
+  // Explicit parent/part labels, including "QUESTION NO. 1 (a) carries 5 marks".
+  const explicitRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\))?\s*(?:[-–—:]|\b|is|carries?|carrying|worth|allotted|\.)\s*(?:(?:for|carrying|carries|worth|allotted|of)?\s*)?(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
   let match: RegExpExecArray | null;
-  while ((match = regex1.exec(text)) !== null) {
-    const qNum = match[1];
-    const subQ = match[2];
-    const marks = parseFloat(match[3]);
-    const rawCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
-    const canon = toCanonicalQuestionId(rawCode);
-    if (!seen.has(canon) && marks > 0) {
-      seen.add(canon);
-      const parsed = parseCanonicalQuestionIdentity(canon);
-      subQuestions.push({
-        fullQuestionCode: parsed.canonicalId,
-        questionNumber: parsed.questionNumber,
-        subQuestionNumber: parsed.subQuestion,
-        maximumMarks: marks,
-        compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
-        isMcq: false,
-        section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
-        division: 'B',
-      });
-    }
+  while ((match = explicitRegex.exec(text)) !== null) {
+    addQuestion(match[1], match[2], Number(match[3]));
   }
 
-  // Regex 2: Bracketed question indicators at line start: "4(b) - 3 Marks" or "6(a)(2) [3 Marks]"
-  const regex2 = /(?:^|\n)\s*([0-9]+)\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\)\s*[-–—:]?\s*(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
-  while ((match = regex2.exec(text)) !== null) {
-    const qNum = match[1];
-    const subQ = match[2];
-    const marks = parseFloat(match[3]);
-    const rawCode = `Q${qNum}(${subQ})`;
-    const canon = toCanonicalQuestionId(rawCode);
-    if (!seen.has(canon) && marks > 0) {
-      seen.add(canon);
-      const parsed = parseCanonicalQuestionIdentity(canon);
-      subQuestions.push({
-        fullQuestionCode: parsed.canonicalId,
-        questionNumber: parsed.questionNumber,
-        subQuestionNumber: parsed.subQuestion,
-        maximumMarks: marks,
-        compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
-        isMcq: false,
-        section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
-        division: 'B',
-      });
-    }
+  // Explicit Q1(a) lines can place the allocation after descriptive wording:
+  // "Q1(a) Calculate NPV — 5 marks" or "Question 1 Part (b): 4 marks".
+  const explicitPartRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)([^\r\n]*)/gi;
+  while ((match = explicitPartRegex.exec(text)) !== null) {
+    const marks = extractMarks(match[3]);
+    if (marks !== undefined) addQuestion(match[1], match[2], marks);
   }
 
-  // Regex 3: Contextual line-by-line scanning: captures "(a) Description [10 Marks]" under "QUESTION 1 – 20 MARKS"
-  const lines = text.split('\n');
+  // Numeric line labels: "4(b) - 3 Marks", "6(a)(2) [3 Marks]".
+  const numericRegex = /(?:^|\n)\s*([0-9]+)\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\)\s*[-–—:]?\s*(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  while ((match = numericRegex.exec(text)) !== null) {
+    addQuestion(match[1], match[2], Number(match[3]));
+  }
+
+  // Contextual formats under a parent heading:
+  // "(a) Description [10 Marks]", "a) Description — 5 marks",
+  // "Part (b): Description (4 Marks)" and "Sub-part (i) — Marks: 2".
+  const lines = text.split(/\r?\n/);
   let activeParentQNum: string | null = null;
-  const parentHeaderRegex = /(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*\()/i;
-  const childSubQRegex = /^\s*[\(\[]([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)[\)\]]\s*.*?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i;
+  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b))/i;
+  const childSubQRegex = /^\s*(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(?:\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)|\[\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\]|([a-zA-Z0-9]+)\s*[.)])(?:\s*[-–—:]\s*|\s+|$)/i;
 
   for (const line of lines) {
-    const pMatch = line.match(parentHeaderRegex);
-    if (pMatch) {
-      activeParentQNum = pMatch[1];
+    if (/^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER)\b/i.test(line)) {
+      activeParentQNum = null;
     }
-    if (activeParentQNum) {
-      const cMatch = line.match(childSubQRegex);
-      if (cMatch) {
-        const subQ = cMatch[1];
-        const marks = parseFloat(cMatch[2]);
-        const rawCode = `Q${activeParentQNum}(${subQ})`;
-        const canon = toCanonicalQuestionId(rawCode);
-        if (!seen.has(canon) && marks > 0) {
-          seen.add(canon);
-          const parsed = parseCanonicalQuestionIdentity(canon);
-          subQuestions.push({
-            fullQuestionCode: parsed.canonicalId,
-            questionNumber: parsed.questionNumber,
-            subQuestionNumber: parsed.subQuestion,
-            maximumMarks: marks,
-            compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
-            isMcq: false,
-            section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
-            division: 'B',
-          });
-        }
-      }
-    }
+
+    const parentMatch = line.match(parentHeaderRegex);
+    if (parentMatch) activeParentQNum = parentMatch[1];
+
+    if (!activeParentQNum) continue;
+    const childMatch = line.match(childSubQRegex);
+    if (!childMatch) continue;
+
+    const subQuestion = childMatch[1] || childMatch[2] || childMatch[3];
+    const remainder = line.slice(childMatch[0].length);
+    const marks = extractMarks(remainder);
+    if (marks !== undefined) addQuestion(activeParentQNum, subQuestion, marks);
   }
 
   return deduplicateQuestionList(subQuestions);
 }
-
 interface OptionalAttemptSelectionRule {
   allowedCount: number;
   questionNumbers: string[];
