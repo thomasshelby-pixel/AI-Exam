@@ -440,13 +440,43 @@ export function extractLockedQuestionSlice(
     };
   }
 
-  // Determine stop boundary: next question or next sub-question
+  // Determine stop boundary using the complete numbering path, not only
+  // the first alphabetic letter. For Q1(a)(i), the next (ii) must stop the
+  // current reference slice even though both share the same top-level (a).
   const firstLine = lineOffset > 0 ? lines[startIndex].slice(lineOffset).trim() : lines[startIndex];
   const capturedLines: string[] = [firstLine];
-
-  // Next sub-question or next question stop patterns
-  const nextSubLetter = subQ ? String.fromCharCode(subQ.charCodeAt(0) + 1) : undefined;
+  const targetSubPath = subQ && subQ.toUpperCase() !== 'MCQ' ? getSubQuestionPath(subQ) : [];
+  let activeBoundaryPath = [...targetSubPath];
   const nextQ = String(num + 1);
+  const romanTokens = new Set(['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx']);
+  const pathFamily = (token: string, depth: number): string => {
+    const value = token.toLowerCase();
+    if (/^\d+$/.test(value)) return 'numeric';
+    if (romanTokens.has(value) && (value.length > 1 || depth > 0)) return 'roman';
+    if (/^[a-z]$/.test(value)) return 'alphabetic';
+    if (romanTokens.has(value)) return 'roman';
+    return 'other:' + value;
+  };
+  const mergeBoundaryPath = (current: string[], incoming: string[]): string[] => {
+    if (!incoming.length) return current;
+    if (!current.length) return incoming;
+    if (incoming.length > 1) {
+      if (current.length >= incoming.length && incoming.every((part, index) => current[index] === part)) return incoming;
+      if (incoming.length <= current.length && incoming.every((part, index) => current[current.length - incoming.length + index] === part)) {
+        return current.slice(0, current.length - incoming.length).concat(incoming);
+      }
+      return current.concat(incoming);
+    }
+    const token = incoming[0];
+    const last = current[current.length - 1];
+    if (pathFamily(token, current.length) === pathFamily(last, current.length - 1)) {
+      return current.slice(0, -1).concat(token);
+    }
+    if (current.length > 1 && pathFamily(token, current.length) === pathFamily(current[0], 0)) {
+      return [token];
+    }
+    return current.concat(token);
+  };
 
   for (let i = startIndex + 1; i < lines.length; i++) {
     let line = lines[i];
@@ -461,29 +491,40 @@ export function extractLockedQuestionSlice(
 
     let isStop = false;
 
-    // Check if next sub-question started
-    if (nextSubLetter) {
-      // If line contains embedded next subQ (e.g. line has "(b) Determine..."), cut off line before it
-      if (subQ === 'a' && nextSubLetter === 'b') {
-        const bIdx = line.search(/\(b\)\s+(?:Determine|Ministry|Indian|S\.No|Particulars)/i);
-        if (bIdx > 0) {
-          capturedLines.push(line.slice(0, bIdx).trim());
-          break;
+    if (targetSubPath.length > 0) {
+      // Fully-qualified headings carry their whole path. Bare labels are
+      // resolved contextually under the exact parent and active nested part.
+      const explicitQuestion = trimmed.match(/^(?:(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(?:NO\.?)?\s*)?(\d{1,3})\s*(.*)$/i);
+      let candidatePath: string[] = [];
+      if (explicitQuestion && String(Number(explicitQuestion[1])) === String(Number(qNum))) {
+        const tail = explicitQuestion[2].replace(/^[.\-–—:]\s*/, '');
+        candidatePath = parseCanonicalQuestionIdentity('Q' + qNum + tail).subQuestionPath || [];
+        if (candidatePath.length === 0 && /^(?:QUESTION|Q\.?|ANSWER|ANS\.?)/i.test(trimmed)) {
+          isStop = true;
+        }
+      } else {
+        const barePart = trimmed.match(/^\s*(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s*)?(\(\s*[a-zA-Z0-9]+\s*\)|\[\s*[a-zA-Z0-9]+\s*\]|[a-zA-Z0-9]+[.)])(?=\s|[-–—:]|$)/i);
+        if (barePart) {
+          const incoming = parseCanonicalQuestionIdentity('Q' + qNum + barePart[1]).subQuestionPath || [];
+          candidatePath = mergeBoundaryPath(activeBoundaryPath, incoming);
+          activeBoundaryPath = candidatePath;
         }
       }
 
-      if (
-        lower.startsWith(`(${nextSubLetter})`) ||
-        lower.includes(` (${nextSubLetter}) `) ||
-        lower.startsWith(`question ${qNum}(${nextSubLetter})`) ||
-        lower.startsWith(`question ${qNum} (${nextSubLetter})`) ||
-        lower.startsWith(`q.${qNum}(${nextSubLetter})`) ||
-        lower.startsWith(`q${qNum}(${nextSubLetter})`) ||
-        lower.startsWith(`question no. ${qNum}(${nextSubLetter})`) ||
-        (docType === 'MS' && lower.startsWith(`question ${qNum}(${nextSubLetter})`)) ||
-        (docType === 'SA' && isSectionB && qNum === '5' && nextSubLetter === 'b' && (lower.startsWith(`(b)`) || lower.includes(`- (b)`)))
-      ) {
-        isStop = true;
+      if (candidatePath.length > 0) {
+        const targetIsPrefix = targetSubPath.every((part, index) =>
+          candidatePath[index]?.toLowerCase() === part.toLowerCase()
+        );
+        const exactTarget = targetIsPrefix && candidatePath.length === targetSubPath.length;
+        const descendantOfTarget = targetIsPrefix && candidatePath.length > targetSubPath.length;
+        if (!exactTarget && !descendantOfTarget) isStop = true;
+      }
+    } else if (subQ === 'a') {
+      // Preserve the known embedded GST Q5(b) split for legacy ICAI layouts.
+      const bIdx = line.search(/\(b\)\s+(?:Determine|Ministry|Indian|S\.No|Particulars)/i);
+      if (bIdx > 0) {
+        capturedLines.push(line.slice(0, bIdx).trim());
+        break;
       }
     }
 
