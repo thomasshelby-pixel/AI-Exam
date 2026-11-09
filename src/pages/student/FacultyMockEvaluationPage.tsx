@@ -21,6 +21,18 @@ interface FacultyMockRazorpayResponse {
   razorpay_signature: string;
 }
 
+type FacultyMockProgressStage = { key: string; label: string; description: string };
+
+const FACULTY_MOCK_PROGRESS_STAGES: FacultyMockProgressStage[] = [
+  { key: 'QUEUED', label: 'Submission received & queued', description: 'Your answer sheet is securely registered for checking.' },
+  { key: 'READING_ANSWER_SHEET', label: 'Reading handwritten answers', description: 'Reading pages, calculations, tables and handwritten working notes.' },
+  { key: 'IDENTIFYING_QUESTIONS', label: 'Matching questions and sub-parts', description: 'Mapping attempted answers to the exact faculty mock paper structure.' },
+  { key: 'EVALUATING_ANSWERS', label: 'Step-wise answer evaluation', description: 'Checking concepts, workings, provisions and conclusions against the faculty reference.' },
+  { key: 'CALCULATING_MARKS', label: 'Verifying marks and totals', description: 'Checking step allocations, question maximums and total marks.' },
+  { key: 'FINALIZING_REPORT', label: 'Preparing your checked report', description: 'Finalizing examiner remarks, checked copy and diagnostic feedback.' },
+  { key: 'COMPLETED', label: 'Evaluation verified', description: 'Your evaluation is complete. Opening your report.' },
+];
+
 function normaliseCourse(value: unknown): CALevel | null {
   const normal = String(value || '').trim().toUpperCase();
   return normal === 'FOUNDATION' || normal === 'INTERMEDIATE' || normal === 'FINAL' ? normal : null;
@@ -29,6 +41,8 @@ function normaliseCourse(value: unknown): CALevel | null {
 export const FacultyMockEvaluationPage: React.FC = () => {
   const { user, profile, refreshUser } = useAuth();
   const navigate = useNavigate();
+  const activeEvaluationStorageKey = user?.id ? `faculty_mock_active_eval_${user.id}` : null;
+  const activeEvaluationStartStorageKey = user?.id ? `faculty_mock_active_eval_started_${user.id}` : null;
   const [faculties, setFaculties] = useState<Faculty[]>([]);
   const [tests, setTests] = useState<FacultyMockTest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +60,12 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [activeEvaluationId, setActiveEvaluationId] = useState<string | null>(null);
+  const [evaluationProgressStage, setEvaluationProgressStage] = useState('QUEUED');
+  const [evaluationProgressPercentage, setEvaluationProgressPercentage] = useState(5);
+  const [evaluationProgressMessage, setEvaluationProgressMessage] = useState('Your answer sheet is securely registered for checking.');
+  const [evaluationStartedAt, setEvaluationStartedAt] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const courseLevel = normaliseCourse((profile as any)?.ca_level ?? (profile as any)?.caLevel);
   const selectedFaculty = faculties.find((item) => item.id === facultyId);
@@ -76,6 +96,88 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   };
 
   useEffect(() => { void loadCatalogue(); }, [user?.id]);
+
+  // Resume this student's own Faculty Mock evaluation after a refresh.
+  useEffect(() => {
+    if (!activeEvaluationStorageKey || !activeEvaluationStartStorageKey) return;
+    const savedId = localStorage.getItem(activeEvaluationStorageKey);
+    if (!savedId) return;
+    const savedStart = Number(localStorage.getItem(activeEvaluationStartStorageKey) || Date.now());
+    setActiveEvaluationId(savedId);
+    setEvaluationStartedAt(Number.isFinite(savedStart) ? savedStart : Date.now());
+    setEvaluationProgressStage('QUEUED');
+    setEvaluationProgressMessage('Reconnecting to your evaluation progress…');
+  }, [activeEvaluationStorageKey, activeEvaluationStartStorageKey]);
+
+  useEffect(() => {
+    if (!activeEvaluationId || !evaluationStartedAt) return;
+    const updateElapsed = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - evaluationStartedAt) / 1000)));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [activeEvaluationId, evaluationStartedAt]);
+
+  // Read authoritative backend stages rather than simulating completion.
+  useEffect(() => {
+    if (!activeEvaluationId || !user?.id) return;
+    let subscribed = true;
+    let handledTerminalState = false;
+    const clearSavedEvaluation = () => {
+      if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
+      if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
+    };
+    const pollEvaluation = async () => {
+      if (!subscribed || handledTerminalState) return;
+      try {
+        const response = await apiRequest<{ evaluation: {
+          id: string; displayId?: string; display_id?: string; status: string;
+          progress_stage?: string; progress_percentage?: number; progress_message?: string;
+          resultJson?: unknown; rejection_reason?: string; error_message?: string;
+        } }>(`/api/student/evaluations/${encodeURIComponent(activeEvaluationId)}`);
+        if (!subscribed || !response.evaluation) return;
+        const evaluation = response.evaluation;
+        const status = String(evaluation.status || '').toUpperCase();
+        const backendStage = String(evaluation.progress_stage || '').toUpperCase();
+        setEvaluationProgressStage(status === 'COMPLETED' ? 'COMPLETED' : status === 'NEEDS_REVIEW' ? 'NEEDS_REVIEW' : backendStage || 'QUEUED');
+        setEvaluationProgressPercentage(Math.max(0, Math.min(100, Number(evaluation.progress_percentage ?? 5))));
+        setEvaluationProgressMessage(String(evaluation.progress_message || 'Your answer sheet is being evaluated.'));
+
+        if (['COMPLETED', 'NEEDS_REVIEW'].includes(status)) {
+          handledTerminalState = true;
+          clearSavedEvaluation();
+          setEvaluationProgressPercentage(100);
+          setEvaluationProgressStage(status === 'NEEDS_REVIEW' ? 'NEEDS_REVIEW' : 'COMPLETED');
+          setActiveEvaluationId(null);
+          setSubmitting(false);
+          try {
+            await refreshUser();
+          } catch (refreshError) {
+            console.warn('[FacultyMock] Could not refresh student credits after evaluation:', refreshError);
+          }
+          if (!subscribed) return;
+          const reportId = evaluation.displayId || evaluation.display_id || evaluation.id || activeEvaluationId;
+          navigate(`/student/evaluations/${encodeURIComponent(reportId)}`);
+          return;
+        }
+
+        if (['FAILED', 'REJECTED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(status)) {
+          handledTerminalState = true;
+          clearSavedEvaluation();
+          setActiveEvaluationId(null);
+          setSubmitting(false);
+          setError(evaluation.rejection_reason || evaluation.error_message || 'Evaluation could not be completed. Your submission status is available in My Evaluations.');
+        }
+      } catch (pollError) {
+        console.warn('[FacultyMock] Evaluation progress polling failed; will retry:', pollError);
+      }
+    };
+    void pollEvaluation();
+    const interval = window.setInterval(() => { void pollEvaluation(); }, 3000);
+    return () => {
+      subscribed = false;
+      window.clearInterval(interval);
+    };
+  }, [activeEvaluationId, user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey, navigate, refreshUser]);
 
   useEffect(() => {
     if (!availableAttempts.includes(attempt)) setAttempt(availableAttempts[0] || '');
@@ -230,6 +332,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       setError('Select a mock test and upload your handwritten answer sheet first.');
       return;
     }
+    if (activeEvaluationId) {
+      setError('One Faculty Mock evaluation is already in progress. You can continue tracking it here.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     setSuccess('');
@@ -237,6 +343,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       const evaluationId = `eval_faculty_mock_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
       const response = await apiRequest<{
         success: boolean; evaluationId: string; displayId?: string; status?: string;
+        progressStage?: string; progressPercentage?: number; message?: string; result?: unknown;
       }>('/api/student/evaluate', {
         method: 'POST',
         body: JSON.stringify({
@@ -259,10 +366,24 @@ export const FacultyMockEvaluationPage: React.FC = () => {
           ...(facultyMockPaymentOrderId ? { facultyMockPaymentOrderId } : {}),
         }),
       });
-      await refreshUser();
-      const reportId = response.displayId || response.evaluationId;
-      if (!reportId) throw new Error('Evaluation was accepted but no report ID was returned. Check My Evaluations.');
-      navigate(`/student/evaluations/${encodeURIComponent(reportId)}`);
+      const acceptedEvaluationId = response.evaluationId || evaluationId;
+      if (response.result) {
+        await refreshUser();
+        const reportId = response.displayId || acceptedEvaluationId;
+        navigate(`/student/evaluations/${encodeURIComponent(reportId)}`);
+        return;
+      }
+      if (!acceptedEvaluationId) throw new Error('Evaluation was accepted but no report ID was returned. Check My Evaluations.');
+      const startedAt = Date.now();
+      if (activeEvaluationStorageKey) localStorage.setItem(activeEvaluationStorageKey, acceptedEvaluationId);
+      if (activeEvaluationStartStorageKey) localStorage.setItem(activeEvaluationStartStorageKey, String(startedAt));
+      setEvaluationStartedAt(startedAt);
+      setElapsedSeconds(0);
+      setEvaluationProgressStage(response.progressStage || 'QUEUED');
+      setEvaluationProgressPercentage(Number(response.progressPercentage ?? 5));
+      setEvaluationProgressMessage(response.message || 'Your answer sheet has been securely queued for checking.');
+      setActiveEvaluationId(acceptedEvaluationId);
+      setSuccess('Answer sheet submitted successfully. You can track each evaluation stage below.');
     } catch (err) {
       const apiError = err as Error & { code?: string; data?: any };
       if (!facultyMockPaymentOrderId && ['FACULTY_MOCK_REPEAT_PAYMENT_REQUIRED', 'FACULTY_MOCK_PAYMENT_REQUIRED'].includes(String(apiError?.code || ''))) {
@@ -286,6 +407,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   };
 
   const handleSubmitClick = async () => {
+    if (activeEvaluationId) {
+      setError('Your previous Faculty Mock evaluation is still in progress. Track it below before starting another.');
+      return;
+    }
     if (!selectedTest || !answerFile) {
       setError('Choose a faculty mock and upload your handwritten answer sheet.');
       return;
