@@ -254,7 +254,43 @@ async function run(): Promise<void> {
     assert(result.downloadsUnlocked === true, 'A passing corrected result retains its approved delivery state');
   }
 
-  // 3. Source-backed PYQ/MTP/Faculty Mock material may use a verified canonical
+  // 3. Model uncertainty on a readable answer is repairable; it must not be
+  // mislabeled as illegible handwriting and should receive one targeted second pass.
+  {
+    let calls = 0;
+    const uncertainQuestion: QuestionEvaluation = {
+      ...makeQuestion(0),
+      status: 'unclear',
+      flags: ['MODEL_UNCERTAIN', 'REVIEW_REQUIRED'],
+    };
+    const dependencies: EvaluationSupervisorDependencies = {
+      extractReferenceSnippets: () => makeReferenceSnippet(true),
+      evaluateChunk: async (context) => {
+        calls++;
+        assert(context.supervisorIssues?.some((issue) => issue.includes('SUPERVISOR_UNCLEAR_EVALUATION')),
+          'Model-uncertain result sends its precise uncertainty to the correction evaluator');
+        return makeQuestion(4);
+      },
+      reprocessIntegrity: (result) => ({
+        ...result,
+        totalMarks: result.questions.reduce((sum, question) => sum + Number(question.marksAwarded || 0), 0),
+        validationStatus: 'VALID',
+        validationErrors: [],
+        certificationStatus: 'CERTIFIED',
+        downloadsUnlocked: true,
+      }),
+    };
+    const supervised = await runEvaluationSupervisor(
+      makeParams(makeResult(uncertainQuestion, 'NEEDS_REVIEW'), makeCoverage()),
+      dependencies,
+    );
+    const audit = (supervised.integrityAudit as any)?.supervisor;
+    assert(calls === 1, 'A readable answer with model uncertainty receives one targeted second pass');
+    assert(audit?.status === 'PASS', 'A successfully resolved model uncertainty no longer remains in NEEDS_REVIEW');
+    assert(supervised.questions[0].status === 'partially_correct', 'The corrected academic assessment replaces only the uncertain question');
+  }
+
+  // 4. Source-backed PYQ/MTP/Faculty Mock material may use a verified canonical
   // leaf + positive marks + exact Suggested Answer lock when QP formatting differs.
   {
     const result = makeResult(makeQuestion(), 'VALID');
@@ -304,7 +340,7 @@ async function run(): Promise<void> {
       'The exact Question Paper identity mismatch remains explicit.');
   }
 
-  // 4. Missing/mismatched authoritative references must fail closed, never trigger an AI guess.
+  // 5. Missing/mismatched authoritative references must fail closed, never trigger an AI guess.
   {
     let calls = 0;
     const dependencies: EvaluationSupervisorDependencies = {
@@ -326,7 +362,7 @@ async function run(): Promise<void> {
     assert(audit?.unresolvedIssues.some((issue: string) => issue.includes('SUPERVISOR_REFERENCE_LOCK_INCOMPLETE')), 'The precise reference-lock issue is recorded');
   }
 
-  // 5. A per-sheet budget prevents a large paper with many flagged questions from
+  // 6. A per-sheet budget prevents a large paper with many flagged questions from
   // triggering unbounded paid model re-evaluations. Remaining items fail closed.
   {
     const count = 6;
