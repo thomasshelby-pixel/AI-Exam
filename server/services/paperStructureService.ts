@@ -468,7 +468,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const seen = new Set<string>();
   const addQuestion = (questionNumber: string, subQuestion: string | undefined, maximumMarks: number) => {
     if (!questionNumber || !Number.isFinite(maximumMarks) || maximumMarks <= 0) return;
-    const rawCode = subQuestion ? \`Q\${questionNumber}(\${subQuestion})\` : \`Q\${questionNumber}\`;
+    const rawCode = subQuestion ? 'Q' + questionNumber + '(' + subQuestion + ')' : 'Q' + questionNumber;
     const canonicalId = toCanonicalQuestionId(rawCode);
     if (seen.has(canonicalId)) return;
     seen.add(canonicalId);
