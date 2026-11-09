@@ -276,7 +276,7 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
       // Repeated alphabetic labels can be OCR echoes (e.g. Q3(b(b))).
       // Numeric and Roman levels, however, may legitimately restart at each
       // nested level: Q3(1(1)) / Q3(iv(iv)) must retain both identities.
-      return /^\\d+$/.test(token) || romanNumberingTokens.has(token);
+      return /^\d+$/.test(token) || romanNumberingTokens.has(token);
     });
     if (parsedParts.length > 1 && /^(?:cont|contd|continued|continuation)$/i.test(parsedParts[parsedParts.length - 1])) {
       parsedParts = parsedParts.slice(0, -1);
