@@ -57,7 +57,7 @@ const paper = getAuthoritativePaperStructure({
     'Each MCQ carries 2 Marks.',
     'Division B',
     'Question 1(a) - 10 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   suggestedAnswersText: suggestedAnswers,
   officialPaperMaxMarks: 100,
 });
