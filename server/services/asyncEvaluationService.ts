@@ -582,7 +582,7 @@ function isTerminalEvaluationStatus(status: unknown): boolean {
  * Model Test / Faculty jobs on the shared MTP/PYQ evaluator without accepting
  * a stale UI selection or a reference TXT from another test.
  */
-function assertExactEvaluationSourceBinding(job: EvaluationJobData): void {
+async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promise<void> {
   const evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(job.evaluationId) as any;
   if (!evaluation) {
     throw new Error('EVALUATION_SOURCE_BINDING_FAILED: Evaluation record not found.');
@@ -891,7 +891,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
 
     // Fail closed before any AI work if the selected Model / Faculty material
     // no longer matches the exact submission captured by the API route.
-    assertExactEvaluationSourceBinding(job);
+    await assertExactEvaluationSourceBinding(job);
 
     try {
       enforceEvaluationEvidencePackageMtpGate(evidencePackage);
