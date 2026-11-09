@@ -18,6 +18,14 @@ assert.match(referenceReason, /24–48 working hours/i);
 const handwritingReason = getStudentFacingReviewReason([
   'HANDWRITING_UNCLEAR_FLAG: Q3(b) marked as UNCLEAR.',
 ]);
+const modelUncertainReason = getStudentFacingReviewReason([
+  'MODEL_UNCERTAIN: Q3(b) was readable but the automated examiner could not settle the assessment.',
+]);
+assert.match(modelUncertainReason, /uploaded answer is readable/i);
+assert.match(modelUncertainReason, /second check/i);
+assert.match(modelUncertainReason, /24–48 working hours/i);
+assert.doesNotMatch(modelUncertainReason, /blurry|sharper scan/i);
+
 assert.match(handwritingReason, /marks already evaluated have been preserved/i);
 assert.match(handwritingReason, /24–48 working hours/i);
 
