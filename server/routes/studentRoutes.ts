@@ -1110,6 +1110,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       facultyMockTestId,
       facultyMockPaymentOrderId,
     } = req.body;
+    const requestedCheckingMode = String(checkingMode || 'standard').trim().toLowerCase();
+    const selectedCheckingMode: CheckingMode =
+      requestedCheckingMode === 'strict' || requestedCheckingMode === 'lenient'
+        ? requestedCheckingMode
+        : 'standard';
     let resolvedFacultyMockPaymentOrderId = String(facultyMockPaymentOrderId || '').trim();
 
     // Reject unsupported CS / CMA evaluation attempts safely
@@ -1685,7 +1690,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       referenceMaterial.id,
       referenceMaterial.version || '1.0',
       modelUsed,
-      checkingMode || 'standard',
+      selectedCheckingMode,
       filename || 'ca_answer_sheet.pdf',
       entitlementSource
     );
@@ -1900,7 +1905,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       paper: referenceMaterial.paper || 'Paper 1',
       attempt: evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
       syllabusVersion: referenceMaterial.syllabus_version || 'ALL',
-      checkingMode: (checkingMode as CheckingMode) || 'standard',
+      checkingMode: selectedCheckingMode,
       fileBase64,
       mimeType: mimeType || 'application/pdf',
       filename: filename || 'ca_answer_sheet.pdf',
@@ -1943,7 +1948,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         materialType: String(materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP')),
         paper: String(referenceMaterial.paper || 'Paper 1'),
         attempt: String(evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026')),
-        checkingMode: String(checkingMode || 'standard'),
+        checkingMode: selectedCheckingMode,
       });
     } catch (parakhError) {
       console.warn('[PARAKH] Observation record failed; evaluation continues without interruption:', parakhError);
