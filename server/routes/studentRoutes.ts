@@ -69,6 +69,32 @@ import {
 
 const router = Router();
 
+function isProductionSharedDataRuntime(): boolean {
+  return process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE || process.env.K_REVISION);
+}
+
+/**
+ * A Faculty Mock evaluation must never fall back to an instance-local SQLite
+ * copy in production. App Hosting may route the student to an instance whose
+ * cache has not yet hydrated the latest edit; stale source text is unsafe.
+ */
+async function getFacultyMockRecordForStudent(testId: string): Promise<any | null> {
+  try {
+    const sharedRecord = await getFirestoreDoc<any>('faculty_mock_tests', testId, { failOnError: true });
+    if (sharedRecord) return sharedRecord;
+    if (isProductionSharedDataRuntime()) return null;
+  } catch (error) {
+    if (isProductionSharedDataRuntime()) {
+      const sourceError = new Error('The selected Faculty Mock could not be verified against the shared database. Please retry when the service is available.');
+      (sourceError as Error & { code?: string }).code = 'FACULTY_MOCK_SHARED_SOURCE_UNAVAILABLE';
+      throw sourceError;
+    }
+    console.warn('[StudentRoutes] Shared Faculty Mock lookup unavailable in local development; using the local fixture cache:', error);
+  }
+
+  return db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any || null;
+}
+
 // Student-specific responses must never be stored in a browser or intermediary cache.
 // This prevents a shared device/browser from reusing one account's private response.
 router.use((_req: AuthRequest, res: Response, next) => {
@@ -466,8 +492,7 @@ router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, r
     const testId = String(req.params.id || '').trim();
     const profile = db.prepare('SELECT ca_level FROM student_profiles WHERE user_id = ?').get(req.user!.id) as { ca_level?: string } | undefined;
     const courseLevel = String(profile?.ca_level || '').trim().toUpperCase();
-    let test = await getFirestoreDoc<any>('faculty_mock_tests', testId);
-    if (!test) test = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
+    const test = await getFacultyMockRecordForStudent(testId);
     if (!test || String(test.status || '').toUpperCase() !== 'PUBLISHED') {
       return res.status(404).json({ error: 'Faculty mock test not found or not published.' });
     }
@@ -757,8 +782,7 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
         });
       }
 
-      const mock = await getFirestoreDoc<any>('faculty_mock_tests', selectedMockId)
-        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(selectedMockId) as any;
+      const mock = await getFacultyMockRecordForStudent(selectedMockId);
       if (!mock || String(mock.status || '').toUpperCase() !== 'PUBLISHED') {
         return res.status(404).json({ success: false, code: 'FACULTY_MOCK_NOT_PUBLISHED', error: 'The selected Faculty Mock is no longer published.' });
       }
@@ -1264,8 +1288,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(400).json({ error: 'Select a faculty mock test before uploading your answer sheet.', code: 'FACULTY_MOCK_TEST_REQUIRED' });
       }
 
-      facultyMockRecord = await getFirestoreDoc<any>('faculty_mock_tests', selectedTestId)
-        || db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(selectedTestId) as any;
+      facultyMockRecord = await getFacultyMockRecordForStudent(selectedTestId);
       if (!facultyMockRecord || String(facultyMockRecord.status || '').toUpperCase() !== 'PUBLISHED') {
         return res.status(404).json({ error: 'This faculty mock is no longer available. Refresh the mock list and try again.', code: 'FACULTY_MOCK_NOT_PUBLISHED' });
       }
