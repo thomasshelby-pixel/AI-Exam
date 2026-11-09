@@ -77,6 +77,8 @@ const ledgerRecord = ledger.records.find((record) => record.questionId === 'MCQ4
 assert.ok(ledgerRecord, 'The visible MCQ attempt must remain in the canonical ledger.');
 assert.equal(ledgerRecord?.attempted, true);
 assert.equal(ledgerRecord?.evaluationStatus, 'NEEDS_REVIEW');
+assert.equal(ledgerRecord?.reviewRequired, true);
+assert.match(ledgerRecord?.reviewReason || '', /manual option verification/i);
 assert.equal(ledgerRecord?.counted, false, 'An unreadable option must not be counted as an academic zero.');
 assert.equal(ledgerRecord?.awardedMarks, 0, 'The placeholder is not included in the score total.');
 assert.equal(ledgerRecord?.annotationAnchor?.annotationType, 'EVALUATION_NOTE',
