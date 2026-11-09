@@ -48,6 +48,8 @@ import {
   consumeFacultyMockPaidCopy,
   findAvailableFacultyMockPaidCopy,
   getFacultyMockFreeCopyClaim,
+  isEligibleFacultyMockReviewRetry,
+  isExactFacultyMockReviewRetryCopy,
   releaseFacultyMockFreeCopy,
   releaseFacultyMockPaidCopy,
   releaseFacultyMockReviewRetry,
@@ -1351,36 +1353,24 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       const requestedReviewRetryId = String(retryOfEvaluationId || '').trim();
       if (requestedReviewRetryId) {
         const previousEvaluation = db.prepare(`
-          SELECT id, status, evaluation_source, material_type, faculty_mock_test_id,
+          SELECT id, student_id, status, evaluation_source, material_type, faculty_mock_test_id,
                  answer_sheet_sha256, faculty_mock_review_retry_evaluation_id
           FROM evaluations
           WHERE id = ? AND student_id = ?
           LIMIT 1
         `).get(requestedReviewRetryId, studentId) as any;
-        const validPreviousReview =
-          previousEvaluation &&
-          String(previousEvaluation.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
-          String(previousEvaluation.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK' &&
-          String(previousEvaluation.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
-          String(previousEvaluation.faculty_mock_test_id || '') === selectedTestId;
+        const validPreviousReview = isEligibleFacultyMockReviewRetry(
+          previousEvaluation,
+          studentId,
+          selectedTestId,
+        );
         if (!validPreviousReview) {
           return res.status(409).json({
             error: 'A free re-evaluation is available only for your own Faculty Mock copy that is currently marked NEEDS_REVIEW.',
             code: 'FACULTY_MOCK_REVIEW_RETRY_NOT_ELIGIBLE',
           });
         }
-        if (String(previousEvaluation.faculty_mock_review_retry_evaluation_id || '').trim()) {
-          return res.status(409).json({
-            error: 'The one-time free review retry for this Faculty Mock answer sheet has already been used.',
-            code: 'FACULTY_MOCK_REVIEW_RETRY_ALREADY_USED',
-          });
-        }
-        if (!String(previousEvaluation.answer_sheet_sha256 || '').trim()) {
-          return res.status(409).json({
-            error: 'The original answer-sheet fingerprint is unavailable, so the system cannot safely confirm an exact same-copy retry. Please contact support.',
-            code: 'FACULTY_MOCK_REVIEW_RETRY_FINGERPRINT_MISSING',
-          });
-        }
+
         facultyMockReviewRetryPrevious = previousEvaluation;
         facultyMockReviewRetryOfEvaluationId = requestedReviewRetryId;
       }
@@ -1707,7 +1697,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       answerSheetSha256 = crypto.createHash('sha256').update(pdfBuf).digest('hex');
       if (
         facultyMockReviewRetryPrevious &&
-        String(facultyMockReviewRetryPrevious.answer_sheet_sha256 || '') !== answerSheetSha256
+        !isExactFacultyMockReviewRetryCopy(facultyMockReviewRetryPrevious.answer_sheet_sha256, answerSheetSha256)
       ) {
         return res.status(409).json({
           error: 'The uploaded file is not byte-for-byte the same answer sheet as the original Faculty Mock submission. Upload the original copy from the review page to use the free retry.',
