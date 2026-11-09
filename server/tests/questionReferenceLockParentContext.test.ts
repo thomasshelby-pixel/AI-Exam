@@ -193,7 +193,7 @@ const nestedBracketAnswers = [
   'Only nested-bracket sibling evidence.',
 ].join('\n');
 const nestedBracketOne = extractLockedQuestionSlice(nestedBracketAnswers, '6', 'a(i)', 'SA');
-assert.equal(nestedBracketOne.found, true, 'The compact nested-bracket heading (a(i)) must resolve to Q6(a)(i).');
+assert.equal(nestedBracketOne.found, true, 'The compact nested-bracket heading (a(i)) must resolve to Q6(a(i)).');
 assert.match(nestedBracketOne.snippet, /Only nested-bracket evidence/);
 assert.doesNotMatch(nestedBracketOne.snippet, /Only nested-bracket sibling evidence/);
 const nestedBracketTwo = extractLockedQuestionSlice(nestedBracketAnswers, '6', 'a(ii)', 'SA');
