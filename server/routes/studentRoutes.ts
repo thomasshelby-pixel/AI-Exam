@@ -524,6 +524,12 @@ router.get('/faculty-mocks/tests/:id/question-paper', async (req: AuthRequest, r
     return res.send(saved.buffer);
   } catch (error) {
     console.error('[FacultyMocks] Student question paper download error:', error);
+    if ((error as any)?.code === 'FACULTY_MOCK_SHARED_SOURCE_UNAVAILABLE') {
+      return res.status(503).json({
+        code: 'FACULTY_MOCK_SHARED_SOURCE_UNAVAILABLE',
+        error: 'The selected mock could not be verified against the latest shared version. Please retry shortly.',
+      });
+    }
     return res.status(500).json({ error: 'Failed to download faculty mock question paper.' });
   }
 });
@@ -1070,10 +1076,13 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
     });
   } catch (error: unknown) {
     console.error('Preflight evaluation error:', error);
-    return res.status(500).json({
+    const sourceUnavailable = (error as any)?.code === 'FACULTY_MOCK_SHARED_SOURCE_UNAVAILABLE';
+    return res.status(sourceUnavailable ? 503 : 500).json({
       success: false,
-      code: 'PREFLIGHT_ERROR',
-      error: 'Failed to complete evaluation preflight check.',
+      code: sourceUnavailable ? 'FACULTY_MOCK_SHARED_SOURCE_UNAVAILABLE' : 'PREFLIGHT_ERROR',
+      error: sourceUnavailable && error instanceof Error
+        ? error.message
+        : 'Failed to complete evaluation preflight check.',
     });
   }
 });
@@ -2044,6 +2053,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       }
     }
 
+    const isFacultyMockSourceUnavailable = (error as any)?.code === 'FACULTY_MOCK_SHARED_SOURCE_UNAVAILABLE';
     const isPrepayment =
       errMsg.includes('prepayment credits') ||
       errMsg.includes('PREPAYMENT_CREDITS_DEPLETED') ||
@@ -2057,7 +2067,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       errMsg.includes('RATE_LIMITED') ||
       errMsg.includes('429');
 
-    const userFacingMsg = isPrepayment
+    const userFacingMsg = isFacultyMockSourceUnavailable
+      ? 'The selected Faculty Mock could not be verified against the latest shared version. No mock copy was consumed. Please retry shortly.'
+      : isPrepayment
       ? 'Google AI Studio prepayment credits are depleted. Please visit AI Studio at https://ai.studio/projects to manage project billing. No evaluation credits have been deducted.'
       : errMsg.includes('Subject Mismatch')
       ? errMsg
@@ -2069,8 +2081,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       ? 'AI Evaluation service quota is temporarily exceeded. No credits were deducted. Please retry in a few moments.'
       : 'Evaluation encountered an issue. No credits or free evaluations were deducted. Please retry.';
 
-    return res.status(isPrepayment ? 402 : isRateLimit ? 429 : 500).json({
+    return res.status(isFacultyMockSourceUnavailable ? 503 : isPrepayment ? 402 : isRateLimit ? 429 : 500).json({
       error: userFacingMsg,
+      ...(isFacultyMockSourceUnavailable ? { code: 'FACULTY_MOCK_SHARED_SOURCE_UNAVAILABLE' } : {}),
       isPrepaymentDepleted: isPrepayment,
     });
   } finally {
