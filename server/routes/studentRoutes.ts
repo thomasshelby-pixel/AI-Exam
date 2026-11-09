@@ -2454,6 +2454,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
             String(record.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
             Boolean(String(record.faculty_mock_test_id || '').trim()) &&
             /^[a-f0-9]{64}$/i.test(String(record.answer_sheet_sha256 || '').trim()) &&
+            !String(record.retry_of_evaluation_id || '').trim() &&
             !String(record.faculty_mock_review_retry_evaluation_id || '').trim();
 
           // Single Source of Truth: inject authoritative EvaluationRunPackage if available
