@@ -105,8 +105,8 @@ export function getAuthoritativePaperStructure(options: {
 
   // An explicit optional-question instruction must be resolved into a known
   // allowed set. Otherwise the ledger could count too many attempted choices.
-  const optionalInstructionPresent = /\\b(?:attempt|answer|choose|select)\\s+any\\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|\\d{1,2})\\b/i
-    .test(questionPaperText + '\\n' + markingSchemeText);
+  const optionalInstructionPresent = /\b(?:attempt|answer|choose|select)\s+any\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i
+    .test(questionPaperText + '\n' + markingSchemeText);
   const hasResolvedOptionalRule = (structure.questions || []).some((question) => Boolean(question.choiceRule?.trim()));
   const optionalSelectionRuleError = optionalInstructionPresent && !hasResolvedOptionalRule
     ? 'OPTIONAL_SELECTION_RULE_UNRESOLVED: The official source states an optional-attempt rule, but its allowed question set could not be parsed safely.'
@@ -871,8 +871,6 @@ function buildGenericPaperStructure(options: {
   // Never fabricate question identities or maximum marks for PYQ, MTP,
   // Model Test, or Faculty Mock papers. If the selected source cannot be
   // parsed, the deterministic pre-evaluation gate must stop scoring.
-  const materialType = String(options.materialType || '').trim().toUpperCase();
-
   subQuestions = deduplicateQuestionList(subQuestions);
 
   const questionsMap = new Map<string, PaperStructureQuestion>();
