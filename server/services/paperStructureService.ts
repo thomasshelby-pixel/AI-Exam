@@ -80,6 +80,7 @@ export function getAuthoritativePaperStructure(options: {
     suggestedAnswersText = '',
     subjectName = '',
     paper = '',
+    level = '',
     officialPaperMaxMarks = 100,
     materialType = '',
   } = options;
