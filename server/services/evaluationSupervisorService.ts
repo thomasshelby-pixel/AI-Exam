@@ -185,11 +185,32 @@ function auditEvaluation(
         params.suggestedAnswersText || '',
         params.markingSchemeText || ''
       );
-      if (!reference.questionPaperFound || !reference.suggestedAnswerFound) {
+      const materialType = String(params.evaluationResult.materialType || '').trim().toUpperCase();
+      const supportsAuthoritativeStructureAnchor = new Set([
+        'PYQ',
+        'MTP',
+        'MODEL_TEST_PAPER',
+        'FACULTY_MOCK_TEST',
+      ]).has(materialType);
+      const authoritativeLeafVerified =
+        supportsAuthoritativeStructureAnchor &&
+        Boolean(String(authoritative.fullQuestionCode || '').trim()) &&
+        Number(authoritative.maximumMarks) > 0;
+      const sourceBackedFallbackIsSafe =
+        authoritativeLeafVerified &&
+        reference.suggestedAnswerFound &&
+        !reference.referenceNeedsReview;
+
+      if (
+        !reference.suggestedAnswerFound ||
+        reference.referenceNeedsReview ||
+        (!reference.questionPaperFound && !sourceBackedFallbackIsSafe)
+      ) {
         issues.push(
           'SUPERVISOR_REFERENCE_LOCK_INCOMPLETE: ' + id +
           ' (questionPaperFound=' + reference.questionPaperFound +
-          ', suggestedAnswerFound=' + reference.suggestedAnswerFound + ')'
+          ', suggestedAnswerFound=' + reference.suggestedAnswerFound +
+          ', authoritativeStructureAnchor=' + sourceBackedFallbackIsSafe + ')'
         );
       }
     } catch (error) {
