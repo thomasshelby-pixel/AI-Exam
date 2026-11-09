@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../../api/client.js';
 import { CA_CURRICULUM } from '../../data/caCurriculum.js';
 import { CALevel } from '../../types/index.js';
-import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle, Trash2 } from 'lucide-react';
+import { Plus, Users, FileText, UploadCloud, RefreshCw, CheckCircle2, AlertCircle, Trash2, Pencil, X } from 'lucide-react';
 
 type Faculty = { id: string; name: string; description?: string | null; status: 'ACTIVE' | 'INACTIVE' };
 type MockTest = {
@@ -10,6 +10,9 @@ type MockTest = {
   model_group?: string | null; subject_key: string; subject_name: string; paper: string;
   mock_number: number; title: string; maximum_marks: number; status: string;
   question_paper_file_name?: string;
+  question_paper_reference_file_name?: string | null;
+  suggested_answer_file_name?: string | null;
+  marking_scheme_file_name?: string | null;
   access_type?: 'FREE' | 'PAID';
   unlock_price_inr?: number;
 };
@@ -32,6 +35,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   const [loading, setLoading] = useState(true);
   const [savingFaculty, setSavingFaculty] = useState(false);
   const [savingTest, setSavingTest] = useState(false);
+  const [editingTestId, setEditingTestId] = useState<string | null>(null);
   const [deletingFacultyId, setDeletingFacultyId] = useState<string | null>(null);
   const [unlockPriceINR, setUnlockPriceINR] = useState(35);
   const [facultyName, setFacultyName] = useState('');
@@ -81,6 +85,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   useEffect(() => { void loadData(); }, []);
 
   useEffect(() => {
+    if (editingTestId) return;
     const nextSubjects = CA_CURRICULUM[courseLevel].subjects;
     const nextSubject = nextSubjects.find((item) => item.key === subjectKey) || nextSubjects[0];
     if (nextSubject) {
@@ -88,14 +93,15 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       setPaper(`Paper ${nextSubject.paperNumber}`);
       setMaximumMarks(String(nextSubject.maximumMarks));
     }
-  }, [courseLevel]);
+  }, [courseLevel, editingTestId]);
 
   useEffect(() => {
+    if (editingTestId) return;
     if (selectedSubject) {
       setPaper(`Paper ${selectedSubject.paperNumber}`);
       setMaximumMarks(String(selectedSubject.maximumMarks));
     }
-  }, [subjectKey]);
+  }, [subjectKey, editingTestId]);
 
   const filteredTests = useMemo(() => tests.filter((test) =>
     (filterFaculty === 'ALL' || test.faculty_id === filterFaculty) &&
@@ -200,46 +206,69 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     }
   };
 
+  const resetMockForm = () => {
+    setEditingTestId(null);
+    setMockNumber('');
+    setTitle('');
+    setAccessType('FREE');
+    setQuestionPaper(null);
+    setQuestionPaperReference(null);
+    setSuggestedAnswersReference(null);
+    setMarkingSchemeReference(null);
+  };
+
+  const startEditingMock = (test: MockTest) => {
+    setError('');
+    setEditingTestId(test.id);
+    setFacultyId(test.faculty_id);
+    setCourseLevel(test.course_level);
+    setAttempt(test.attempt);
+    setSubjectKey(test.subject_key);
+    setPaper(test.paper);
+    setMockNumber(String(test.mock_number));
+    setTitle(test.title || '');
+    setMaximumMarks(String(test.maximum_marks));
+    setAccessType(String(test.access_type || 'FREE').toUpperCase() === 'PAID' ? 'PAID' : 'FREE');
+    setQuestionPaper(null);
+    setQuestionPaperReference(null);
+    setSuggestedAnswersReference(null);
+    setMarkingSchemeReference(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const publishMock = async (event: React.FormEvent) => {
     event.preventDefault();
     setError('');
     if (!facultyId) return setError('Add/select a faculty first.');
     if (!attempt.trim()) return setError('Enter the exam attempt, for example May 2027.');
-    if (!questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference) {
+    if (!editingTestId && (!questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference)) {
       return setError('Upload the original Question Paper PDF and all three private reference TXT files.');
     }
     setSavingTest(true);
     try {
-      const result = await apiRequest<{ test: MockTest }>('/api/admin/faculty-mocks/tests', {
-        method: 'POST',
-        body: JSON.stringify({
-          facultyId, courseLevel, attempt: attempt.trim(), modelGroup: selectedSubject?.group || '',
-          subjectKey, subjectName: selectedSubject?.name || '', paper, mockNumber, title,
-          maximumMarks: Number(maximumMarks), accessType, syllabusVersion: 'New Scheme 2024',
-          questionPaperFile: questionPaper,
-          questionPaperReferenceFile: questionPaperReference,
-          suggestedAnswersFile: suggestedAnswersReference,
-          markingSchemeFile: markingSchemeReference,
-        }),
-      });
-      onNotify?.(`${result.test.faculty_name}: Mock ${String(result.test.mock_number).padStart(2, '0')} published for ${attempt}.`, 'success');
-      setMockNumber('');
-      setTitle('');
-      setAccessType('FREE');
-      setQuestionPaper(null);
-      setQuestionPaperReference(null);
-      setSuggestedAnswersReference(null);
-      setMarkingSchemeReference(null);
+      const payload: Record<string, unknown> = {
+        facultyId, courseLevel, attempt: attempt.trim(), modelGroup: selectedSubject?.group || '',
+        subjectKey, subjectName: selectedSubject?.name || '', paper, mockNumber, title,
+        maximumMarks: Number(maximumMarks), accessType, syllabusVersion: 'New Scheme 2024',
+      };
+      if (questionPaper) payload.questionPaperFile = questionPaper;
+      if (questionPaperReference) payload.questionPaperReferenceFile = questionPaperReference;
+      if (suggestedAnswersReference) payload.suggestedAnswersFile = suggestedAnswersReference;
+      if (markingSchemeReference) payload.markingSchemeFile = markingSchemeReference;
+      const endpoint = editingTestId ? '/api/admin/faculty-mocks/tests/' + encodeURIComponent(editingTestId) : '/api/admin/faculty-mocks/tests';
+      const result = await apiRequest<{ test: MockTest }>(endpoint, { method: editingTestId ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+      const label = result.test.faculty_name + ': Mock ' + String(result.test.mock_number).padStart(2, '0');
+      onNotify?.(editingTestId ? label + ' updated successfully.' : label + ' published for ' + attempt + '.', 'success');
+      resetMockForm();
       await loadData();
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not publish mock test.';
+      const message = err instanceof Error ? err.message : (editingTestId ? 'Could not update mock test.' : 'Could not publish mock test.');
       setError(message);
       onNotify?.(message, 'error');
     } finally {
       setSavingTest(false);
     }
   };
-
   const toggleFaculty = async (faculty: Faculty) => {
     try {
       await apiRequest(`/api/admin/faculty-mocks/faculties/${faculty.id}/status`, {
@@ -284,8 +313,8 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
 
   const renderPdfInput = (label: string, value: StoredPdf | null) => (
     <label className="block rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition">
-      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-blue-600" />{label} *</span>
-      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : 'Choose original PDF (max 20 MB). It will be stored without conversion.'}</span>
+      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-blue-600" />{label}{editingTestId ? ' (optional replacement)' : ' *'}</span>
+      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : editingTestId ? 'No replacement selected — the currently stored PDF will be kept.' : 'Choose original PDF (max 20 MB). It will be stored without conversion.'}</span>
       {value && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Stored unchanged for student download only · not sent for AI extraction</span>}
       <input className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { void choosePdf(event.target.files?.[0]); event.currentTarget.value = ''; }} />
     </label>
@@ -298,8 +327,8 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     description: string,
   ) => (
     <label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50/60 p-3 cursor-pointer hover:border-violet-500 hover:bg-violet-50 transition">
-      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />{label} *</span>
-      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : description}</span>
+      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />{label}{editingTestId ? ' (optional replacement)' : ' *'}</span>
+      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : editingTestId ? 'No replacement selected — the currently stored private TXT will be kept.' : description}</span>
       {value && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{value.text.length.toLocaleString()} characters · private · separate source</span>}
       <input className="hidden" type="file" accept=".txt,text/plain" onChange={(event) => { void chooseReferenceText(kind, event.target.files?.[0]); event.currentTarget.value = ''; }} />
     </label>
@@ -343,32 +372,38 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
-        <div className="mb-3 flex items-center gap-2"><FileText className="h-4 w-4 text-indigo-600" /><h3 className="text-sm font-bold">2. Add Faculty Mock</h3></div>
+        <div className="mb-3 flex items-center gap-2"><FileText className="h-4 w-4 text-indigo-600" /><h3 className="text-sm font-bold">2. {editingTestId ? 'Edit Faculty Mock' : 'Add Faculty Mock'}</h3></div>
+        {editingTestId && (
+          <div className="mb-3 flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-5 text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+            <span>Editing keeps the same mock ID and past student records. Faculty, course, attempt, subject, paper and mock number stay fixed. Replace only selected files; blank file inputs keep the existing source.</span>
+            <button type="button" onClick={resetMockForm} className="inline-flex shrink-0 items-center gap-1 self-start font-bold text-amber-800 hover:text-amber-950"><X className="h-3.5 w-3.5" />Cancel edit</button>
+          </div>
+        )}
         <form onSubmit={publishMock} className="space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <label className="text-[11px] font-semibold text-slate-600">Faculty
-              <select value={facultyId} onChange={(e) => setFacultyId(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs" required>
+              <select value={facultyId} onChange={(e) => setFacultyId(e.target.value)} disabled={!!editingTestId} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs disabled:bg-slate-100 disabled:text-slate-500" required>
                 <option value="">Select faculty</option>{faculties.filter((f) => f.status === 'ACTIVE').map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </label>
             <label className="text-[11px] font-semibold text-slate-600">CA Course
-              <select value={courseLevel} onChange={(e) => setCourseLevel(e.target.value as CALevel)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+              <select value={courseLevel} onChange={(e) => setCourseLevel(e.target.value as CALevel)} disabled={!!editingTestId} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs disabled:bg-slate-100 disabled:text-slate-500">
                 <option value="FOUNDATION">CA Foundation</option><option value="INTERMEDIATE">CA Intermediate</option><option value="FINAL">CA Final</option>
               </select>
             </label>
             <label className="text-[11px] font-semibold text-slate-600">Exam Attempt
-              <input value={attempt} onChange={(e) => setAttempt(e.target.value)} placeholder="e.g. May 2027" maxLength={40} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" required />
+              <input value={attempt} onChange={(e) => setAttempt(e.target.value)} placeholder="e.g. May 2027" maxLength={40} disabled={!!editingTestId} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs disabled:bg-slate-100 disabled:text-slate-500" required />
             </label>
             <label className="text-[11px] font-semibold text-slate-600">Subject
-              <select value={subjectKey} onChange={(e) => setSubjectKey(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+              <select value={subjectKey} onChange={(e) => setSubjectKey(e.target.value)} disabled={!!editingTestId} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs disabled:bg-slate-100 disabled:text-slate-500">
                 {subjects.map((subject) => <option key={subject.key} value={subject.key}>{subject.name}</option>)}
               </select>
             </label>
             <label className="text-[11px] font-semibold text-slate-600">Paper
-              <input value={paper} onChange={(e) => setPaper(e.target.value)} maxLength={40} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" required />
+              <input value={paper} onChange={(e) => setPaper(e.target.value)} maxLength={40} disabled={!!editingTestId} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs disabled:bg-slate-100 disabled:text-slate-500" required />
             </label>
             <label className="text-[11px] font-semibold text-slate-600">Mock Number
-              <input type="number" min="1" max="99" value={mockNumber} onChange={(e) => setMockNumber(e.target.value)} placeholder="Auto next number" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" />
+              <input type="number" min="1" max="99" value={mockNumber} onChange={(e) => setMockNumber(e.target.value)} placeholder="Auto next number" disabled={!!editingTestId} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs disabled:bg-slate-100 disabled:text-slate-500" />
             </label>
             <label className="text-[11px] font-semibold text-slate-600">Maximum Marks
               <input type="number" min="1" max="500" value={maximumMarks} onChange={(e) => setMaximumMarks(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" required />
@@ -389,12 +424,13 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
             {renderTextInput('Private Suggested Answers TXT', 'SUGGESTED_ANSWERS', suggestedAnswersReference, 'Upload model answers, workings and conclusions (max 4 MB).')}
             {renderTextInput('Private Marking Scheme TXT', 'MARKING_SCHEME', markingSchemeReference, 'Upload step-wise marks, criteria and partial-credit rules (max 4 MB).')}
           </div>
+          {editingTestId && <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2.5 text-[10px] leading-5 text-amber-900">Previously issued Free/Paid student entitlements are preserved. Access type can only be changed before any claim, purchase or evaluation exists. Once a student evaluation exists, maximum marks and source files are locked to protect earlier reports and future rechecks; you can still edit the title. For a corrected question paper or marking scheme, publish a new mock.</div>}
           <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[10px] leading-5 text-slate-600">
             <strong className="text-slate-800">Reference separation:</strong> The original PDF is stored unchanged for student download only and is never extracted or sent to AI. The three private TXT files are stored independently and supply the exact Question Paper text, Suggested Answers and Marking Scheme to the existing evaluator. Keep the Question Paper TXT identical to the downloadable PDF; verify all three references before publishing.
           </div>
-          <button disabled={savingTest || !!readingFile || !facultyId || !attempt.trim() || !questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
-            {savingTest ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-            {savingTest ? 'Publishing mock…' : readingFile ? `Reading ${readingFile.replace('_', ' ').toLowerCase()}…` : 'Publish Faculty Mock'}
+          <button disabled={savingTest || !!readingFile || !facultyId || !attempt.trim() || (!editingTestId && (!questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference))} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+            {savingTest ? <RefreshCw className="h-4 w-4 animate-spin" /> : editingTestId ? <CheckCircle2 className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            {savingTest ? (editingTestId ? 'Saving changes…' : 'Publishing mock…') : readingFile ? 'Reading ' + readingFile.replace('_', ' ').toLowerCase() + '…' : editingTestId ? 'Save Changes' : 'Publish Faculty Mock'}
           </button>
         </form>
       </section>
@@ -420,7 +456,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
                   <td>{test.maximum_marks}</td>
                   <td><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${String(test.access_type || 'FREE').toUpperCase() === 'PAID' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{String(test.access_type || 'FREE').toUpperCase() === 'PAID' ? `PAID · ₹${test.unlock_price_inr || unlockPriceINR}` : 'FREE'}</span></td>
                   <td><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${test.status === 'PUBLISHED' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{test.status}</span></td>
-                  <td className="py-2 text-right"><button type="button" onClick={() => void toggleTest(test)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-bold text-blue-700">{test.status === 'PUBLISHED' ? 'Unpublish' : 'Publish'}</button></td>
+                  <td className="py-2 text-right"><div className="inline-flex items-center gap-1"><button type="button" onClick={() => startEditingMock(test)} className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[10px] font-bold text-violet-700"><Pencil className="h-3 w-3" />Edit</button><button type="button" onClick={() => void toggleTest(test)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-[10px] font-bold text-blue-700">{test.status === 'PUBLISHED' ? 'Unpublish' : 'Publish'}</button></div></td>
                 </tr>
               ))}
               {!loading && !filteredTests.length && <tr><td colSpan={8} className="py-8 text-center text-slate-400">No faculty mocks match these filters.</td></tr>}
