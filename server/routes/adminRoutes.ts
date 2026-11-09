@@ -1211,7 +1211,7 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     const localActivity = db.prepare(`SELECT
       EXISTS(SELECT 1 FROM faculty_mock_free_uses WHERE faculty_mock_test_id = ?) AS has_free_claims,
       EXISTS(SELECT 1 FROM faculty_mock_copy_purchases WHERE faculty_mock_test_id = ?) AS has_paid_copies,
-      EXISTS(SELECT 1 FROM payment_orders WHERE faculty_mock_test_id = ?) AS has_payment_orders`).get(testId, testId, testId) as any;
+      EXISTS(SELECT 1 FROM payment_orders WHERE faculty_mock_test_id = ? AND UPPER(COALESCE(status, '')) NOT IN ('FAILED', 'CANCELLED', 'REFUNDED')) AS has_payment_orders`).get(testId, testId, testId) as any;
     const hasIssuedStudentEntitlement = Boolean(
       localActivity?.has_free_claims || localActivity?.has_paid_copies || localActivity?.has_payment_orders ||
       hasSharedFreeClaim || hasSharedPaidCopy
@@ -1263,8 +1263,6 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     catch (fileError) { return res.status(400).json({ error: fileError instanceof Error ? fileError.message : 'A replacement TXT file is invalid.', code: 'FACULTY_MOCK_REPLACEMENT_FILE_INVALID' }); }
     const hasHistoricalEvaluations = sharedEvaluations.length > 0 ||
       Boolean(db.prepare('SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ? LIMIT 1').get(testId));
-    const scoringInputsChanged = Number(existing.maximum_marks || 100) !== maximumMarks ||
-      Boolean(pdf || qpText || answersText || markingText);
     let parsedReference;
     try { parsedReference = validateFacultyMockReferenceSections({ questionPaperText: qpText?.text ?? String(existing.question_paper_text || ''), suggestedAnswersText: answersText?.text ?? String(existing.suggested_answers_text || ''), markingSchemeText: markingText?.text ?? String(existing.marking_scheme_text || '') }); }
     catch (referenceError) { return res.status(422).json({ error: referenceError instanceof Error ? referenceError.message : 'The mock reference TXT package is invalid.', code: 'FACULTY_MOCK_REFERENCE_TXT_INVALID' }); }
