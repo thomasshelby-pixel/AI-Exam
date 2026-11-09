@@ -757,8 +757,11 @@ export function buildEvaluationReconciliationSection(
   }));
 
   const allAttemptedCountedExactlyOnce = ledger.records
-    .filter((r) => r.attempted && r.evaluationStatus === 'EVALUATED')
-    .every((r) => r.counted || r.evaluationStatus === 'EXCLUDED_ALTERNATIVE');
+    .filter((r) => r.attempted)
+    .every((r) =>
+      r.evaluationStatus === 'EXCLUDED_ALTERNATIVE' ||
+      (r.evaluationStatus === 'EVALUATED' && r.counted)
+    );
 
   const summary =
     `Ledger Verified: ${ledger.totalCanonicalQuestions} canonical items, ` +
