@@ -95,14 +95,24 @@ export function getAuthoritativePaperStructure(options: {
     normalizedLevel === 'INTERMEDIATE' &&
     /\btaxation\b/.test(normalizedPaperIdentity);
 
-  // Faculty Mock references are independently authored. Never substitute a
-  // preconfigured taxation/PYQ structure; the exact selected mock's private TXT
-  // files are the only authoritative source for question identity and marks.
-  const structure = isFacultyMock
-    ? buildGenericPaperStructure(options)
-    : isTaxationPaper
-      ? buildTaxationPaperStructure(options)
-      : buildGenericPaperStructure(options);
+  // Uploaded PYQ, MTP, Model Test and Faculty Mock materials must all use
+  // the same source-driven parser, for every subject including Taxation.
+  // A configured legacy Taxation template is retained only for older callers
+  // that do not identify a source-backed material type; it must never override
+  // the selected paper's own question/sub-question identities or mark maxima.
+  const sourceDrivenMaterialTypes = new Set([
+    'PYQ',
+    'MTP',
+    'MODEL_TEST_PAPER',
+    'FACULTY_MOCK_TEST',
+  ]);
+  const normalizedMaterialType = String(materialType || '').trim().toUpperCase();
+  const useUniversalSourceParser =
+    sourceDrivenMaterialTypes.has(normalizedMaterialType) || isFacultyMock;
+
+  const structure = isTaxationPaper && !useUniversalSourceParser
+    ? buildTaxationPaperStructure(options)
+    : buildGenericPaperStructure(options);
 
   // An explicit optional-question instruction must be resolved into a known
   // allowed set. Otherwise the ledger could count too many attempted choices.
