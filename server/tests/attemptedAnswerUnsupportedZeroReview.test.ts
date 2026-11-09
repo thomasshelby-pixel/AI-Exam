@@ -183,6 +183,7 @@ const evidenceBackedZero = processEvaluationIntegrity({
   }],
 }, {
   paperStructure,
+  coverageMap,
   officialPaperMaxMarks: 4,
 });
 assert.equal(evidenceBackedZero.questions[0]?.status, 'incorrect');
