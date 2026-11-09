@@ -85,6 +85,20 @@ try {
   assert.equal(stored.question_paper_reference_file_id, 'qp-text-file', 'Private evaluation Question Paper TXT metadata is stored independently from the student PDF');
   assert.equal(stored.suggested_answer_file_id, 'suggested-answer-file', 'Suggested Answers TXT metadata has its own file record');
   assert.equal(stored.marking_scheme_file_id, 'marking-scheme-file', 'Marking Scheme TXT metadata has its own file record');
+  assert.equal(stored.access_type, 'FREE', 'Existing/default faculty mocks preserve free first-copy access');
+
+  const paidTestId = `fmock_paid_mode_${suffix}`;
+  db.prepare(`
+    INSERT INTO faculty_mock_tests (
+      id, faculty_id, course_level, attempt, subject_key, subject_name, paper, mock_number,
+      title, question_paper_text, suggested_answers_text, question_paper_file_id,
+      suggested_answer_file_id, access_type
+    ) VALUES (?, ?, 'INTERMEDIATE', 'May 2027', 'inter_advanced_accounting',
+      'Advanced Accounting', 'Paper 1', 2, 'Paid Faculty Mock', ?, ?, 'paid-qp-file',
+      'paid-answer-file', 'PAID')
+  `).run(paidTestId, facultyId, questionPaperText, suggestedAnswersText);
+  const paidMock = db.prepare('SELECT access_type FROM faculty_mock_tests WHERE id = ?').get(paidTestId) as any;
+  assert.equal(paidMock.access_type, 'PAID', 'Admin-selected paid access mode persists independently for a mock');
 
   const verified = enforceMaterialHardGate({
     evaluationId: 'eval_' + suffix,
