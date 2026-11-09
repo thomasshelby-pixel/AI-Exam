@@ -831,7 +831,7 @@ router.get('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
       String(a.subject_name).localeCompare(String(b.subject_name)) ||
       Number(a.mock_number) - Number(b.mock_number)
     );
-    return res.json({ tests: filtered });
+    return res.json({ tests: filtered, unlockPriceINR: CUSTOM_PRICE_PER_EVALUATION_INR });
   } catch (error) {
     console.error('[FacultyMocks] List tests error:', error);
     return res.status(500).json({ error: 'Failed to load faculty mock tests.' });
