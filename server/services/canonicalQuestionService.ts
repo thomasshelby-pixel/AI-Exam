@@ -309,6 +309,23 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
  * - MCQs: "MCQ 1", "MCQ1", "Objective 1" -> "MCQ1"
  */
 /**
+ * Returns true only when childId is a strict descendant of parentId in the
+ * canonical numbering tree. This is path-based, not string-prefix-based:
+ * Q3(a(i)) is a child of Q3(a), even though its serialized form does not start
+ * with the literal string "Q3(a)(".
+ */
+export function isCanonicalQuestionDescendant(childId: string, parentId: string): boolean {
+  const child = parseCanonicalQuestionIdentity(String(childId || ''));
+  const parent = parseCanonicalQuestionIdentity(String(parentId || ''));
+  if (child.isMcq || parent.isMcq) return false;
+  if (String(Number(child.questionNumber)) !== String(Number(parent.questionNumber))) return false;
+  const childPath = child.subQuestionPath || [];
+  const parentPath = parent.subQuestionPath || [];
+  return childPath.length > parentPath.length &&
+    parentPath.every((part, index) => part.toLowerCase() === childPath[index]?.toLowerCase());
+}
+
+/**
  * Generic deduplication engine for any list of questions in the evaluation pipeline.
  *
  * Rules strictly enforced:
@@ -386,7 +403,7 @@ export function deduplicateQuestionList<T extends {
   const parentContainerIds = new Set<string>();
   for (const childId of nonMcqCanonicalIds) {
     for (const potentialParentId of nonMcqCanonicalIds) {
-      if (childId !== potentialParentId && childId.startsWith(`${potentialParentId}(`)) {
+      if (childId !== potentialParentId && isCanonicalQuestionDescendant(childId, potentialParentId)) {
         parentContainerIds.add(potentialParentId);
       }
     }
