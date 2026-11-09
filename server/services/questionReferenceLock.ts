@@ -147,7 +147,7 @@ function findSubQuestionInsideParent(
   const family = (token: string, depth: number): string => {
     const value = token.toLowerCase();
     if (/^\d+$/.test(value)) return 'numeric';
-    if (roman.has(value) && (value.length > 1 || depth > 0)) return 'roman';
+    if (roman.has(value)) return 'roman';
     if (/^[a-z]$/.test(value)) return 'alphabetic';
     if (roman.has(value)) return 'roman';
     return 'other:' + value;
