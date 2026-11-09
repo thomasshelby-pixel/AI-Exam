@@ -30,6 +30,7 @@ import {
 import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
+  hasInvalidRecursiveQuestionNesting,
   deduplicateQuestionList,
   validateQuestionDeduplication,
 } from './canonicalQuestionService.js';
@@ -136,11 +137,13 @@ export function validatePreEvaluationGate(params: {
   }
 
 
-  // 2. Canonical question map valid: check for malformed IDs like Q3(b(b))
+  // 2. Canonical question map valid: reject repeated alphabetic OCR echoes,
+  // not legitimate nested numbering such as Q2(a(i)) or Q6(5(ii)).
   for (const sq of subQs) {
-    const canon = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber);
-    if (/\([a-z0-9]+\([a-z0-9]+\)\)/i.test(canon) && !canon.includes('(1)') && !canon.includes('(2)')) {
-      const msg = `MALFORMED_CANONICAL_ID: ${canon} contains illegal recursive nesting.`;
+    const sourceCode = sq.fullQuestionCode || sq.questionNumber;
+    const canon = toCanonicalQuestionId(sourceCode, sq.subQuestionNumber);
+    if (hasInvalidRecursiveQuestionNesting(sourceCode, sq.subQuestionNumber)) {
+      const msg = `MALFORMED_CANONICAL_ID: ${canon} contains a repeated alphabetic sub-part label.`;
       failedInvariants.push(msg);
       criticalFailures.push(msg);
     }
@@ -416,11 +419,13 @@ export function validatePostEvaluationGate(params: {
     errors.push(`PARENT_CHILD_DOUBLE_COUNTING: Parent container scored alongside children: ${deduplicationCheck.parentChildCollisions.join(', ')}`);
   }
 
-  // 2. Reject Malformed IDs
+  // 2. Reject repeated alphabetic echoes while preserving valid arbitrary
+  // nesting (letter -> Roman, number -> Roman, and deeper source-defined paths).
   for (const q of questions) {
-    const canonId = q.canonicalId || toCanonicalQuestionId(q.questionNumber, q.subQuestion);
-    if (/\([a-z0-9]+\([a-z0-9]+\)\)/i.test(canonId) && !canonId.includes('(1)') && !canonId.includes('(2)')) {
-      errors.push(`MALFORMED_CANONICAL_ID: ${canonId} in final evaluation.`);
+    const sourceId = q.canonicalId || q.fullQuestionCode || q.questionNumber;
+    const canonId = sourceId || toCanonicalQuestionId(q.questionNumber, q.subQuestion);
+    if (hasInvalidRecursiveQuestionNesting(sourceId, q.subQuestion)) {
+      errors.push(`MALFORMED_CANONICAL_ID: ${canonId} contains a repeated alphabetic sub-part label in final evaluation.`);
     }
   }
 

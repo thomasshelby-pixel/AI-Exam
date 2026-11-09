@@ -154,6 +154,67 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
   return parts;
 }
 
+const ROMAN_QUESTION_PART_TOKENS = new Set([
+  'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+  'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx',
+  'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxx', 'xl', 'l', 'lx', 'lxx', 'xc', 'c',
+]);
+
+/**
+ * Detect an actual repeated alphabetic sub-part echo such as Q3(b(b)).
+ *
+ * Nested parentheses alone are valid CA numbering: Q2(a(i)), Q4(a(ii)),
+ * Q6(5(i)) and Q6(5(ii)) are legitimate independent leaves. This checks the
+ * raw path before the canonical parser collapses repeated alphabetic OCR echoes.
+ */
+export function hasInvalidRecursiveQuestionNesting(
+  questionNumberInput?: string | number | null,
+  subQuestionInput?: string | null,
+): boolean {
+  let rawQuestion = String(questionNumberInput || '').trim();
+  if (!rawQuestion) return false;
+
+  const alternativePattern = /(?:[\(\[\{]\s*(?:OR|ALT|ALTERNATIVE|OPTION\s*[0-9]+|CHOICE\s*[0-9]+)\s*[\)\]\}]|\b(?:OR|ALT|ALTERNATIVE|OPTION\s*[0-9]+|CHOICE\s*[0-9]+)\b)/gi;
+  rawQuestion = rawQuestion.replace(alternativePattern, ' ').trim();
+
+  const questionMatch = rawQuestion.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(.*)$/i);
+  if (!questionMatch) return false;
+
+  let parts = parseQuestionPartPath(questionMatch[2] || '');
+  const rawSubQuestion = String(subQuestionInput || '').trim();
+  if (rawSubQuestion && rawSubQuestion.toUpperCase() !== 'MCQ') {
+    const incoming = parseQuestionPartPath(rawSubQuestion, true);
+    if (!parts.length) {
+      parts = incoming;
+    } else if (
+      incoming.length >= parts.length &&
+      parts.every((part, index) => incoming[index]?.toLowerCase() === part.toLowerCase())
+    ) {
+      parts = incoming;
+    } else if (
+      incoming.length <= parts.length &&
+      incoming.every((part, index) => parts[parts.length - incoming.length + index]?.toLowerCase() === part.toLowerCase())
+    ) {
+      // The separate sub-question value repeats the final path segment.
+    } else if (
+      incoming.length <= parts.length &&
+      incoming.every((part, index) => parts[index]?.toLowerCase() === part.toLowerCase())
+    ) {
+      // The separate sub-question value repeats an ancestor path.
+    } else {
+      parts = parts.concat(incoming);
+    }
+  }
+
+  return parts.some((part, index) => {
+    if (index === 0 || part.toLowerCase() !== parts[index - 1].toLowerCase()) return false;
+    const token = part.toLowerCase();
+    // Same-number Roman/numeric levels may restart under a new parent; repeated
+    // alphabetic levels are OCR echoes and are normalized/rejected.
+    return /^[a-z]+$/.test(token) && !ROMAN_QUESTION_PART_TOKENS.has(token);
+  });
+}
+
 function buildCanonicalQuestionCode(questionNumber: string, parts: string[]): string {
   if (!parts.length) return 'Q' + questionNumber;
   // Preserve the established CA nested style (Q6(a(1))) while normalizing
