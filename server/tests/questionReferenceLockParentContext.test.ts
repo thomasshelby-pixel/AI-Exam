@@ -136,4 +136,37 @@ const nestedNumericTwo = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(
 assert.equal(nestedNumericTwo.found, true, 'A second numeric child must not be merged into its sibling.');
 assert.match(nestedNumericTwo.snippet, /Only-numeric-two evidence/);
 assert.doesNotMatch(nestedNumericTwo.snippet, /Only-numeric-one evidence|Sibling-b evidence/);
+// Dotted and named source headings must lock to the same universal canonical paths.
+const dottedAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 3.1.1 First dotted sub-part answer with its own working and conclusion.',
+  'Only dotted one evidence.',
+  'Question 3.1.2 Second dotted sub-part answer with separate working and conclusion.',
+  'Only dotted two evidence.',
+].join('\n');
+const dottedOne = extractLockedQuestionSlice(dottedAnswers, '3', '1(1)', 'SA');
+assert.equal(dottedOne.found, true, 'Q3.1.1 must be retrievable through canonical Q3(1)(1).');
+assert.match(dottedOne.snippet, /Only dotted one evidence/);
+assert.doesNotMatch(dottedOne.snippet, /Only dotted two evidence/);
+const dottedTwo = extractLockedQuestionSlice(dottedAnswers, '3', '1(2)', 'SA');
+assert.equal(dottedTwo.found, true, 'Q3.1.2 must resolve independently from Q3.1.1.');
+assert.match(dottedTwo.snippet, /Only dotted two evidence/);
+assert.doesNotMatch(dottedTwo.snippet, /Only dotted one evidence/);
+
+const namedClauseAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 4 Part IV Clause 1 First named clause answer with separate analysis and conclusion.',
+  'Only named clause one evidence.',
+  'Question 4 Part IV Clause 2 Second named clause answer with separate analysis and conclusion.',
+  'Only named clause two evidence.',
+].join('\n');
+const namedClauseOne = extractLockedQuestionSlice(namedClauseAnswers, '4', 'iv(1)', 'SA');
+assert.equal(namedClauseOne.found, true, 'Part IV Clause 1 must lock using its named source labels.');
+assert.match(namedClauseOne.snippet, /Only named clause one evidence/);
+assert.doesNotMatch(namedClauseOne.snippet, /Only named clause two evidence/);
+const namedClauseTwo = extractLockedQuestionSlice(namedClauseAnswers, '4', 'iv(2)', 'SA');
+assert.equal(namedClauseTwo.found, true, 'Part IV Clause 2 must be a separate source slice.');
+assert.match(namedClauseTwo.snippet, /Only named clause two evidence/);
+assert.doesNotMatch(namedClauseTwo.snippet, /Only named clause one evidence/);
+
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');
