@@ -456,11 +456,11 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     Administrative Review in Progress
                   </span>
                   <span className="text-[11px] text-amber-800 dark:text-amber-300 font-semibold">
-                    Academic Score Recorded
+                    Provisional Result Preserved
                   </span>
                 </div>
                 <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                  Your academic score of {activeMarks} / {officialMax} marks is recorded. Automated integrity checks are finalizing certified copy generation.
+                  Your current provisional score is {activeMarks} / {officialMax} marks. It is preserved, but it is not your final result until the review is complete.
                 </p>
                 <p className="text-[11px] text-amber-700 dark:text-amber-300/90 leading-relaxed">
                   {(evaluationResult as any).reviewReason || 'You can refresh or check the official certification status below.'}
