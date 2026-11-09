@@ -840,15 +840,15 @@ Section B - Division B: Descriptive Questions
     paperStructure.mcqs.length === 16,
     'TEST R.1: All 16 MCQs must be extracted from the selected MTP Suggested Answers.',
   );
-  assert.notEqual(
-    paperStructure.paperTitle,
-    'CA Intermediate – Paper 3: Taxation',
-    'An explicit MTP must not use the legacy subject-specific Taxation template.',
+  assert(
+    paperStructure.paperTitle !== 'CA Intermediate – Paper 3: Taxation',
+    'TEST R.2: An explicit MTP must not use the legacy subject-specific Taxation template.',
   );
-  assert.deepEqual(
-    paperStructure.mcqs.map((question) => question.maximumMarks),
-    [2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1],
-    'Each MTP MCQ maximum must come from the exact selected Question Paper / Marking Scheme.',
+  const expectedMtpMcqMarks = [2, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1];
+  assert(
+    JSON.stringify(paperStructure.mcqs.map((question) => question.maximumMarks)) === JSON.stringify(expectedMtpMcqMarks),
+    'TEST R.3: Each MTP MCQ maximum must come from the exact selected Question Paper / Marking Scheme.',
+    'Expected ' + expectedMtpMcqMarks.join(',') + ' but received ' + paperStructure.mcqs.map((question) => question.maximumMarks).join(','),
   );
 
   // Candidate selections for the regression test
