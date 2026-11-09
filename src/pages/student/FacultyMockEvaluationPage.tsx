@@ -476,6 +476,56 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700"><AlertCircle className="mr-1 inline h-4 w-4" />{error}</div>}
       {success && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700"><CheckCircle2 className="mr-1 inline h-4 w-4" />{success}</div>}
 
+      {activeEvaluationId && (
+                      <div className="mt-5 rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-4 text-white shadow-lg sm:p-5" aria-live="polite">
+                        <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <div className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-200">
+                              <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-300 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-300" /></span>
+                              Live evaluation progress
+                            </div>
+                            <h3 className="mt-2 text-base font-black text-white">Your Faculty Mock is being checked</h3>
+                            <p className="mt-1 text-[11px] leading-relaxed text-slate-300">You can stay on this page while each stage is completed. Your report opens automatically when ready.</p>
+                          </div>
+                          <div className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-right">
+                            <div className="text-xl font-black tabular-nums text-white">{Math.floor(elapsedSeconds / 60).toString().padStart(2, '0')}:{(elapsedSeconds % 60).toString().padStart(2, '0')}</div>
+                            <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Elapsed</div>
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <div className="mb-2 flex items-center justify-between gap-3 text-[10px]">
+                            <span className="font-semibold text-slate-300">{evaluationProgressMessage}</span>
+                            <span className="shrink-0 font-black tabular-nums text-indigo-200">{evaluationProgressPercentage}%</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                            <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-cyan-300 transition-all duration-700" style={{ width: evaluationProgressPercentage + '%' }} />
+                          </div>
+                        </div>
+                        <div className="mt-5 space-y-3">
+                          {FACULTY_MOCK_PROGRESS_STAGES.map((stage, index) => {
+                            const resolvedStage = evaluationProgressStage === 'NEEDS_REVIEW' ? 'COMPLETED' : evaluationProgressStage;
+                            const foundIndex = FACULTY_MOCK_PROGRESS_STAGES.findIndex((item) => item.key === resolvedStage);
+                            const currentIndex = foundIndex < 0 ? 0 : foundIndex;
+                            const complete = currentIndex > index || (stage.key === 'COMPLETED' && ['COMPLETED', 'NEEDS_REVIEW'].includes(evaluationProgressStage));
+                            const current = currentIndex === index && !complete;
+                            return (
+                              <div key={stage.key} className="flex items-start gap-3">
+                                <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+                                  {complete ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : current ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-transparent" /> : <span className="h-3 w-3 rounded-full border border-slate-600" />}
+                                </div>
+                                <div className="min-w-0">
+                                  <div className={complete ? 'text-[11px] font-semibold text-emerald-200' : current ? 'text-[11px] font-black text-indigo-200' : 'text-[11px] font-medium text-slate-500'}>{stage.label}</div>
+                                  <p className={current ? 'mt-0.5 text-[10px] leading-relaxed text-slate-300' : 'mt-0.5 text-[10px] leading-relaxed text-slate-500'}>{stage.description}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {elapsedSeconds > 180 && <p className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-[10px] leading-relaxed text-amber-100">This answer sheet is taking longer than usual. Your evaluation remains saved and the status will keep updating.</p>}
+                        <div className="mt-4 border-t border-white/10 pt-3 text-[10px] text-slate-400">Your evaluation continues securely in the background if you move to another page. It will remain available in My Evaluations.</div>
+                      </div>
+                    )}
+
       {loading ? (
         <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-10 text-sm text-slate-500"><RefreshCw className="h-4 w-4 animate-spin" />Loading available faculty mocks…</div>
       ) : !faculties.length ? (
@@ -603,55 +653,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                 </button>
               </div>
 
-              {activeEvaluationId && (
-                <div className="mt-5 rounded-2xl border border-indigo-400/20 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-4 text-white shadow-lg sm:p-5" aria-live="polite">
-                  <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <div className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-indigo-200">
-                        <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-300 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-300" /></span>
-                        Live evaluation progress
-                      </div>
-                      <h3 className="mt-2 text-base font-black text-white">Your Faculty Mock is being checked</h3>
-                      <p className="mt-1 text-[11px] leading-relaxed text-slate-300">You can stay on this page while each stage is completed. Your report opens automatically when ready.</p>
-                    </div>
-                    <div className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-right">
-                      <div className="text-xl font-black tabular-nums text-white">{Math.floor(elapsedSeconds / 60).toString().padStart(2, '0')}:{(elapsedSeconds % 60).toString().padStart(2, '0')}</div>
-                      <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Elapsed</div>
-                    </div>
-                  </div>
-                  <div className="mt-4">
-                    <div className="mb-2 flex items-center justify-between gap-3 text-[10px]">
-                      <span className="font-semibold text-slate-300">{evaluationProgressMessage}</span>
-                      <span className="shrink-0 font-black tabular-nums text-indigo-200">{evaluationProgressPercentage}%</span>
-                    </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                      <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-cyan-300 transition-all duration-700" style={{ width: evaluationProgressPercentage + '%' }} />
-                    </div>
-                  </div>
-                  <div className="mt-5 space-y-3">
-                    {FACULTY_MOCK_PROGRESS_STAGES.map((stage, index) => {
-                      const resolvedStage = evaluationProgressStage === 'NEEDS_REVIEW' ? 'COMPLETED' : evaluationProgressStage;
-                      const foundIndex = FACULTY_MOCK_PROGRESS_STAGES.findIndex((item) => item.key === resolvedStage);
-                      const currentIndex = foundIndex < 0 ? 0 : foundIndex;
-                      const complete = currentIndex > index || (stage.key === 'COMPLETED' && ['COMPLETED', 'NEEDS_REVIEW'].includes(evaluationProgressStage));
-                      const current = currentIndex === index && !complete;
-                      return (
-                        <div key={stage.key} className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-                            {complete ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : current ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-transparent" /> : <span className="h-3 w-3 rounded-full border border-slate-600" />}
-                          </div>
-                          <div className="min-w-0">
-                            <div className={complete ? 'text-[11px] font-semibold text-emerald-200' : current ? 'text-[11px] font-black text-indigo-200' : 'text-[11px] font-medium text-slate-500'}>{stage.label}</div>
-                            <p className={current ? 'mt-0.5 text-[10px] leading-relaxed text-slate-300' : 'mt-0.5 text-[10px] leading-relaxed text-slate-500'}>{stage.description}</p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {elapsedSeconds > 180 && <p className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-[10px] leading-relaxed text-amber-100">This answer sheet is taking longer than usual. Your evaluation remains saved and the status will keep updating.</p>}
-                  <div className="mt-4 border-t border-white/10 pt-3 text-[10px] text-slate-400">Your evaluation continues securely in the background if you move to another page. It will remain available in My Evaluations.</div>
-                </div>
-              )}
+
             </section>
           )}
         </>
