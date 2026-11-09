@@ -339,8 +339,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     setSubmitting(true);
     setError('');
     setSuccess('');
+    let submissionEvaluationId: string | null = null;
     try {
       const evaluationId = `eval_faculty_mock_${Math.random().toString(36).slice(2, 9)}_${Date.now()}`;
+      submissionEvaluationId = evaluationId;
       const response = await apiRequest<{
         success: boolean; evaluationId: string; displayId?: string; status?: string;
         progressStage?: string; progressPercentage?: number; message?: string; result?: unknown;
@@ -392,7 +394,34 @@ export const FacultyMockEvaluationPage: React.FC = () => {
           : `Your free copy has already been used. Pay ₹${selectedTest.unlock_price_inr || 35} to evaluate this mock again.`);
         await startRepeatCopyPayment();
       } else {
-        setError(err instanceof Error ? err.message : 'Faculty mock submission failed.');
+        // A network timeout may happen after the server has already accepted the job.
+        // Verify before asking the student to submit again, preventing duplicate copies.
+        let recovered = false;
+        if (submissionEvaluationId) {
+          try {
+            const verify = await apiRequest<{ evaluation?: {
+              id: string; status: string; progress_stage?: string;
+              progress_percentage?: number; progress_message?: string;
+            } }>(`/api/student/evaluations/${encodeURIComponent(submissionEvaluationId)}`);
+            const evaluation = verify.evaluation;
+            const status = String(evaluation?.status || '').toUpperCase();
+            if (evaluation && !['FAILED', 'REJECTED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(status)) {
+              const startedAt = Date.now();
+              if (activeEvaluationStorageKey) localStorage.setItem(activeEvaluationStorageKey, submissionEvaluationId);
+              if (activeEvaluationStartStorageKey) localStorage.setItem(activeEvaluationStartStorageKey, String(startedAt));
+              setEvaluationStartedAt(startedAt);
+              setEvaluationProgressStage(evaluation.progress_stage || 'QUEUED');
+              setEvaluationProgressPercentage(Number(evaluation.progress_percentage ?? 5));
+              setEvaluationProgressMessage(evaluation.progress_message || 'Submission accepted. Reconnecting to live progress…');
+              setActiveEvaluationId(submissionEvaluationId);
+              setSuccess('The server accepted your answer sheet. Live evaluation tracking has been restored.');
+              recovered = true;
+            }
+          } catch {
+            // Keep the original submission error when the job cannot be verified.
+          }
+        }
+        if (!recovered) setError(err instanceof Error ? err.message : 'Faculty mock submission failed.');
       }
     } finally {
       setSubmitting(false);
@@ -462,22 +491,22 @@ export const FacultyMockEvaluationPage: React.FC = () => {
             <div className="mb-4 flex items-center justify-between gap-3"><div><p className="text-[9px] font-black uppercase tracking-[0.16em] text-indigo-500 dark:text-indigo-300">Your practice workspace</p><h2 className="mt-1 text-sm font-bold">Select your mock test</h2></div><span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 dark:bg-blue-400/10 dark:text-blue-200">{courseLevel}</span></div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Faculty
-                <select value={facultyId} onChange={(e) => { setFacultyId(e.target.value); setTestId(''); }} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={facultyId} onChange={(e) => { setFacultyId(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
                   {faculties.map((faculty) => <option key={faculty.id} value={faculty.id}>{faculty.name}</option>)}
                 </select>
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Exam Attempt
-                <select value={attempt} onChange={(e) => { setAttempt(e.target.value); setTestId(''); }} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={attempt} onChange={(e) => { setAttempt(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
                   {availableAttempts.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Subject
-                <select value={subjectKey} onChange={(e) => { setSubjectKey(e.target.value); setTestId(''); }} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={subjectKey} onChange={(e) => { setSubjectKey(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
                   {subjects.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
                 </select>
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mock Number
-                <select value={testId} onChange={(e) => setTestId(e.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={testId} onChange={(e) => setTestId(e.target.value)} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
                   {subjectTests.map((item) => <option key={item.id} value={item.id}>Mock {String(item.mock_number).padStart(2, '0')} — {item.title} ({String(item.access_type || 'FREE').toUpperCase() === 'PAID' ? `Unlock ₹${item.unlock_price_inr || 35}` : 'Free first copy'})</option>)}
                 </select>
               </label>
