@@ -816,14 +816,14 @@ Section B - Division B: Descriptive Questions
     ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 9} - 2 Marks`),
     'MCQ 16 - 1 Mark',
     'SECTION D - DESCRIPTIVE QUESTIONS',
-  ].join('\\n');
+  ].join('\n');
   const selectedMarkingScheme = [
     'Selected MTP Question-wise MCQ Marking Scheme',
     ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 1} - 2 Marks`),
     'MCQ 8 - 1 Mark',
     ...Array.from({ length: 7 }, (_, index) => `MCQ ${index + 9} - 2 Marks`),
     'MCQ 16 - 1 Mark',
-  ].join('\\n');
+  ].join('\n');
 
   const paperStructure = getAuthoritativePaperStructure({
     subjectName: 'Taxation',
