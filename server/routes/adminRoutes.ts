@@ -765,14 +765,14 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         throw new Error(`${label} TXT must be ${Math.floor(maxBytes / (1024 * 1024))} MB or smaller.`);
       }
       const buffer = Buffer.from(rawBase64, 'base64');
-      const filename = String(file.name || `${label.replace(/\\s+/g, '_')}.txt`).slice(0, 180);
+      const filename = String(file.name || `${label.replace(/\s+/g, '_')}.txt`).slice(0, 180);
       const mime = String(file.type || 'text/plain').toLowerCase();
       if (!filename.toLowerCase().endsWith('.txt') ||
           !['text/plain', 'application/octet-stream'].includes(mime) ||
           !buffer.length || buffer.length > maxBytes || buffer.includes(0)) {
         throw new Error(`${label} must be a valid UTF-8 plain .txt file within the allowed size limit.`);
       }
-      const text = buffer.toString('utf8').replace(/^\\uFEFF/, '').trim();
+      const text = buffer.toString('utf8').replace(/^\uFEFF/, '').trim();
       return { buffer, mime: 'text/plain', filename, text };
     };
 
