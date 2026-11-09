@@ -316,6 +316,28 @@ export function buildChunkReferenceSourceInstructions(
   };
 }
 
+/**
+ * PYQ checked copies and Faculty Mock answer sheets may already contain
+ * examiner/faculty marks or annotations. They are evidence notes only, never
+ * an input score. Apply the same independent scoring rule to both sources.
+ */
+export function buildCheckedCopyScoreIndependenceInstruction(materialType: unknown): string {
+  const normalized = String(materialType || '').trim().toUpperCase();
+  if (normalized !== 'PYQ' && normalized !== 'FACULTY_MOCK_TEST') return '';
+
+  const examinerLabel = normalized === 'PYQ' ? 'ICAI examiner' : 'faculty/examiner';
+  const sourceLabel = normalized === 'PYQ' ? 'selected official PYQ' : 'selected Faculty Mock';
+
+  return `
+CHECKED-COPY SCORE INDEPENDENCE:
+- The uploaded answer sheet may contain ${examinerLabel} ticks, comments, red-ink annotations, per-question marks, a total score, or a previous evaluation.
+- Treat every such score and annotation as non-binding evidence only. Never copy it, use it as the AI score, or lock any question/component to zero because of it.
+- Independently assess the student's actual answer content against the exact ${sourceLabel} Question Paper, Suggested Answer and Marking Scheme supplied for this evaluation.
+- Award independently creditworthy steps according to the selected checking mode. Standard, Strict and Moderate modes may legitimately produce different marks from previous examiner annotations.
+- A zero may be awarded only under the normal academic zero-mark safety rules (or the applicable objective MCQ rule), never merely because an earlier examiner wrote zero.
+`;
+}
+
 export async function evaluateQuestionChunk(
   ctx: ChunkEvaluationContext
 ): Promise<QuestionEvaluation> {
@@ -383,16 +405,9 @@ export async function evaluateQuestionChunk(
     ? `\nSUPERVISOR CORRECTION REQUEST (attempt ${ctx.supervisorCorrectionAttempt || 1}):\nThe previous evaluation was flagged for the following specific reason(s):\n${ctx.supervisorIssues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\nRe-open and independently reassess the original student answer on the supplied page(s) against the locked Question Paper, Suggested Answer, and Marking Scheme. Correct only issues supported by the actual answer and authoritative references. Do not blindly comply with a flag if the evidence does not support it; explain the conflict and return status \"unclear\" when the evidence or mapping is insufficient. Keep the authoritative question identity and maximum marks unchanged. Re-evaluate component marks and reasons, not merely the total.\n`
     : '';
 
-  const isPyqCheckedCopyFlow = String(ctx.referenceMetadata?.materialType || snippets.referenceTrace.materialType || '').trim().toUpperCase() === 'PYQ';
-  const pyqCheckedCopyInstruction = isPyqCheckedCopyFlow ? `
-
-PYQ CHECKED-COPY SCORE INDEPENDENCE (PYQ ONLY):
-- The uploaded PYQ answer sheet may contain ICAI examiner ticks, comments, red-ink annotations, per-question marks or a total score.
-- Treat every examiner-awarded score, including a written 0, as a non-binding annotation. Never copy it, use it as the AI score, or lock any question/component to zero because of it.
-- Independently assess only the student's answer content against the selected Question Paper, Suggested Answer and Marking Scheme.
-- Award independently creditworthy steps according to the selected checking mode. Standard, Strict and Moderate modes may legitimately produce different marks from the original examiner.
-- A zero may be awarded only under the normal academic zero-mark safety rules (or the applicable objective MCQ rule), never merely because the original examiner wrote zero.
-` : '';
+  const checkedCopyScoreIndependenceInstruction = buildCheckedCopyScoreIndependenceInstruction(
+    ctx.referenceMetadata?.materialType || snippets.referenceTrace.materialType,
+  );
 
   const prompt = `
 MANDATORY EVALUATOR INSTRUCTION:
@@ -453,7 +468,7 @@ Never produce an invalid negative score.
 Never silently fabricate certainty."
 
 ${correctionDirective}
-${pyqCheckedCopyInstruction}
+${checkedCopyScoreIndependenceInstruction}
 TARGET EVALUATION DETAILS:
 Question: ${fullCode} (Question ${qNum}${subQ ? `, Sub-part (${subQ})` : ''})
 Subject: ${subjectName} (${level})
