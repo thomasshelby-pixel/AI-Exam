@@ -155,7 +155,11 @@ function parseQuestionPartPath(source: string, allowBareToken = false): string[]
 }
 
 function buildCanonicalQuestionCode(questionNumber: string, parts: string[]): string {
-  return 'Q' + questionNumber + parts.map((part) => '(' + part + ')').join('');
+  if (!parts.length) return 'Q' + questionNumber;
+  // Preserve the established CA nested style (Q6(a(1))) while normalizing
+  // equivalent repeated-group and dotted inputs into the same complete path.
+  return 'Q' + questionNumber + '(' + parts[0] +
+    parts.slice(1).map((part) => '(' + part + ')').join('') + ')';
 }
 
 /**
@@ -256,8 +260,18 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
   const qMatch = trimmed.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(.*)$/i);
   if (qMatch) {
     const qNum = qMatch[1];
-    const rest = (qMatch[2] || '').trim();
-    const parts = parseQuestionPartPath(rest);
+    let rest = (qMatch[2] || '').trim();
+    // Legacy answer-sheet labels sometimes append non-scoring markers such as
+    // "_duplicate" or "(cont)". These are metadata, not another scoreable leaf.
+    rest = rest.replace(/(?:[_-](?:duplicate|dup))$/i, '');
+    let parsedParts = parseQuestionPartPath(rest);
+    parsedParts = parsedParts.filter((part, index) =>
+      index === 0 || part.toLowerCase() !== parsedParts[index - 1].toLowerCase()
+    );
+    if (parsedParts.length > 1 && /^(?:cont|contd|continued|continuation)$/i.test(parsedParts[parsedParts.length - 1])) {
+      parsedParts = parsedParts.slice(0, -1);
+    }
+    const parts = parsedParts;
     const canonicalId = buildCanonicalQuestionCode(qNum, parts);
     const parentQuestionId = buildCanonicalQuestionCode(qNum, parts.slice(0, -1));
     const subQuestion = parts.length
