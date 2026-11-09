@@ -823,6 +823,8 @@ export function buildStudentAttemptManifest(options: {
     hasReplacement?: boolean;
     selectedOption?: string;
     isPartial?: boolean;
+    mcqSelectionNeedsReview?: boolean;
+    mappingReviewReason?: string;
   }>;
   mcqSelections?: Record<string, string>;
 }): StudentAttemptManifest {
