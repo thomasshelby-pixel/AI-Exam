@@ -45,8 +45,12 @@ export function getStudentFacingReviewReason(evidence: unknown): string {
       : 'One or more handwritten answer sections could not be matched to the selected paper. Your uploaded answer sheet is preserved for review, and no re-upload is required.');
   }
 
+  if (/MODEL_UNCERTAIN/.test(diagnostic)) {
+    return withReviewSla('The uploaded answer is readable, but the automated examiner could not confidently settle one or more question-level assessments after its second check. The marks already evaluated have been preserved; only the unresolved question(s) need a further academic check.');
+  }
+
   if (
-    /HANDWRITING_UNCLEAR|MODEL_UNCERTAIN|ILLEGIBLE|UNREADABLE|BLURRY|POOR SCAN|CANNOT DECIPHER/.test(diagnostic)
+    /HANDWRITING_UNCLEAR|ILLEGIBLE|UNREADABLE|BLURRY|POOR SCAN|CANNOT DECIPHER/.test(diagnostic)
   ) {
     return withReviewSla('At least one answer or page could not be read confidently. The marks already evaluated have been preserved; the unclear section will be checked before the final result is issued.');
   }
