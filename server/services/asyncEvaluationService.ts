@@ -34,6 +34,7 @@ import {
   enforceEvaluationEvidencePackageMtpGate,
   detectMtpSeriesFromText,
   normalizeAndSplitCombinedPyq,
+  resolveOfficialPaperMaximumMarks,
 } from './materialHardGateService.js';
 
 export interface EvaluationJobData {
@@ -688,20 +689,59 @@ async function assertExactEvaluationSourceBinding(job: EvaluationJobData): Promi
       mock = db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(mockId) as any;
     }
 
-    if (!mock ||
-        !same(mock.course_level, job.level) ||
-        !same(mock.subject_key, job.subjectKey) ||
-        !same(mock.subject_name, job.subjectName) ||
-        !same(mock.paper || 'Paper 1', job.paper || 'Paper 1') ||
-        !same(mock.attempt, job.attempt) ||
-        !sameText(mock.question_paper_text, job.referenceQuestionPaperText) ||
-        !sameText(mock.suggested_answers_text, job.referenceSuggestedAnswersText) ||
-        !sameText(mock.marking_scheme_text, job.markingSchemeText) ||
-        !same(String(mock.question_paper_reference_file_id || mock.suggested_answer_file_id || ''), String(job.questionMaterialId || '')) ||
-        !same(String(mock.suggested_answer_file_id || ''), String(job.suggestedAnswerMaterialId || '')) ||
-        !same(String(mock.marking_scheme_file_id || mock.suggested_answer_file_id || ''), String(job.markingSchemeMaterialId || '')) ||
-        Number(mock.maximum_marks || 100) !== Number(job.officialPaperMaxMarks || 100)) {
-      throw new Error('FACULTY_MOCK_SOURCE_BINDING_FAILED: The selected Faculty Mock QP, private TXT content, source file IDs or maximum marks changed or belong to another mock.');
+    // Recreate the same preloaded material adapter used by studentRoutes before
+    // resolving component IDs. This intentionally preserves synthetic legacy IDs
+    // when a published mock predates separate component-file metadata.
+    const expectedMockSourceIds = mock
+      ? resolveMaterialComponentSourceIds({
+          id: mock.id || mockId,
+          source_format: 'SEPARATE',
+          file_id: mock.suggested_answer_file_id,
+          question_material_id: mock.question_paper_reference_file_id || mock.suggested_answer_file_id,
+          suggested_answer_material_id: mock.suggested_answer_file_id,
+          marking_scheme_material_id: mock.marking_scheme_file_id || mock.suggested_answer_file_id,
+        }, mock.marking_scheme_text)
+      : null;
+    const expectedMaximumMarks = mock
+      ? resolveOfficialPaperMaximumMarks(Number(mock.maximum_marks || 100), mock.question_paper_text)
+      : null;
+
+    const sourceIdsMatch = Boolean(
+      expectedMockSourceIds &&
+      String(expectedMockSourceIds.questionMaterialId || '').trim() === String(job.questionMaterialId || '').trim() &&
+      String(expectedMockSourceIds.suggestedAnswerMaterialId || '').trim() === String(job.suggestedAnswerMaterialId || '').trim() &&
+      String(expectedMockSourceIds.markingSchemeMaterialId || '').trim() === String(job.markingSchemeMaterialId || '').trim()
+    );
+
+    const sourceMismatchFields: string[] = [];
+    if (!mock) {
+      sourceMismatchFields.push('mock_record_missing');
+    } else {
+      if (!same(mock.course_level, job.level)) sourceMismatchFields.push('course_level');
+      if (!same(mock.subject_key, job.subjectKey)) sourceMismatchFields.push('subject_key');
+      if (!same(mock.subject_name, job.subjectName)) sourceMismatchFields.push('subject_name');
+      if (!same(mock.paper || 'Paper 1', job.paper || 'Paper 1')) sourceMismatchFields.push('paper');
+      if (!same(mock.attempt, job.attempt)) sourceMismatchFields.push('attempt');
+      if (!sameText(mock.question_paper_text, job.referenceQuestionPaperText)) sourceMismatchFields.push('question_paper_text');
+      if (!sameText(mock.suggested_answers_text, job.referenceSuggestedAnswersText)) sourceMismatchFields.push('suggested_answers_text');
+      if (!sameText(mock.marking_scheme_text, job.markingSchemeText)) sourceMismatchFields.push('marking_scheme_text');
+      if (!sourceIdsMatch) sourceMismatchFields.push('source_file_ids');
+      if (expectedMaximumMarks !== Number(job.officialPaperMaxMarks || 100)) sourceMismatchFields.push('maximum_marks');
+    }
+
+    if (sourceMismatchFields.length > 0) {
+      console.error('[AsyncEval] Faculty Mock source binding mismatch:', {
+        evaluationId,
+        mockId,
+        mismatchFields: sourceMismatchFields,
+        expectedMaximumMarks,
+        submittedMaximumMarks: Number(job.officialPaperMaxMarks || 100),
+      });
+      throw new Error(
+        'FACULTY_MOCK_SOURCE_BINDING_FAILED: The selected Faculty Mock source snapshot did not match the published mock (' +
+        sourceMismatchFields.join(', ') +
+        ').'
+      );
     }
   }
 }
