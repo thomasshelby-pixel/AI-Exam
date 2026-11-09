@@ -1141,9 +1141,15 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     const testId = String(req.params.id || '').trim();
     if (!testId) return res.status(400).json({ error: 'Faculty mock test ID is required.' });
     let existing: any = null;
-    try { existing = await getFirestoreDoc<any>('faculty_mock_tests', testId, { failOnError: true }); }
-    catch (readError) { console.warn('[FacultyMocks] Shared mock lookup unavailable during edit; using local cache:', readError); }
-    existing ||= db.prepare('SELECT * FROM faculty_mock_tests WHERE id = ?').get(testId) as any;
+    try {
+      existing = await getFirestoreDoc<any>('faculty_mock_tests', testId, { failOnError: true });
+    } catch (readError) {
+      console.error('[FacultyMocks] Shared mock lookup unavailable during edit:', readError);
+      return res.status(503).json({
+        error: 'The shared mock record could not be verified. Retry the edit when the shared database is available.',
+        code: 'FACULTY_MOCK_LOOKUP_UNAVAILABLE',
+      });
+    }
     if (!existing) return res.status(404).json({ error: 'Faculty mock test not found.' });
     const inFlight = db.prepare(`SELECT id FROM evaluations WHERE faculty_mock_test_id = ? AND UPPER(COALESCE(status, '')) IN ('PROCESSING', 'QUEUED', 'PENDING') LIMIT 1`).get(testId) as any;
     if (inFlight) return res.status(409).json({ error: 'This mock has an evaluation in progress. Wait for it to finish before editing the mock.', code: 'FACULTY_MOCK_EVALUATION_IN_PROGRESS' });
@@ -1174,22 +1180,58 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
     if (!Number.isFinite(maximumMarks) || maximumMarks <= 0 || maximumMarks > 500) return res.status(400).json({ error: 'Maximum marks must be a number between 1 and 500.' });
     if (!['FREE', 'PAID'].includes(accessType)) return res.status(400).json({ error: 'Student access must be Free or Unlock by Paying.' });
     const previousAccessType = String(existing.access_type || 'FREE').trim().toUpperCase() === 'PAID' ? 'PAID' : 'FREE';
-    if (accessType !== previousAccessType) {
-      const activity = db.prepare(`SELECT
-        EXISTS(SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ?) AS has_evaluations,
-        EXISTS(SELECT 1 FROM faculty_mock_free_uses WHERE faculty_mock_test_id = ?) AS has_free_claims,
-        EXISTS(SELECT 1 FROM faculty_mock_copy_purchases WHERE faculty_mock_test_id = ?) AS has_paid_copies,
-        EXISTS(SELECT 1 FROM payment_orders WHERE faculty_mock_test_id = ?) AS has_payment_orders`).get(testId, testId, testId, testId) as any;
-      if (sharedEvaluations.length > 0 || activity?.has_evaluations || activity?.has_free_claims || activity?.has_paid_copies || activity?.has_payment_orders) {
-        return res.status(409).json({ error: 'Free/Paid access cannot be changed after a student evaluation, free-copy claim or payment order exists. This protects previously issued student entitlements.', code: 'FACULTY_MOCK_ACCESS_TYPE_LOCKED' });
+    const scoringInputsRequested = Number(existing.maximum_marks || 100) !== maximumMarks ||
+      Boolean(body.questionPaperFile || body.questionPaperReferenceFile || body.suggestedAnswersFile || body.markingSchemeFile);
+    const accessTypeChanged = accessType !== previousAccessType;
+    let sharedFreeLedgers: any[] = [];
+    let sharedPaidLedgers: any[] = [];
+    if (accessTypeChanged || scoringInputsRequested) {
+      try {
+        [sharedFreeLedgers, sharedPaidLedgers] = await Promise.all([
+          getAllFirestoreDocs<any>('faculty_mock_free_uses', { failOnError: true }),
+          getAllFirestoreDocs<any>('faculty_mock_paid_copy_ledgers', { failOnError: true }),
+        ]);
+      } catch (ledgerError) {
+        console.error('[FacultyMocks] Could not verify shared entitlements:', ledgerError);
+        return res.status(503).json({
+          error: 'Student entitlement history could not be verified. Retry after the shared database is available.',
+          code: 'FACULTY_MOCK_ENTITLEMENT_LOOKUP_UNAVAILABLE',
+        });
       }
-      let freeLedgers: any[] = [];
-      let paidLedgers: any[] = [];
-      try { [freeLedgers, paidLedgers] = await Promise.all([getAllFirestoreDocs<any>('faculty_mock_free_uses', { failOnError: true }), getAllFirestoreDocs<any>('faculty_mock_paid_copy_ledgers', { failOnError: true })]); }
-      catch (ledgerError) { console.error('[FacultyMocks] Could not verify shared entitlements:', ledgerError); return res.status(503).json({ error: 'Student entitlement history could not be verified. Retry after the shared database is available.', code: 'FACULTY_MOCK_ENTITLEMENT_LOOKUP_UNAVAILABLE' }); }
-      const hasFree = freeLedgers.some((x: any) => String(x.facultyMockTestId || x.faculty_mock_test_id || '') === testId);
-      const hasPaid = paidLedgers.some((x: any) => String(x.facultyMockTestId || x.faculty_mock_test_id || '') === testId && Object.values(x.copies || {}).some((c: any) => ['AVAILABLE', 'CONSUMED', 'PENDING'].includes(String(c?.status || '').toUpperCase())));
-      if (hasFree || hasPaid) return res.status(409).json({ error: 'Free/Paid access cannot be changed after a student entitlement has been issued. Create a separate mock for a different access model.', code: 'FACULTY_MOCK_ACCESS_TYPE_LOCKED' });
+    }
+    const hasSharedFreeClaim = sharedFreeLedgers.some((entry: any) =>
+      String(entry.facultyMockTestId || entry.faculty_mock_test_id || '') === testId
+    );
+    const hasSharedPaidCopy = sharedPaidLedgers.some((entry: any) =>
+      String(entry.facultyMockTestId || entry.faculty_mock_test_id || '') === testId &&
+      Object.values(entry.copies || {}).some((copy: any) =>
+        ['AVAILABLE', 'CONSUMED', 'PENDING'].includes(String(copy?.status || '').toUpperCase())
+      )
+    );
+    const localActivity = db.prepare(`SELECT
+      EXISTS(SELECT 1 FROM faculty_mock_free_uses WHERE faculty_mock_test_id = ?) AS has_free_claims,
+      EXISTS(SELECT 1 FROM faculty_mock_copy_purchases WHERE faculty_mock_test_id = ?) AS has_paid_copies,
+      EXISTS(SELECT 1 FROM payment_orders WHERE faculty_mock_test_id = ?) AS has_payment_orders`).get(testId, testId, testId) as any;
+    const hasIssuedStudentEntitlement = Boolean(
+      localActivity?.has_free_claims || localActivity?.has_paid_copies || localActivity?.has_payment_orders ||
+      hasSharedFreeClaim || hasSharedPaidCopy
+    );
+
+    if (accessTypeChanged && (sharedEvaluations.length > 0 || localActivity?.has_free_claims ||
+        localActivity?.has_paid_copies || localActivity?.has_payment_orders ||
+        hasSharedFreeClaim || hasSharedPaidCopy)) {
+      return res.status(409).json({
+        error: 'Free/Paid access cannot be changed after a student evaluation, free-copy claim, paid-copy entitlement or payment order exists. This protects previously issued student entitlements.',
+        code: 'FACULTY_MOCK_ACCESS_TYPE_LOCKED',
+      });
+    }
+    if (scoringInputsRequested && (sharedEvaluations.length > 0 ||
+        db.prepare('SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ? LIMIT 1').get(testId) ||
+        hasIssuedStudentEntitlement)) {
+      return res.status(409).json({
+        error: 'Maximum marks and source files cannot be changed after a student evaluation or student copy entitlement has been issued. This protects the paper and marking reference already associated with student copies. Publish a new mock for corrected scoring inputs.',
+        code: 'FACULTY_MOCK_SCORING_SOURCES_LOCKED',
+      });
     }
     let pdf: { buffer: Buffer; mime: string; filename: string } | null = null;
     const pdfInput = body.questionPaperFile;
@@ -1223,12 +1265,6 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
       Boolean(db.prepare('SELECT 1 FROM evaluations WHERE faculty_mock_test_id = ? LIMIT 1').get(testId));
     const scoringInputsChanged = Number(existing.maximum_marks || 100) !== maximumMarks ||
       Boolean(pdf || qpText || answersText || markingText);
-    if (hasHistoricalEvaluations && scoringInputsChanged) {
-      return res.status(409).json({
-        error: 'This mock already has student evaluation history. Its maximum marks and scoring source files are locked to protect previous reports and future rechecks. You can still edit the title, or publish a new mock for the corrected paper and marking scheme.',
-        code: 'FACULTY_MOCK_SCORING_SOURCES_LOCKED',
-      });
-    }
     let parsedReference;
     try { parsedReference = validateFacultyMockReferenceSections({ questionPaperText: qpText?.text ?? String(existing.question_paper_text || ''), suggestedAnswersText: answersText?.text ?? String(existing.suggested_answers_text || ''), markingSchemeText: markingText?.text ?? String(existing.marking_scheme_text || '') }); }
     catch (referenceError) { return res.status(422).json({ error: referenceError instanceof Error ? referenceError.message : 'The mock reference TXT package is invalid.', code: 'FACULTY_MOCK_REFERENCE_TXT_INVALID' }); }
