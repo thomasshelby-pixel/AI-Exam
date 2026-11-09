@@ -1110,6 +1110,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       facultyMockTestId,
       facultyMockPaymentOrderId,
     } = req.body;
+    const requestedCheckingMode = String(checkingMode || 'standard').trim().toLowerCase();
+    const selectedCheckingMode: CheckingMode =
+      requestedCheckingMode === 'strict' || requestedCheckingMode === 'lenient'
+        ? requestedCheckingMode
+        : 'standard';
     let resolvedFacultyMockPaymentOrderId = String(facultyMockPaymentOrderId || '').trim();
 
     // Reject unsupported CS / CMA evaluation attempts safely
@@ -1685,7 +1690,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       referenceMaterial.id,
       referenceMaterial.version || '1.0',
       modelUsed,
-      checkingMode || 'standard',
+      selectedCheckingMode,
       filename || 'ca_answer_sheet.pdf',
       entitlementSource
     );
@@ -1900,7 +1905,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       paper: referenceMaterial.paper || 'Paper 1',
       attempt: evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
       syllabusVersion: referenceMaterial.syllabus_version || 'ALL',
-      checkingMode: (checkingMode as CheckingMode) || 'standard',
+      checkingMode: selectedCheckingMode,
       fileBase64,
       mimeType: mimeType || 'application/pdf',
       filename: filename || 'ca_answer_sheet.pdf',
@@ -1943,7 +1948,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         materialType: String(materialType || (materialSource === 'INSTITUTE' ? 'MOCK_EXAM' : 'MTP')),
         paper: String(referenceMaterial.paper || 'Paper 1'),
         attempt: String(evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026')),
-        checkingMode: String(checkingMode || 'standard'),
+        checkingMode: selectedCheckingMode,
       });
     } catch (parakhError) {
       console.warn('[PARAKH] Observation record failed; evaluation continues without interruption:', parakhError);
@@ -2085,14 +2090,17 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
                ELSE e.progress_message
              END AS progress_message,
              e.created_at, e.completed_at,
-             e.evaluation_source, e.material_source, e.sponsoring_institute_id,
+             e.evaluation_source, e.material_source, e.faculty_mock_test_id, e.sponsoring_institute_id,
              e.entitlement_source, e.consumed_from_institute_allocation, e.consumed_from_personal_credits,
              e.institute_id, e.batch_id,
-             i.name as institute_name, si.name as sponsoring_institute_name, b.name as batch_name
+             i.name as institute_name, si.name as sponsoring_institute_name, b.name as batch_name,
+             fmt.title AS faculty_mock_title, fmf.name AS faculty_name
       FROM evaluations e
       LEFT JOIN institutes i ON i.id = e.institute_id
       LEFT JOIN institutes si ON si.id = e.sponsoring_institute_id
       LEFT JOIN batches b ON b.id = e.batch_id
+      LEFT JOIN faculty_mock_tests fmt ON fmt.id = e.faculty_mock_test_id
+      LEFT JOIN faculty_mock_faculties fmf ON fmf.id = fmt.faculty_id
       LEFT JOIN users u ON u.id = e.student_id
       WHERE ${buildStudentOwnershipSql('e', 'u')}`;
     const params: any[] = getStudentOwnershipParams(studentId, studentEmail);

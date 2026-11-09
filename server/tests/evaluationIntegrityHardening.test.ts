@@ -747,6 +747,134 @@ console.log('\n--- REAL RUNTIME REGRESSIONS: FOUNDATION, INTERMEDIATE, FINAL ---
   assert(processedResult.integrityAudit?.mathConsistent === true, 'TEST RT.9: Mathematical integrity consistency verified');
 }
 
+// --------------------------------------------------------------------------
+// TEST RT.10: Faculty Mock independent sub-part formats stay split.
+// --------------------------------------------------------------------------
+console.log('\n--- TEST RT.10: Faculty Mock Sub-Part Parsing ---');
+{
+  const facultyMockPaper = `
+  FACULTY MOCK — ADVANCED ACCOUNTING
+  QUESTION NO. 1 — 20 MARKS
+  Part (a): Calculate the value of goodwill and show workings — 12 marks
+  Part (b): Explain the accounting treatment — [8 Marks]
+
+  QUESTION 2 — 10 MARKS
+  a) Prepare the journal entries — (6 Marks)
+  b) State the disclosure requirements — Marks: 4
+  `;
+
+  const parsed = extractSubQuestionsFromText(facultyMockPaper);
+  const parsedCodes = parsed.map((question) => question.fullQuestionCode);
+  assert(parsedCodes.includes('Q1(a)'), `TEST RT.10.1: Q1(a) is extracted independently (got ${parsedCodes.join(', ')} )`);
+  assert(parsedCodes.includes('Q1(b)'), `TEST RT.10.2: Q1(b) is extracted independently (got ${parsedCodes.join(', ')} )`);
+  assert(parsedCodes.includes('Q2(a)'), `TEST RT.10.3: Q2(a) is extracted from "a)" format (got ${parsedCodes.join(', ')} )`);
+  assert(parsedCodes.includes('Q2(b)'), `TEST RT.10.4: Q2(b) is extracted from "Marks: 4" format (got ${parsedCodes.join(', ')} )`);
+  assert(!parsedCodes.includes('Q1') && !parsedCodes.includes('Q2'), 'TEST RT.10.5: Parent containers are removed when child parts exist');
+
+  const q1a = parsed.find((question) => question.fullQuestionCode === 'Q1(a)');
+  const q1b = parsed.find((question) => question.fullQuestionCode === 'Q1(b)');
+  const q2a = parsed.find((question) => question.fullQuestionCode === 'Q2(a)');
+  const q2b = parsed.find((question) => question.fullQuestionCode === 'Q2(b)');
+  assert(q1a?.maximumMarks === 12, `TEST RT.10.6: Q1(a) maximum is 12 (got ${q1a?.maximumMarks})`);
+  assert(q1b?.maximumMarks === 8, `TEST RT.10.7: Q1(b) maximum is 8 (got ${q1b?.maximumMarks})`);
+  assert(q2a?.maximumMarks === 6, `TEST RT.10.8: Q2(a) maximum is 6 (got ${q2a?.maximumMarks})`);
+  assert(q2b?.maximumMarks === 4, `TEST RT.10.9: Q2(b) maximum is 4 (got ${q2b?.maximumMarks})`);
+}
+
+// --------------------------------------------------------------------------
+// TEST RT.11: Do not generate a paper score above its official maximum.
+// --------------------------------------------------------------------------
+console.log('\n--- TEST RT.11: Attempted Maximum Paper Guard ---');
+{
+  const paperStructure: any = {
+    paperTitle: 'Faculty Mock Optional Paper',
+    totalPaperMaxMarks: 100,
+    questions: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+      { fullQuestionCode: 'Q3(a)', questionNumber: '3', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+      { fullQuestionCode: 'Q4(a)', questionNumber: '4', subQuestionNumber: 'a', maximumMarks: 30, isMcq: false },
+    ],
+    mcqs: [],
+  };
+  const coverageMap: any = {
+    attemptedQuestions: [
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', pages: [1], isMcq: false },
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', pages: [2], isMcq: false },
+      { fullQuestionCode: 'Q3(a)', questionNumber: '3', subQuestionNumber: 'a', pages: [3], isMcq: false },
+      { fullQuestionCode: 'Q4(a)', questionNumber: '4', subQuestionNumber: 'a', pages: [4], isMcq: false },
+    ],
+    unmappedPages: [],
+    unclearPages: [],
+    is100PercentCovered: true,
+  };
+  const preGate = validatePreEvaluationGate({ paperStructure, coverageMap, officialPaperMaxMarks: 100 });
+  assert(preGate.passed === false, 'TEST RT.11.1: Four attempted 30-mark answers cannot be scored as a 100-mark paper');
+  assert(
+    preGate.criticalFailures.some((failure) => failure.includes('ATTEMPTED_MAX_MARKS_EXCEED_PAPER_MAX') && failure.includes('120')),
+    'TEST RT.11.2: Exact attempted maximum and paper maximum are reported for manual review',
+  );
+}
+
+
+console.log('\n--- TEST RT.12: Faculty Mock Uses Only Its Uploaded Paper Structure ---');
+{
+  const facultyTaxStructure = getAuthoritativePaperStructure({
+    materialType: 'FACULTY_MOCK_TEST',
+    level: 'INTERMEDIATE',
+    paper: 'Paper 3',
+    subjectName: 'Income Tax and Goods and Services Tax',
+    questionPaperText: `
+      FACULTY MOCK — TAXATION
+      QUESTION 1 — 5 MARKS
+      Part (a): Compute taxable income under the given facts [3 Marks]
+      Part (b): State the applicable disclosure requirement [2 Marks]
+      MULTIPLE CHOICE QUESTIONS
+      1. Select the correct GST treatment [1 Mark]
+    `,
+    suggestedAnswersText: `
+      Suggested Answers
+      Multiple Choice Questions
+      1. (b) Correct treatment under the given facts.
+    `,
+    markingSchemeText: 'Each MCQ carries 1 mark. Q1(a) carries 3 marks and Q1(b) carries 2 marks.',
+    officialPaperMaxMarks: 100,
+  });
+
+  const facultyCodes = facultyTaxStructure.subQuestions.map((question) => question.fullQuestionCode);
+  assert(facultyCodes.includes('Q1(a)'), `TEST RT.12.1: Faculty Taxation mock retains its uploaded Q1(a) (got ${facultyCodes.join(', ')})`);
+  assert(facultyCodes.includes('Q1(b)'), `TEST RT.12.2: Faculty Taxation mock retains its uploaded Q1(b) (got ${facultyCodes.join(', ')})`);
+  assert(!facultyCodes.includes('Q5(a)'), 'TEST RT.12.3: Preconfigured Taxation Q5(a) is not injected into the Faculty Mock');
+  assert(!facultyCodes.includes('Q1(1)'), 'TEST RT.12.3a: MCQ numbering is not misread as a descriptive child part');
+  assert(facultyTaxStructure.mcqs.length === 1, `TEST RT.12.4: Only the uploaded mock MCQ is retained (got ${facultyTaxStructure.mcqs.length})`);
+  assert(facultyTaxStructure.mcqs[0]?.maximumMarks === 1, `TEST RT.12.5: Faculty Mock MCQ maximum comes from its own source (got ${facultyTaxStructure.mcqs[0]?.maximumMarks})`);
+}
+
+console.log('\n--- TEST RT.13: Unparseable Faculty Mock Must Not Receive Synthetic Questions ---');
+{
+  const facultyStructure = getAuthoritativePaperStructure({
+    materialType: 'FACULTY_MOCK_TEST',
+    level: 'INTERMEDIATE',
+    paper: 'Paper 3',
+    subjectName: 'Income Tax and GST',
+    questionPaperText: 'Faculty Mock Taxation paper. Use the instructions printed on the paper.',
+    suggestedAnswersText: 'Suggested Answers: refer to the uploaded question paper.',
+    markingSchemeText: 'Award marks as per the stated scheme.',
+    officialPaperMaxMarks: 100,
+  });
+  assert(facultyStructure.subQuestions.length === 0, `TEST RT.13.1: Unparsed Faculty Mock has no fabricated Q1-Q6 nodes (got ${facultyStructure.subQuestions.length})`);
+  const gate = validatePreEvaluationGate({
+    paperStructure: facultyStructure,
+    questionPaperText: 'Faculty Mock Taxation paper. Use the instructions printed on the paper.',
+    suggestedAnswersText: 'Suggested Answers: refer to the uploaded question paper.',
+    markingSchemeText: 'Award marks as per the stated scheme.',
+    officialPaperMaxMarks: 100,
+  });
+  assert(gate.passed === false, 'TEST RT.13.2: Unparseable Faculty Mock stops before scoring');
+  assert(gate.criticalFailures.some((failure) => failure.includes('QUESTION_PAPER_NOT_PARSED')), 'TEST RT.13.3: Unparseable source reports the exact hard-gate failure');
+}
+
 console.log('\n================================================================');
 console.log(`--- TEST RESULTS: ${passedTests} / ${totalTests} TESTS PASSED ---`);
 console.log('================================================================');

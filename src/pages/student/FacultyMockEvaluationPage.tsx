@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest, downloadAuthenticatedFile } from '../../api/client.js';
 import { DisclaimerModal } from '../../components/student/DisclaimerModal.js';
 import { Download, UploadCloud, CheckCircle2, AlertCircle, RefreshCw, GraduationCap, BookOpen, ArrowRight, ShieldCheck } from 'lucide-react';
-import { CALevel } from '../../types/index.js';
+import { CALevel, CheckingMode } from '../../types/index.js';
 import { loadRazorpayScript } from '../../utils/loadRazorpay.js';
 
 type Faculty = { id: string; name: string; description?: string | null; attempts: string[] };
@@ -43,6 +43,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   const [unlockingMock, setUnlockingMock] = useState(false);
   const [checkingDisclaimer, setCheckingDisclaimer] = useState(false);
   const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [checkingMode, setCheckingMode] = useState<CheckingMode>('standard');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -249,7 +250,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
           subjectName: selectedTest.subject_name,
           paper: selectedTest.paper,
           attempt: selectedTest.attempt,
-          checkingMode: 'standard',
+          checkingMode,
           fileBase64,
           mimeType: answerFile.type || 'application/pdf',
           filename: answerFile.name,
@@ -382,6 +383,23 @@ export const FacultyMockEvaluationPage: React.FC = () => {
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
               <h2 className="text-sm font-bold">Upload handwritten answer sheet</h2>
               <p className="mt-1 text-xs leading-relaxed text-slate-500">Write the selected paper by hand, scan all pages into one PDF (or upload JPG/PNG pages), then submit. The AI checker will use this exact mock's Suggested Answer and marking reference.</p>
+              <div className="mt-4 max-w-xl rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                <label htmlFor="faculty-mock-checking-mode" className="block text-xs font-bold text-slate-700 dark:text-slate-200">Evaluation strictness</label>
+                <select
+                  id="faculty-mock-checking-mode"
+                  value={checkingMode}
+                  onChange={(event) => setCheckingMode(event.target.value as CheckingMode)}
+                  disabled={submitting || checkingDisclaimer}
+                  className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                >
+                  <option value="standard">Standard ICAI Marking — balanced and realistic</option>
+                  <option value="strict">Strict Head Examiner — more conservative on unsupported workings</option>
+                  <option value="lenient">Moderate Guidance — recognises valid partial-step credit</option>
+                </select>
+                <p className="mt-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                  This changes the checking approach only. The faculty's uploaded answer key, marking scheme and official maximum marks remain authoritative.
+                </p>
+              </div>
               <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-7 text-center transition hover:border-blue-400 hover:bg-blue-50/50">
                 <UploadCloud className="h-7 w-7 text-blue-600" />
                 <span className="mt-2 text-sm font-bold text-slate-800">{answerFile?.name || 'Choose answer sheet PDF / image'}</span>

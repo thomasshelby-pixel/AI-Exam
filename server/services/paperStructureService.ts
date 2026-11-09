@@ -79,9 +79,11 @@ export function getAuthoritativePaperStructure(options: {
     subjectName = '',
     paper = '',
     officialPaperMaxMarks = 100,
+    materialType = '',
   } = options;
 
   const textCombined = `${markingSchemeText}\n${questionPaperText}\n${suggestedAnswersText}`.toLowerCase();
+  const isFacultyMock = String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
   const isTaxationPaper =
     subjectName.toLowerCase().includes('tax') ||
     paper.toLowerCase().includes('tax') ||
@@ -90,9 +92,14 @@ export function getAuthoritativePaperStructure(options: {
     textCombined.includes('rudra') ||
     textCombined.includes('dharani');
 
-  const structure = isTaxationPaper
-    ? buildTaxationPaperStructure(options)
-    : buildGenericPaperStructure(options);
+  // Faculty Mock references are independently authored. Never substitute a
+  // preconfigured taxation/PYQ structure; the exact selected mock's private TXT
+  // files are the only authoritative source for question identity and marks.
+  const structure = isFacultyMock
+    ? buildGenericPaperStructure(options)
+    : isTaxationPaper
+      ? buildTaxationPaperStructure(options)
+      : buildGenericPaperStructure(options);
 
   // Preserve the exact selected materials alongside the canonical IDs. The
   // page mapper needs real QP wording and SA anchors to identify answers in
@@ -466,95 +473,87 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   if (!text || typeof text !== 'string') return subQuestions;
 
   const seen = new Set<string>();
+  const addQuestion = (questionNumber: string, subQuestion: string | undefined, maximumMarks: number) => {
+    if (!questionNumber || !Number.isFinite(maximumMarks) || maximumMarks <= 0) return;
+    const rawCode = subQuestion ? 'Q' + questionNumber + '(' + subQuestion + ')' : 'Q' + questionNumber;
+    const canonicalId = toCanonicalQuestionId(rawCode);
+    if (seen.has(canonicalId)) return;
+    seen.add(canonicalId);
+    const parsed = parseCanonicalQuestionIdentity(canonicalId);
+    subQuestions.push({
+      fullQuestionCode: parsed.canonicalId,
+      questionNumber: parsed.questionNumber,
+      subQuestionNumber: parsed.subQuestion,
+      maximumMarks,
+      compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
+      isMcq: false,
+      section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
+      division: 'B',
+    });
+  };
 
-  // Regex 1: Explicit question indicators: "QUESTION 4(b) – 3 MARKS", "Q4(b) [3 Marks]", "Question 6(a)(2) - 3 Marks"
-  const regex1 = /(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\))?\s*(?:[-–—:]|\b|is|\.)\s*(?:(?:for|carrying)?\s*)?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  const extractMarks = (value: string): number | undefined => {
+    const source = String(value || '');
+    const match =
+      source.match(/(?:\[\s*|\(\s*)([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i) ||
+      source.match(/\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i) ||
+      source.match(/\b(?:Marks?|M)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)/i) ||
+      source.match(/\b(?:carries?|carrying|worth|allotted)\s+([0-9]+(?:\.[0-9]+)?)(?:\s*(?:Marks?|M))?\b/i);
+    const valueText = match?.[1];
+    if (!valueText) return undefined;
+    const marks = Number(valueText);
+    return Number.isFinite(marks) && marks > 0 ? marks : undefined;
+  };
+
+  // Explicit parent/part labels, including "QUESTION NO. 1 (a) carries 5 marks".
+  const explicitRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)(?:\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\))?\s*(?:[-–—:]|\b|is|carries?|carrying|worth|allotted|\.)\s*(?:(?:for|carrying|carries|worth|allotted|of)?\s*)?(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
   let match: RegExpExecArray | null;
-  while ((match = regex1.exec(text)) !== null) {
-    const qNum = match[1];
-    const subQ = match[2];
-    const marks = parseFloat(match[3]);
-    const rawCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
-    const canon = toCanonicalQuestionId(rawCode);
-    if (!seen.has(canon) && marks > 0) {
-      seen.add(canon);
-      const parsed = parseCanonicalQuestionIdentity(canon);
-      subQuestions.push({
-        fullQuestionCode: parsed.canonicalId,
-        questionNumber: parsed.questionNumber,
-        subQuestionNumber: parsed.subQuestion,
-        maximumMarks: marks,
-        compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
-        isMcq: false,
-        section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
-        division: 'B',
-      });
-    }
+  while ((match = explicitRegex.exec(text)) !== null) {
+    addQuestion(match[1], match[2], Number(match[3]));
   }
 
-  // Regex 2: Bracketed question indicators at line start: "4(b) - 3 Marks" or "6(a)(2) [3 Marks]"
-  const regex2 = /(?:^|\n)\s*([0-9]+)\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\)\s*[-–—:]?\s*(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
-  while ((match = regex2.exec(text)) !== null) {
-    const qNum = match[1];
-    const subQ = match[2];
-    const marks = parseFloat(match[3]);
-    const rawCode = `Q${qNum}(${subQ})`;
-    const canon = toCanonicalQuestionId(rawCode);
-    if (!seen.has(canon) && marks > 0) {
-      seen.add(canon);
-      const parsed = parseCanonicalQuestionIdentity(canon);
-      subQuestions.push({
-        fullQuestionCode: parsed.canonicalId,
-        questionNumber: parsed.questionNumber,
-        subQuestionNumber: parsed.subQuestion,
-        maximumMarks: marks,
-        compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
-        isMcq: false,
-        section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
-        division: 'B',
-      });
-    }
+  // Explicit Q1(a) lines can place the allocation after descriptive wording:
+  // "Q1(a) Calculate NPV — 5 marks" or "Question 1 Part (b): 4 marks".
+  const explicitPartRegex = /(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\s*(?:(?:PART|SUB[- ]?PART)\s*)?\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)([^\r\n]*)/gi;
+  while ((match = explicitPartRegex.exec(text)) !== null) {
+    const marks = extractMarks(match[3]);
+    if (marks !== undefined) addQuestion(match[1], match[2], marks);
   }
 
-  // Regex 3: Contextual line-by-line scanning: captures "(a) Description [10 Marks]" under "QUESTION 1 – 20 MARKS"
-  const lines = text.split('\n');
+  // Numeric line labels: "4(b) - 3 Marks", "6(a)(2) [3 Marks]".
+  const numericRegex = /(?:^|\n)\s*([0-9]+)\s*\(([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\)\s*[-–—:]?\s*(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/gi;
+  while ((match = numericRegex.exec(text)) !== null) {
+    addQuestion(match[1], match[2], Number(match[3]));
+  }
+
+  // Contextual formats under a parent heading:
+  // "(a) Description [10 Marks]", "a) Description — 5 marks",
+  // "Part (b): Description (4 Marks)" and "Sub-part (i) — Marks: 2".
+  const lines = text.split(/\r?\n/);
   let activeParentQNum: string | null = null;
-  const parentHeaderRegex = /(?:QUESTION|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*\()/i;
-  const childSubQRegex = /^\s*[\(\[]([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)[\)\]]\s*.*?(?:\[|\()?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i;
+  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b(?!\s*(?:\(|PART\b|SUB[- ]?PART\b))/i;
+  const childSubQRegex = /^\s*(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(?:\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)|\[\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\]|([a-zA-Z0-9]+)\s*[.)])(?:\s*[-–—:]\s*|\s+|$)/i;
 
   for (const line of lines) {
-    const pMatch = line.match(parentHeaderRegex);
-    if (pMatch) {
-      activeParentQNum = pMatch[1];
+    if (/^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER|MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\s*[-–—:]?\s*(?:MCQ|OBJECTIVE))\b/i.test(line)) {
+      activeParentQNum = null;
     }
-    if (activeParentQNum) {
-      const cMatch = line.match(childSubQRegex);
-      if (cMatch) {
-        const subQ = cMatch[1];
-        const marks = parseFloat(cMatch[2]);
-        const rawCode = `Q${activeParentQNum}(${subQ})`;
-        const canon = toCanonicalQuestionId(rawCode);
-        if (!seen.has(canon) && marks > 0) {
-          seen.add(canon);
-          const parsed = parseCanonicalQuestionIdentity(canon);
-          subQuestions.push({
-            fullQuestionCode: parsed.canonicalId,
-            questionNumber: parsed.questionNumber,
-            subQuestionNumber: parsed.subQuestion,
-            maximumMarks: marks,
-            compulsory: parsed.questionNumber === '1' || parsed.questionNumber === '5',
-            isMcq: false,
-            section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
-            division: 'B',
-          });
-        }
-      }
-    }
+
+    const parentMatch = line.match(parentHeaderRegex);
+    if (parentMatch) activeParentQNum = parentMatch[1];
+
+    if (!activeParentQNum) continue;
+    const childMatch = line.match(childSubQRegex);
+    if (!childMatch) continue;
+
+    const subQuestion = childMatch[1] || childMatch[2] || childMatch[3];
+    const remainder = line.slice(childMatch[0].length);
+    const marks = extractMarks(remainder);
+    if (marks !== undefined) addQuestion(activeParentQNum, subQuestion, marks);
   }
 
   return deduplicateQuestionList(subQuestions);
 }
-
 interface OptionalAttemptSelectionRule {
   allowedCount: number;
   questionNumbers: string[];
@@ -647,6 +646,86 @@ export function extractOptionalAttemptSelectionRule(
   return { allowedCount, questionNumbers: allowedNumbers, choiceRule };
 }
 
+function getFacultyMockMcqMaximumMarks(
+  questionNumber: string,
+  options: { questionPaperText?: string; markingSchemeText?: string },
+): number {
+  const qNum = String(Number(questionNumber));
+  if (!qNum || qNum === 'NaN') return 0;
+
+  const sources = [options.questionPaperText, options.markingSchemeText]
+    .map((value) => String(value || '').replace(/\r/g, ''))
+    .filter((value) => value.trim().length > 0);
+
+  const objectiveHeading = /(?:MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\b)/i;
+  const descriptiveHeading = /(?:DIVISION\s+B\b|SECTION\s+B\b|DESCRIPTIVE\s+QUESTIONS?)/i;
+  const labelFor = (number: string) => new RegExp(
+    '^\\s*(?:(?:MCQ|QUESTION|Q\\.?)\\s*(?:NO\\.?\\s*)?)?' +
+      number + '\\s*(?:[).:]|[-–—])',
+    'i',
+  );
+  const marksPattern = /(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i;
+
+  // First look only inside an explicitly-labelled objective section. This avoids
+  // confusing descriptive Q1's maximum with MCQ 1's maximum on the same paper.
+  for (const source of sources) {
+    const heading = objectiveHeading.exec(source);
+    if (!heading) continue;
+
+    const objectiveText = source.slice(heading.index);
+    const endMatch = descriptiveHeading.exec(objectiveText.slice(heading[0].length));
+    const block = endMatch
+      ? objectiveText.slice(0, heading[0].length + endMatch.index)
+      : objectiveText;
+    const lines = block.split('\n');
+
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!labelFor(qNum).test(lines[index])) continue;
+
+      let end = Math.min(lines.length, index + 7);
+      for (let next = index + 1; next < end; next += 1) {
+        if (labelFor('\\d{1,2}').test(lines[next])) {
+          end = next;
+          break;
+        }
+      }
+      const match = lines.slice(index, end).join(' ').match(marksPattern);
+      const marks = match ? Number(match[1]) : 0;
+      if (Number.isFinite(marks) && marks > 0) return marks;
+    }
+  }
+
+  // Explicit per-question MCQ allocations may also be recorded in the marking
+  // scheme without a separate Division/Section heading.
+  const explicitMcqLabel = new RegExp(
+    '^\\s*(?:MCQ|MULTIPLE\\s+CHOICE\\s+QUESTION)\\s*(?:NO\\.?\\s*)?' +
+      qNum + '\\b([^\\r\\n]*)',
+    'im',
+  );
+  for (const source of sources) {
+    const match = source.match(explicitMcqLabel);
+    const localMarks = match?.[1]?.match(marksPattern);
+    const marks = localMarks ? Number(localMarks[1]) : 0;
+    if (Number.isFinite(marks) && marks > 0) return marks;
+  }
+
+  // Source-backed rules can define a uniform allocation for all MCQs.
+  const combined = sources.join('\n');
+  const sharedRules = [
+    /\b(?:each|every)\s+(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\s+(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
+    /\b(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\b[^\n.]{0,60}\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per\s+question)\b/i,
+    /\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per)\s+(?:MCQ|multiple[- ]choice|objective)\b/i,
+  ];
+  for (const rule of sharedRules) {
+    const match = combined.match(rule);
+    const marks = match ? Number(match[1]) : 0;
+    if (Number.isFinite(marks) && marks > 0) return marks;
+  }
+
+  // Missing MCQ allocation must fail the pre-evaluation gate; never guess 1 or 2 marks.
+  return 0;
+}
+
 function buildGenericPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -660,8 +739,9 @@ function buildGenericPaperStructure(options: {
   // Preserve the existing PYQ/MTP fallback behaviour. Model Tests use the
   // same parser, but an unparseable independently authored source must not be
   // assigned fabricated Q1-Q6 identities or maximum marks.
-  const isModelTest = String(options.materialType || '').trim().toUpperCase() === 'MODEL_TEST_PAPER';
-  if (subQuestions.length === 0 && !isModelTest) {
+  const materialType = String(options.materialType || '').trim().toUpperCase();
+  const isIndependentlyAuthoredPaper = materialType === 'MODEL_TEST_PAPER' || materialType === 'FACULTY_MOCK_TEST';
+  if (subQuestions.length === 0 && !isIndependentlyAuthoredPaper) {
     for (let i = 1; i <= 6; i++) {
       subQuestions.push({
         fullQuestionCode: `Q${i}`,
@@ -703,7 +783,9 @@ function buildGenericPaperStructure(options: {
       fullQuestionCode: `MCQ${qNum}`,
       questionNumber: qNum,
       subQuestionNumber: 'MCQ',
-      maximumMarks: 2,
+      maximumMarks: materialType === 'FACULTY_MOCK_TEST'
+        ? getFacultyMockMcqMaximumMarks(qNum, options)
+        : 2,
       compulsory: true,
       isMcq: true,
       officialKey: data.officialKey,

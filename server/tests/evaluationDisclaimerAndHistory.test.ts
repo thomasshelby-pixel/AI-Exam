@@ -77,7 +77,58 @@ const studentHistory = db.prepare(`
 
 assert.ok(studentHistory.length >= 1, 'Student should see their evaluation in history');
 assert.ok(studentHistory.some((e) => e.id === testEvalId), 'Specific evaluation ID must be present in student history');
+
 console.log('[PASS] Test 2.1: Evaluation history retrieved accurately for student');
+
+// Faculty Mock evaluations must use the same student history and ownership path.
+const facultyMockSuffix = Date.now();
+const facultyId = `fmock_history_fac_${facultyMockSuffix}`;
+const facultyMockId = `fmock_history_test_${facultyMockSuffix}`;
+const facultyMockEvalId = `eval_fmock_history_${facultyMockSuffix}`;
+
+db.prepare(`
+  INSERT INTO faculty_mock_faculties (id, name, status)
+  VALUES (?, 'History Test Faculty', 'ACTIVE')
+`).run(facultyId);
+
+db.prepare(`
+  INSERT INTO faculty_mock_tests (
+    id, faculty_id, course_level, attempt, subject_key, subject_name,
+    paper, mock_number, title, question_paper_text, suggested_answers_text,
+    question_paper_file_id, suggested_answer_file_id
+  ) VALUES (?, ?, 'INTERMEDIATE', 'May 2026', 'inter_taxation',
+    'Taxation (Income Tax & GST)', 'Paper 1', 991, 'History Visibility Mock',
+    'Question paper reference text', 'Suggested answer reference text',
+    'history-question-file', 'history-answer-file')
+`).run(facultyMockId, facultyId);
+
+db.prepare(`
+  INSERT INTO evaluations (
+    id, student_id, evaluation_source, material_source, faculty_mock_test_id,
+    level, material_type, subject_key, subject_name, paper, attempt,
+    total_marks, maximum_marks, percentage, grade, status, original_filename
+  ) VALUES (?, ?, 'FACULTY_MOCK', 'FACULTY_MOCK', ?, 'INTERMEDIATE',
+    'FACULTY_MOCK_TEST', 'inter_taxation', 'Taxation (Income Tax & GST)',
+    'Paper 1', 'May 2026', 61, 100, 61, 'PASS', 'COMPLETED', 'faculty_mock_answer.pdf')
+`).run(facultyMockEvalId, testStudentId, facultyMockId);
+
+const facultyMockHistory = db.prepare(`
+  SELECT e.id, e.evaluation_source, e.material_source, e.faculty_mock_test_id,
+         fmt.title AS faculty_mock_title, fmf.name AS faculty_name
+  FROM evaluations e
+  LEFT JOIN faculty_mock_tests fmt ON fmt.id = e.faculty_mock_test_id
+  LEFT JOIN faculty_mock_faculties fmf ON fmf.id = fmt.faculty_id
+  LEFT JOIN users u ON u.id = e.student_id
+  WHERE ${buildStudentOwnershipSql('e', 'u')}
+`).all(...getStudentOwnershipParams(testStudentId, testStudentEmail)) as any[];
+
+const visibleFacultyMockEvaluation = facultyMockHistory.find((e) => e.id === facultyMockEvalId);
+assert.ok(visibleFacultyMockEvaluation, 'Faculty Mock evaluation must appear in its owning student history');
+assert.strictEqual(visibleFacultyMockEvaluation.evaluation_source, 'FACULTY_MOCK');
+assert.strictEqual(visibleFacultyMockEvaluation.material_source, 'FACULTY_MOCK');
+assert.strictEqual(visibleFacultyMockEvaluation.faculty_mock_title, 'History Visibility Mock');
+assert.strictEqual(visibleFacultyMockEvaluation.faculty_name, 'History Test Faculty');
+console.log('[PASS] Test 2.2: Faculty Mock evaluation and its faculty/mock labels are visible in student history');
 
 // 3. Test at9767676@gmail.com and demo student evaluation visibility
 console.log('\n--- TEST 3: Core User Evaluation History Tracking ---');
@@ -112,6 +163,9 @@ console.log(`[PASS] Test 4.1: Admin history contains ${adminEvals.length} evalua
 
 // Clean up test records
 db.prepare('DELETE FROM evaluations WHERE id = ?').run(testEvalId);
+db.prepare('DELETE FROM evaluations WHERE id = ?').run(facultyMockEvalId);
+db.prepare('DELETE FROM faculty_mock_tests WHERE id = ?').run(facultyMockId);
+db.prepare('DELETE FROM faculty_mock_faculties WHERE id = ?').run(facultyId);
 db.prepare('DELETE FROM student_disclaimer_acknowledgements WHERE student_id = ?').run(testStudentId);
 db.prepare('DELETE FROM users WHERE id = ?').run(testStudentId);
 
