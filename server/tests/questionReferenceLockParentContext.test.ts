@@ -103,4 +103,37 @@ const lockedQ6d = lockQuestionReference('Q6(d)', '', suggestedAnswers, '');
 assert.equal(lockedQ6d.suggestedAnswerSlice.found, false);
 assert.equal(lockedQ6d.needsReview, true, 'A missing Q6(d) reference must be sent for human review, not treated as verified');
 
+
+// Universal nested numbering must lock each Roman-numbered leaf separately.
+const nestedRomanAnswers = [
+  'ANSWERS OF FACULTY MOCK',
+  'Division B',
+  '1. (a) Parent part overview.',
+  '(i) First Roman sub-part.',
+  'Only-first evidence belongs to sub-part one.',
+  '(ii) Second Roman sub-part.',
+  'Only-second evidence belongs to sub-part two.',
+  '(1) First numeric child under sub-part two.',
+  'Only-numeric-one evidence.',
+  '(2) Second numeric child under sub-part two.',
+  'Only-numeric-two evidence.',
+  '(b) Sibling alphabetic part.',
+  'Sibling-b evidence must not leak into part a.',
+].join('\n');
+const nestedOne = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(i)', 'SA');
+assert.equal(nestedOne.found, true, 'The first Roman sub-part must resolve under its exact parent part.');
+assert.match(nestedOne.snippet, /Only-first evidence/);
+assert.doesNotMatch(nestedOne.snippet, /Only-second evidence|Sibling-b evidence/);
+const nestedTwo = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(ii)', 'SA');
+assert.equal(nestedTwo.found, true, 'The second Roman sub-part must remain a different reference slice.');
+assert.match(nestedTwo.snippet, /Only-second evidence/);
+assert.doesNotMatch(nestedTwo.snippet, /Only-first evidence|Sibling-b evidence/);
+const nestedNumericOne = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(ii)(1)', 'SA');
+assert.equal(nestedNumericOne.found, true, 'A numeric child beneath a Roman sub-part must resolve to its complete path.');
+assert.match(nestedNumericOne.snippet, /Only-numeric-one evidence/);
+assert.doesNotMatch(nestedNumericOne.snippet, /Only-numeric-two evidence/);
+const nestedNumericTwo = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(ii)(2)', 'SA');
+assert.equal(nestedNumericTwo.found, true, 'A second numeric child must not be merged into its sibling.');
+assert.match(nestedNumericTwo.snippet, /Only-numeric-two evidence/);
+assert.doesNotMatch(nestedNumericTwo.snippet, /Only-numeric-one evidence|Sibling-b evidence/);
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');
