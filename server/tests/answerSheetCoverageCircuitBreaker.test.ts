@@ -169,6 +169,27 @@ async function run() {
   assert.deepEqual(mcqReadReviewPage.mcqNeedsReview, ['1(iv)'],
     'An unreadable nested MCQ selection must be preserved as a separate review item, not treated as blank.');
 
+  assert.equal(
+    resolveMcqSelectionNumber('Question 1(a)(i)', [{
+      questionNumber: '4',
+      fullQuestionCode: 'MCQ4',
+      sourceQuestionLabel: 'Question 1(a)(i)',
+    }] as any),
+    '4',
+    'Unreadable MCQ source labels with more than one nested numbering level must map through the authoritative crosswalk.',
+  );
+  const deeplyNestedMcqReview = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_PARTIALLY_READABLE',
+    hasHandwriting: true,
+    answerBlocksObserved: 1,
+    detectedQuestions: [],
+    unresolvedAnswerBlocks: [],
+    mcqNeedsReview: ['Question 1(a)(i)'],
+    mcqSelections: {},
+  }));
+  assert.deepEqual(deeplyNestedMcqReview.mcqNeedsReview, ['1(a)(i)'],
+    'The page reader must preserve a multi-level nested MCQ label for source mapping.');
+
   const missingAnswerBlockPage = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_READABLE',
     hasHandwriting: true,
