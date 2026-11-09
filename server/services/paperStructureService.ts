@@ -535,7 +535,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const childSubQRegex = /^\s*(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB QUESTION)\s*)?(?:\(\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\)|\[\s*([a-zA-Z0-9]+(?:\([a-zA-Z0-9]+\))?)\s*\]|([a-zA-Z0-9]+)\s*[.)])(?:\s*[-–—:]\s*|\s+|$)/i;
 
   for (const line of lines) {
-    if (/^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER)\b/i.test(line)) {
+    if (/^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER|MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\s*[-–—:]?\s*(?:MCQ|OBJECTIVE))\b/i.test(line)) {
       activeParentQNum = null;
     }
 
