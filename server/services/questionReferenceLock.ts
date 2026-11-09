@@ -191,8 +191,13 @@ function findSubQuestionInsideParent(
 
       activeParent = true;
       activePath = [];
-      const explicitIdentity = parseCanonicalQuestionIdentity(trimmed);
-      if (samePath(explicitIdentity.subQuestionPath || [], targetPath)) return index;
+      // A parent heading can itself begin with its first child, for example
+      // "1. (a) Parent details" or "Question 1(a)". Preserve that path.
+      const parentPrefix = trimmed.match(/^(?:(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(?:NO\.?)?\s*)?\d{1,3}\s*[.)]?\s*/i);
+      const parentRemainder = parentPrefix ? trimmed.slice(parentPrefix[0].length) : '';
+      const explicitIdentity = parseCanonicalQuestionIdentity('Q' + target + parentRemainder);
+      activePath = [...(explicitIdentity.subQuestionPath || [])];
+      if (samePath(activePath, targetPath)) return index;
       continue;
     }
 
