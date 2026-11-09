@@ -79,7 +79,7 @@ assert.equal(ledgerRecord?.attempted, true);
 assert.equal(ledgerRecord?.evaluationStatus, 'NEEDS_REVIEW');
 assert.equal(ledgerRecord?.counted, false, 'An unreadable option must not be counted as an academic zero.');
 assert.equal(ledgerRecord?.awardedMarks, 0, 'The placeholder is not included in the score total.');
-assert.equal(ledgerRecord?.annotationAnchor.annotationType, 'EVALUATION_NOTE',
+assert.equal(ledgerRecord?.annotationAnchor?.annotationType, 'EVALUATION_NOTE',
   'The report must show a review note rather than a wrong-answer MCQ badge.');
 assert.equal(ledger.isReconciled, false, 'The overall result remains uncertified until the visible MCQ is checked.');
 assert.ok(ledger.reconciliationErrors.some((error) => error.includes('ATTEMPTED_QUESTION_NEEDS_REVIEW')));
