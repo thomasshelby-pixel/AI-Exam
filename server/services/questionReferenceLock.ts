@@ -354,7 +354,6 @@ export function extractLockedQuestionSlice(
           'i',
         ));
       }
-      }
     }
   } else {
     // Question Paper
