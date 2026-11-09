@@ -23,7 +23,7 @@ import {
 } from '../services/featureControlPersistenceService.js';
 import { authenticateToken, requireRole, AuthRequest, getStudentEntitlement } from '../auth.js';
 import { extractMaterialFromPDF } from '../gemini.js';
-import { buildFacultyMockEvaluationReference, parseFacultyMockEvaluationReference } from '../services/facultyMockReferenceParser.js';
+import { parseFacultyMockEvaluationReference, validateFacultyMockReferenceSections } from '../services/facultyMockReferenceParser.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { buildMaterialQuestionMappingAudit } from '../services/materialQuestionMappingAudit.js';
@@ -787,12 +787,13 @@ router.post('/faculty-mocks/tests', async (req: AuthRequest, res: Response) => {
         questionPaperReference = readPrivateTextFile(questionPaperReferenceFile, 'Question Paper Text');
         suggestedAnswersReference = readPrivateTextFile(suggestedAnswersFile, 'Suggested Answers');
         markingSchemeReference = readPrivateTextFile(markingSchemeFile, 'Marking Scheme');
-        const canonicalReferenceText = buildFacultyMockEvaluationReference({
+        // The three files are already separate. Validate each as literal content;
+        // do not parse repeated "Marking Scheme" phrases inside a TXT as section delimiters.
+        parsedReference = validateFacultyMockReferenceSections({
           questionPaperText: questionPaperReference.text,
           suggestedAnswersText: suggestedAnswersReference.text,
           markingSchemeText: markingSchemeReference.text,
         });
-        parsedReference = parseFacultyMockEvaluationReference(canonicalReferenceText);
       } else {
         // Backward compatibility for already-open older admin clients.
         // New clients upload and persist all three private TXT files separately.
