@@ -98,9 +98,9 @@ function normalizeMcqSelectionLabel(raw: string): string {
   const value = original
     .replace(/^(?:QUESTION|MCQ|OBJECTIVE|Q\.?)\s*/i, '')
     .replace(/\s+/g, '');
-  const match = value.match(/^(\d{1,2})(?:\(([a-z0-9]+)\))?$/i);
+  const match = value.match(/^(\d{1,3})((?:\([a-z0-9]+\))*)$/i);
   if (!match) return '';
-  const suffix = match[2] ? '(' + match[2].toLowerCase() + ')' : '';
+  const suffix = match[2].toLowerCase();
   return (hasQuestionPrefix ? 'Q' : '') + match[1] + suffix;
 }
 
@@ -110,7 +110,7 @@ export function resolveMcqSelectionNumber(
   mcqs: AuthoritativePaperStructure['mcqs']
 ): string | undefined {
   const raw = String(rawKey || '').trim();
-  const flatMatch = raw.match(/^(?:MCQ|OBJECTIVE)\s*(\d{1,2})$/i) || raw.match(/^(\d{1,2})$/);
+  const flatMatch = raw.match(/^(?:MCQ|OBJECTIVE)\s*(\d{1,3})$/i) || raw.match(/^(\d{1,3})$/);
   if (flatMatch) {
     const flatNumber = flatMatch[1];
     return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === flatNumber)
@@ -385,7 +385,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       const option = typeof rawOption === 'string'
         ? rawOption.trim().toUpperCase().replace(/^OPTION\s*/, '').replace(/[()\s]/g, '')
         : '';
-      if (!normalizedNumber || !/^Q?[0-9]{1,2}(?:\([a-z0-9]+\))?$/i.test(normalizedNumber) || !/^[A-D]$/.test(option)) {
+      if (!normalizedNumber || !/^Q?[0-9]{1,3}(?:\([a-z0-9]+\))*$/i.test(normalizedNumber) || !/^[A-D]$/.test(option)) {
         warnings.push('An MCQ selection had an invalid question number or option and was left for review.');
         continue;
       }
