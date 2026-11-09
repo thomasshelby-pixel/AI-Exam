@@ -10,6 +10,7 @@
  */
 
 import crypto from 'node:crypto';
+import { parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 
 export interface LockedReferenceSlice {
   found: boolean;
@@ -71,6 +72,21 @@ export interface LockedQuestionReference {
  * "5" -> { qNum: "5", subQ: undefined, cleanCode: "Q5" }
  * "MCQ 1" -> { qNum: "1", subQ: "MCQ", cleanCode: "MCQ1" }
  */
+function escapeRegex(value: string): string {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getSubQuestionPath(subQuestion: string): string[] {
+  const parsed = parseCanonicalQuestionIdentity('Q1(' + String(subQuestion || '').trim() + ')');
+  return parsed.subQuestionPath || [];
+}
+
+function subQuestionSuffixPattern(subQuestion: string): string {
+  return getSubQuestionPath(subQuestion)
+    .map((part) => '\\s*\\(\\s*' + escapeRegex(part) + '\\s*\\)')
+    .join('');
+}
+
 export function parseQuestionCode(code: string): {
   qNum: string;
   subQ?: string;
@@ -79,65 +95,14 @@ export function parseQuestionCode(code: string): {
   isMcq: boolean;
   cleanCode: string;
 } {
-  const trimmed = code.trim();
-  const isMcq = /^(?:MCQ|OBJECTIVE)/i.test(trimmed) || /MCQ/i.test(trimmed);
-
-  if (isMcq) {
-    const num = trimmed.replace(/[^0-9]/g, '');
-    return {
-      qNum: num || '1',
-      subQ: 'MCQ',
-      questionNumber: num || '1',
-      subQuestion: 'MCQ',
-      isMcq: true,
-      cleanCode: `MCQ${num || '1'}`,
-    };
-  }
-
-  // Handle standard and nested variants: "Question 5(a)", "Q5(a)", "5(a)", "5a", "Q6(a)(1)", "Q6(a)(2)", "6(a)(i)"
-  const qNumMatch = trimmed.match(/^(?:Question\s*|Q\.?\s*|Ans\.?\s*|Answer\s*)?(\d+)\s*(.*)$/i);
-  if (qNumMatch) {
-    const qNum = qNumMatch[1];
-    const remaining = (qNumMatch[2] || '').trim();
-    let subQ: string | undefined;
-
-    if (remaining) {
-      // Nested sub-question: (a)(1) or (a)(i)
-      const nestedMatch = remaining.match(/^\(([a-zA-Z0-9]+)\)\s*\(([a-zA-Z0-9]+)\)/);
-      if (nestedMatch) {
-        subQ = `${nestedMatch[1].toLowerCase()}(${nestedMatch[2].toLowerCase()})`;
-      } else {
-        // Single bracket: (a) or [a]
-        const singleBracket = remaining.match(/^[\(\[]([a-zA-Z0-9]+)[\)\]]/);
-        if (singleBracket) {
-          subQ = singleBracket[1].toLowerCase();
-        } else {
-          // Direct token: a or a1 or a(1)
-          const directMatch = remaining.match(/^([a-zA-Z](?:\([a-zA-Z0-9]+\)|[0-9]+)?)/);
-          if (directMatch) {
-            subQ = directMatch[1].toLowerCase();
-          }
-        }
-      }
-    }
-
-    const cleanCode = subQ ? `Q${qNum}(${subQ})` : `Q${qNum}`;
-    return {
-      qNum,
-      subQ,
-      questionNumber: qNum,
-      subQuestion: subQ,
-      isMcq: false,
-      cleanCode,
-    };
-  }
-
-  const digits = trimmed.replace(/[^0-9]/g, '');
+  const parsed = parseCanonicalQuestionIdentity(String(code || '').trim());
   return {
-    qNum: digits || '1',
-    questionNumber: digits || '1',
-    isMcq: false,
-    cleanCode: `Q${digits || '1'}`,
+    qNum: parsed.questionNumber,
+    subQ: parsed.subQuestion,
+    questionNumber: parsed.questionNumber,
+    subQuestion: parsed.subQuestion,
+    isMcq: parsed.isMcq,
+    cleanCode: parsed.canonicalId,
   };
 }
 
