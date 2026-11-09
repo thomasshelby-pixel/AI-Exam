@@ -1148,7 +1148,7 @@ async function analyzeSinglePageCoverage(
       pdfBase64: pageBase64,
       mimeType: 'application/pdf',
       responseMimeType: 'application/json',
-      thinkingLevel: 'LOW',
+      thinkingLevel: recoveryMode ? 'HIGH' : 'MEDIUM',
       validateOutput: (rawText) => {
         parseAndValidatePageCoverageOutput(rawText);
       },
