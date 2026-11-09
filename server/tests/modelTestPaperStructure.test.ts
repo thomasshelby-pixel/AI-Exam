@@ -3,6 +3,7 @@ import { extractSubQuestionsFromText, getAuthoritativePaperStructure } from '../
 import { deduplicateQuestionList, parseCanonicalQuestionIdentity, toCanonicalQuestionId, validateQuestionDeduplication } from '../services/canonicalQuestionService.js';
 import { validatePreEvaluationGate } from '../services/evaluationIntegrityHardening.js';
 import { buildCanonicalQuestionInventory } from '../services/canonicalQuestionInventoryService.js';
+import { normalizeDetectedAttemptHierarchy } from '../services/answerSheetCoverageService.js';
 
 const levelSubjectMatrix: Record<string, string[]> = {
   FOUNDATION: ['Accounting', 'Business Laws', 'Quantitative Aptitude', 'Business Economics'],
@@ -238,6 +239,29 @@ assert.equal(nestedParentValidation.isValid, false);
 assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8'));
 assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8(a)'),
   'A nested leaf must flag its immediate parent container, not only the root question.');
+
+const normalizedDetectedAttempts = normalizeDetectedAttemptHierarchy([
+  { fullQuestionCode: 'Q1', pages: [1] },
+  { fullQuestionCode: 'Q1(a)', pages: [1, 2] },
+  { fullQuestionCode: 'Q1(a(i))', pages: [2] },
+  { fullQuestionCode: 'Q1(a(ii))', pages: [3] },
+  { fullQuestionCode: 'Q1(b)', pages: [4] },
+  { fullQuestionCode: 'Q2(a)', pages: [5] },
+]);
+assert.deepEqual(
+  normalizedDetectedAttempts.attemptedQuestions.map((attempt) => attempt.fullQuestionCode).sort(),
+  ['Q1(a(i))', 'Q1(a(ii))', 'Q1(b)', 'Q2(a)'],
+  'Detected root/intermediate containers must be removed only when canonical descendant leaves are present.',
+);
+assert.deepEqual(
+  normalizedDetectedAttempts.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'Q1(a(i))')?.pages,
+  [1, 2],
+  'Parent/container pages must transfer to the nested leaf for complete answer-page context.',
+);
+assert.ok(
+  normalizedDetectedAttempts.attemptedQuestions.some((attempt) => attempt.fullQuestionCode === 'Q2(a)'),
+  'A parent-only detection with no detected child must be preserved for review rather than guessed.',
+);
 
 // Contextual numbering under a single parent header must also retain each level.
 const contextualParts = extractSubQuestionsFromText([
