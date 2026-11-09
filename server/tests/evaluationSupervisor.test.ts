@@ -254,7 +254,57 @@ async function run(): Promise<void> {
     assert(result.downloadsUnlocked === true, 'A passing corrected result retains its approved delivery state');
   }
 
-  // 3. Missing/mismatched authoritative references must fail closed, never trigger an AI guess.
+  // 3. Source-backed PYQ/MTP/Faculty Mock material may use a verified canonical
+  // leaf + positive marks + exact Suggested Answer lock when QP formatting differs.
+  {
+    const result = makeResult(makeQuestion(), 'VALID');
+    const dependencies: EvaluationSupervisorDependencies = {
+      extractReferenceSnippets: () => ({
+        ...makeReferenceSnippet(true),
+        questionPaperFound: false,
+        suggestedAnswerFound: true,
+        referenceNeedsReview: false,
+      }),
+      evaluateChunk: async () => {
+        throw new Error('A fully evaluated, source-backed result must not need an extra repair call.');
+      },
+    };
+    const supervised = await runEvaluationSupervisor(
+      makeParams(result, makeCoverage()),
+      dependencies,
+    );
+    const audit = (supervised.integrityAudit as any)?.supervisor;
+    assert(audit?.status === 'PASS',
+      'An exact Suggested Answer plus authoritative MTP leaf and maximum marks avoids a false review caused only by QP formatting.');
+    assert(supervised.validationStatus === 'VALID',
+      'A valid source-backed structural fallback remains a completed result.');
+  }
+
+  // An ordinary EXAM paper without the source-driven material identity cannot
+  // bypass an exact Question Paper slice mismatch, even when the Suggested Answer matches.
+  {
+    const result = makeResult(makeQuestion(), 'VALID');
+    result.materialType = 'EXAM' as any;
+    const dependencies: EvaluationSupervisorDependencies = {
+      extractReferenceSnippets: () => ({
+        ...makeReferenceSnippet(true),
+        questionPaperFound: false,
+        suggestedAnswerFound: true,
+        referenceNeedsReview: false,
+      }),
+    };
+    const supervised = await runEvaluationSupervisor(
+      makeParams(result, makeCoverage()),
+      dependencies,
+    );
+    const audit = (supervised.integrityAudit as any)?.supervisor;
+    assert(audit?.status === 'HUMAN_REVIEW',
+      'A paper without an approved source-driven material type cannot use the structural QP fallback.');
+    assert(audit?.unresolvedIssues.some((issue: string) => issue.includes('SUPERVISOR_REFERENCE_LOCK_INCOMPLETE')),
+      'The exact Question Paper identity mismatch remains explicit.');
+  }
+
+  // 4. Missing/mismatched authoritative references must fail closed, never trigger an AI guess.
   {
     let calls = 0;
     const dependencies: EvaluationSupervisorDependencies = {
@@ -276,7 +326,7 @@ async function run(): Promise<void> {
     assert(audit?.unresolvedIssues.some((issue: string) => issue.includes('SUPERVISOR_REFERENCE_LOCK_INCOMPLETE')), 'The precise reference-lock issue is recorded');
   }
 
-  // 4. A per-sheet budget prevents a large paper with many flagged questions from
+  // 5. A per-sheet budget prevents a large paper with many flagged questions from
   // triggering unbounded paid model re-evaluations. Remaining items fail closed.
   {
     const count = 6;
