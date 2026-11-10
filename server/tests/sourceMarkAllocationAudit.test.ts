@@ -402,11 +402,11 @@ for (const materialType of sourceDrivenTypes) {
     questionPaperText: [
       'Selected Question Paper',
       'Question 7(a). Explain the required accounting treatment and supporting reasoning.',
-    ].join('\\n'),
+    ].join('\n'),
     markingSchemeText: [
       'Selected Marking Scheme',
       'Question 7(a): 5 marks for correct treatment, supporting standard and conclusion.',
-    ].join('\\n'),
+    ].join('\n'),
   });
   assert.deepEqual(
     describedTotal.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
@@ -425,17 +425,17 @@ for (const materialType of sourceDrivenTypes) {
     questionPaperText: [
       'Selected Question Paper',
       'Question 8. Prepare the required statement.',
-    ].join('\\n'),
+    ].join('\n'),
     suggestedAnswersText: [
       'Selected Suggested Answers',
       'Question 8(a). First answer section and working.',
       'Question 8(b). Second answer section and working.',
-    ].join('\\n'),
+    ].join('\n'),
     markingSchemeText: [
       'Question 8',
       '(a) 2 marks for the required principle and explanation.',
       '(b) 3 marks for application, workings and conclusion.',
-    ].join('\\n'),
+    ].join('\n'),
   });
   assert.deepEqual(
     nestedDescribedTotals.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
@@ -447,11 +447,11 @@ for (const materialType of sourceDrivenTypes) {
     questionPaperText: [
       'Selected Question Paper',
       'Question 9(a). Explain the treatment and calculate the amount.',
-    ].join('\\n'),
+    ].join('\n'),
     markingSchemeText: [
       'Selected Marking Scheme',
       'Question 9(a): Award 2 marks for the principle and 3 marks for application.',
-    ].join('\\n'),
+    ].join('\n'),
   });
   assert.equal(
     ambiguous.subQuestions.some((question) => question.fullQuestionCode === 'Q9(a)' && question.maximumMarks > 0),
