@@ -902,6 +902,26 @@ function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<strin
   return allocations;
 }
 
+/**
+ * Faculty-authored marking schemes often state a question total with a short
+ * criterion description on the same line, e.g. "Question 1: 5 marks for
+ * treatment and supporting working". Accept that format only when the line
+ * contains exactly one numeric marks allocation. A line containing multiple
+ * mark values is a component rubric, not a safe question maximum, and is
+ * deliberately excluded so the pre-evaluation gate requests review.
+ */
+function extractUnambiguousFacultyMockMarkAllocations(sourceText: string): PaperStructureSubQuestion[] {
+  const filteredSource = String(sourceText || '')
+    .replace(/\\r/g, '')
+    .split('\\n')
+    .map((line) => {
+      const allocations = line.match(/\\b\\d+(?:\\.\\d+)?\\s*(?:Marks?|M)\\b/gi) || [];
+      return allocations.length > 1 ? '' : line;
+    })
+    .join('\\n');
+  return extractSubQuestionsFromText(filteredSource);
+}
+
 function auditSourceMarkAllocations(options: {
   questionPaperText?: string;
   markingSchemeText?: string;
@@ -1003,6 +1023,17 @@ function buildGenericPaperStructure(options: {
         section: Number(parsed.questionNumber) > 4 ? 'B' : 'A',
         division: 'B',
       });
+    }
+  }
+
+  // Faculty Mock TXT files are authored independently by faculties. Their
+  // marking scheme may put one question maximum and its short criterion
+  // description on the same line, unlike ICAI's standardized total-only
+  // headings. Accept only one numeric marks value per line; ambiguous
+  // multi-component mark prose stays unallocated and fails closed.
+  if (String(options.materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST') {
+    for (const question of extractUnambiguousFacultyMockMarkAllocations(String(options.markingSchemeText || ''))) {
+      addQuestionOnce(question);
     }
   }
 
