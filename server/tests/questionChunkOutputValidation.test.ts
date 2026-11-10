@@ -100,6 +100,46 @@ const matchedDepositReference = assessQuestionReferenceTopicAlignment({
 assert.equal(matchedDepositReference.aligned, true,
   'A topic-aligned deposits reference must remain scoreable.');
 
+const crossWiredMarkingSchemeCases = [
+  {
+    id: 'Q1(c)',
+    question: {
+      topic: 'FEMA current account transactions and consultancy remittance approval for infrastructure projects',
+      provision: 'Foreign Exchange Management Act and Current Account Transactions Rules',
+      questionText: 'Alpha Infra Ltd. proposes USD 12,000,000 consultancy fees for an infrastructure project and asks whether RBI prior approval is required.',
+    },
+    suggestedAnswer: 'FEMA requires prior RBI approval for remittances exceeding USD 10,000,000 per infrastructure consultancy project.',
+    wrongMarkingScheme: 'Companies Act buy-back of equity shares, special resolution, paid-up capital and free reserves under section 68.',
+  },
+  {
+    id: 'Q4(b)',
+    question: {
+      topic: 'Appointment of internal auditor by an unlisted public company',
+      provision: 'Companies Act section 138 and Companies Accounts Rules Rule 13',
+      questionText: 'Downtown Limited has turnover of Rs 210 crore and outstanding public deposits of Rs 28 crore; determine whether it must appoint an internal auditor.',
+    },
+    suggestedAnswer: 'Section 138 and Rule 13 require an internal auditor where an unlisted public company has turnover of at least Rs 200 crore or outstanding deposits of at least Rs 25 crore.',
+    wrongMarkingScheme: 'Companies Act filing of financial statements with Registrar within thirty days of an adjourned annual general meeting.',
+  },
+  {
+    id: 'Q6(b)',
+    question: {
+      topic: 'Listed company classification and exclusions under Rule 2A',
+      provision: 'Companies Act section 2(52) and Rule 2A',
+      questionText: 'Determine whether Arya Limited, Chirag Limited and Prism Limited qualify as listed companies based on equity shares, debt securities and foreign stock exchange listing.',
+    },
+    suggestedAnswer: 'A listed company is one with its specified securities listed on a recognised stock exchange; the Rule 2A exclusions apply to debt securities and permitted foreign stock exchange listings.',
+    wrongMarkingScheme: 'Foreign company registration under Chapter XXII, validity of contracts and restriction on filing suits for non-compliance.',
+  },
+];
+for (const item of crossWiredMarkingSchemeCases) {
+  const result = assessQuestionReferenceTopicAlignment(item.question, item.suggestedAnswer, item.wrongMarkingScheme);
+  assert.equal(result.aligned, true,
+    item.id + ': a valid Suggested Answer must remain scoreable when only the derived Marking Scheme anchor is cross-wired.');
+  assert.ok(result.misalignedSources?.includes('MARKING_SCHEME'),
+    item.id + ': the mismatched Marking Scheme must be explicitly identified for exclusion.');
+}
+
 const insufficientTopicAnchor = assessQuestionReferenceTopicAlignment({
   topic: 'General provisions',
   questionText: 'Explain the applicable provisions.',
