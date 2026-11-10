@@ -1360,9 +1360,9 @@ export function buildPageCoveragePrompt(params: {
         `${question.fullQuestionCode} — ${question.maximumMarks} marks${question.topic ? ` — ${question.topic}` : ''}`,
         questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
         answerAnchor ? `  SUGGESTED ANSWER REFERENCE: ${answerAnchor}` : '',
-      ].filter(Boolean).join('\\n');
+      ].filter(Boolean).join('\n');
     })
-    .join('\\n');
+    .join('\n');
   const nestedLeafGroups = new Map<string, string[]>();
   for (const question of scoreableDescriptiveQuestions) {
     const parsed = parseCanonicalQuestionIdentity(question.fullQuestionCode);
@@ -1377,7 +1377,7 @@ export function buildPageCoveragePrompt(params: {
   const nestedLeafChecklist = Array.from(nestedLeafGroups.entries())
     .filter(([, leaves]) => leaves.length > 1)
     .map(([parent, leaves]) => `${parent}: ${leaves.sort().join(', ')}`)
-    .join('\\n');
+    .join('\n');
 
   const validMcqList = (paperStructure.mcqs || [])
     .map((m) => {
