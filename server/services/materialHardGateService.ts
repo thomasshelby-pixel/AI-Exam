@@ -153,10 +153,13 @@ export function resolveOfficialPaperMaximumMarks(
   }
 
   const qpText = String(questionPaperText || '').trim();
-  const maxMarksHeaderMatch = qpText.match(/\b(maximum\s+marks|max\s+marks|marks)\s*[:\-–]?\s*(\d{2,3})\b/i);
+  const maxMarksHeaderMatch = qpText.match(/\b(maximum\s+marks|max\s+marks|marks)\s*[:\-–]?\s*(\d{1,3})\b/i);
   if (maxMarksHeaderMatch && maxMarksHeaderMatch[2]) {
     const parsedMax = parseInt(maxMarksHeaderMatch[2], 10);
-    if (parsedMax === 50 || parsedMax === 100 || parsedMax === 75 || parsedMax === 40) {
+    // Faculty Mock administrators may publish custom 20/30/60/80-mark papers.
+    // The explicit Question Paper total is authoritative within the admin
+    // form's supported 1-500 range, not only standard ICAI paper totals.
+    if (Number.isInteger(parsedMax) && parsedMax >= 1 && parsedMax <= 500) {
       officialPaperMaxMarks = parsedMax;
     }
   }
