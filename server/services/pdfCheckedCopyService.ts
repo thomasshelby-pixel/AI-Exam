@@ -163,7 +163,7 @@ export function safeDrawText(page: any, text: any, options: any) {
 }
 
 function wrapPdfAnnotationText(value: unknown, maxChars: number): string[] {
-  const words = String(value || '').split(/\\s+/).filter(Boolean);
+  const words = String(value || '').split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let line = '';
   for (const word of words) {
