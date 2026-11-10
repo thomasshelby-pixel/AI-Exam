@@ -543,13 +543,14 @@ export function buildCanonicalEvaluationLedger(options: {
     let awardedMarks = 0;
     let counted = false;
     let rendered = true;
+    let missingStepEvidence = false;
 
     if (isAttempted) {
       const isTechFail = Boolean(
         evaluation?.flags?.includes('FAILED_TO_EVALUATE') ||
         evaluation?.flags?.includes('TECHNICAL_FAILURE')
       );
-      const missingStepEvidence = Boolean(
+      missingStepEvidence = Boolean(
         evaluation &&
         !hasPersistedDescriptiveStepEvidence(
           canonId,
