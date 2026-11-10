@@ -443,6 +443,22 @@ for (const materialType of sourceDrivenTypes) {
     materialType + ': contextual nested parts use the same independent scoreable leaves.',
   );
 
+  const singleComponentAward = structureFor(materialType, {
+    questionPaperText: [
+      'Selected Question Paper',
+      'Question 10(a). State and explain the governing principle.',
+    ].join('\n'),
+    markingSchemeText: [
+      'Selected Marking Scheme',
+      'Question 10(a): Award 2 marks for identifying the governing principle.',
+    ].join('\n'),
+  });
+  assert.equal(
+    singleComponentAward.subQuestions.some((question) => question.fullQuestionCode === 'Q10(a)' && question.maximumMarks > 0),
+    false,
+    materialType + ': a single explicit criterion-award instruction is not accepted as the full question maximum.',
+  );
+
   const ambiguous = structureFor(materialType, {
     questionPaperText: [
       'Selected Question Paper',
