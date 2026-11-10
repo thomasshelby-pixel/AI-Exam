@@ -747,7 +747,18 @@ export interface PageCoverageAuditItem {
   readonly hasStudentContent: boolean;
   readonly detectedQuestionIds: string[];
   readonly evaluatedQuestionIds: string[];
+  /** Populated only after the original page has actually been drawn into the checked copy. */
   readonly renderedQuestionIds: string[];
+  readonly analysisStatus?: string;
+  readonly analysisCompleted?: boolean;
+  readonly analysisFailureCode?: string;
+  readonly answerBlocksObserved?: number;
+  readonly accountedAnswerBlocks?: number;
+  readonly unresolvedAnswerBlocks?: string[];
+  readonly hasUnresolvedContent?: boolean;
+  readonly mappingReviewReason?: string;
+  readonly pageRendered?: boolean;
+  readonly renderedAnnotationCount?: number;
 }
 
 export interface StudentAttemptManifest {
@@ -879,15 +890,30 @@ export interface RenderManifestItem {
   readonly status: CanonicalEvaluationStatus;
 }
 
+export interface PageRenderManifestItem {
+  readonly pageNumber: number;
+  readonly originalPagePresent: boolean;
+  readonly headerRendered: boolean;
+  readonly footerRendered: boolean;
+  readonly examinerSealRendered: boolean;
+  readonly annotationCount: number;
+  readonly questionIds: string[];
+}
+
 export interface RenderManifest {
   readonly evaluationId: string;
   readonly runId: string;
   readonly items: RenderManifestItem[];
   readonly totalEvaluated: number;
+  /** Includes attempted questions given a review annotation as well as scored questions. */
   readonly totalRendered: number;
   readonly isRenderValid: boolean;
   readonly orphanAnnotations: string[];
   readonly renderErrors: string[];
+  readonly totalPages?: number;
+  readonly totalPagesRendered?: number;
+  readonly isAllPagesRendered?: boolean;
+  readonly pages?: PageRenderManifestItem[];
   readonly timestamp: string;
 }
 
