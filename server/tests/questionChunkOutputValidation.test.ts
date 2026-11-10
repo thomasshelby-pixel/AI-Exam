@@ -4,6 +4,7 @@ import {
   parseAndValidateQuestionChunkOutput,
   requiresAnswerLevelReadabilityReview,
   assessQuestionReferenceTopicAlignment,
+  removeMismatchedDerivedSourceAnchor,
 } from '../services/questionChunkEvaluator.js';
 
 function makeResponse(overrides: Record<string, unknown> = {}): string {
@@ -99,6 +100,28 @@ const matchedDepositReference = assessQuestionReferenceTopicAlignment({
 'Calculate the permitted deposit amount and applicable interest reduction.');
 assert.equal(matchedDepositReference.aligned, true,
   'A topic-aligned deposits reference must remain scoreable.');
+
+const safeDerivedAllocation = removeMismatchedDerivedSourceAnchor([
+  'SUBQUESTION: Q1(c)',
+  'SUBQUESTION MARKS: 4',
+  'SOURCE-DERIVED CONTENT ANCHOR:',
+  'Companies Act section 68 buy-back of equity shares by special resolution.',
+  'DERIVED EXAMINER-STYLE ALLOCATION:',
+  'STEP 1: Identify the applicable statutory provision. Marks: 0.75',
+  'STEP 2: State the governing legal principle. Marks: 1.00',
+  'STEP 3: State conditions and exceptions. Marks: 1.50',
+  'STEP 4: Apply the rule and conclude. Marks: 0.75',
+].join('\n'));
+assert.doesNotMatch(safeDerivedAllocation, /Companies Act section 68 buy-back/i,
+  'A wrong sibling source anchor must be removed from the scoring prompt.');
+assert.match(safeDerivedAllocation, /STEP 1: Identify the applicable statutory provision/);
+assert.match(safeDerivedAllocation, /STEP 4: Apply the rule and conclude/,
+  'Correct component weights and generic step categories must survive anchor exclusion.');
+assert.equal(
+  removeMismatchedDerivedSourceAnchor('Ordinary marking scheme without the generated allocation headings.'),
+  '',
+  'Do not preserve unverified marking-scheme content unless its derived allocation boundary is explicit.',
+);
 
 const crossWiredMarkingSchemeCases = [
   {
