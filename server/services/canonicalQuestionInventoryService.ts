@@ -966,9 +966,9 @@ export function buildStudentAttemptManifest(options: {
         pageRendered: false,
         renderedAnnotationCount: 0,
       } : {
-        analysisCompleted: false,
-        hasUnresolvedContent: true,
-        mappingReviewReason: 'No per-page coverage analysis record was supplied for this original PDF page.',
+        // Legacy/non-PDF integrity callers do not have an AI page-analysis result.
+        // Do not fabricate a failure state here; the PDF worker separately refuses
+        // certification unless every original page has explicit analysis evidence.
         pageRendered: false,
         renderedAnnotationCount: 0,
       }),
