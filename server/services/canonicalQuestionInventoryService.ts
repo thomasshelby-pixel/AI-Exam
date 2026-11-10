@@ -477,6 +477,27 @@ export function createExactlyOnceEvaluationTasks(options: {
  * - Zero-mark attempted questions are kept intact with attempted: true, awardedMarks: 0, counted: true
  * - Unselected alternatives are excluded from count
  */
+/**
+ * A descriptive question cannot receive a certified academic score without
+ * persisted component/step evidence. This also prevents the checked-copy
+ * renderer from manufacturing generic PROVISION/APPLICATION cards for a zero.
+ */
+export function hasPersistedDescriptiveStepEvidence(
+  questionId: string,
+  questionType: unknown,
+  evaluation: any,
+): boolean {
+  const isMcq = String(questionType || '').toUpperCase() === 'MCQ' ||
+    String(questionId || '').toUpperCase().startsWith('MCQ');
+  if (isMcq) return true;
+  const components =
+    evaluation?.markingComponents ||
+    evaluation?.structuredEvidence?.markingComponents;
+  const breakdown = evaluation?.stepMarkingBreakdown;
+  return (Array.isArray(components) && components.length > 0) ||
+    (Array.isArray(breakdown) && breakdown.length > 0);
+}
+
 export function buildCanonicalEvaluationLedger(options: {
   runId: string;
   inventory: CanonicalQuestionInventory;
@@ -528,11 +549,20 @@ export function buildCanonicalEvaluationLedger(options: {
         evaluation?.flags?.includes('FAILED_TO_EVALUATE') ||
         evaluation?.flags?.includes('TECHNICAL_FAILURE')
       );
+      const missingStepEvidence = Boolean(
+        evaluation &&
+        !hasPersistedDescriptiveStepEvidence(
+          canonId,
+          item.questionType,
+          evaluation,
+        )
+      );
       const requiresHumanReview = Boolean(
         attempt?.mcqSelectionNeedsReview ||
         evaluation?.status === 'unclear' ||
         evaluation?.flags?.includes('REVIEW_REQUIRED') ||
-        evaluation?.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED')
+        evaluation?.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED') ||
+        missingStepEvidence
       );
       if (evaluation && isTechFail) {
         status = 'FAILED_TO_EVALUATE';
@@ -617,7 +647,10 @@ export function buildCanonicalEvaluationLedger(options: {
       studentSelectedOption: evaluation?.candidateSelectedOption || attempt?.studentSelectedOption,
       reviewRequired: status === 'NEEDS_REVIEW',
       reviewReason: status === 'NEEDS_REVIEW'
-        ? attempt?.mappingReviewReason || evaluation?.reasonForDeduction || 'Answer evidence requires manual verification.'
+        ? attempt?.mappingReviewReason ||
+          (missingStepEvidence
+            ? 'No persisted component-level marking evidence exists for this attempted descriptive question. The score is withheld; this is not an academic zero.'
+            : evaluation?.reasonForDeduction || 'Answer evidence requires manual verification.')
         : undefined,
       officialAnswer: evaluation?.officialCorrectOption,
       evidence: attempt?.evidence,
