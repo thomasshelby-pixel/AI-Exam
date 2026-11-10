@@ -777,6 +777,8 @@ console.log('\n--- TEST Q: Handwriting & Degraded Scan Safety Guard ---');
 // --------------------------------------------------------------------------
 console.log('\\n--- TEST Q2: Provisional Marks-Lost Integrity ---');
 {
+  const checkEqual = (actual: unknown, expected: unknown, name: string) =>
+    assert(actual === expected, name, `Expected ${String(expected)}, got ${String(actual)}`);
   const processed = processEvaluationIntegrity(
     {
       evaluationId: 'eval_review_provisional_marks',
@@ -799,15 +801,15 @@ console.log('\\n--- TEST Q2: Provisional Marks-Lost Integrity ---');
     } as any,
     {},
   );
-  assert.equal(processed.questions[0].status, 'unclear',
+  checkEqual(processed.questions[0].status, 'unclear',
     'A question awaiting reference/reviewer resolution must remain provisional.');
-  assert.equal(processed.questions[0].marksAwarded, 3,
+  checkEqual(processed.questions[0].marksAwarded, 3,
     'The provisional component-backed award is preserved for examiner inspection.');
-  assert.equal(processed.questions[0].marksLost, 0,
+  checkEqual(processed.questions[0].marksLost, 0,
     'No academic deduction is confirmed while the question remains under review.');
 
   const provisionalValidation = validateAuthoritativeConsistency(processed);
-  assert.equal(
+  checkEqual(
     provisionalValidation.errors.some((error) => /Q2.*marks lost mismatch/i.test(error)),
     false,
     'The consistency validator must not flag marksLost=0 as inconsistent for a review-pending question.',
@@ -818,7 +820,7 @@ console.log('\\n--- TEST Q2: Provisional Marks-Lost Integrity ---');
     questions: processed.questions.map((question) => ({ ...question, marksLost: 1 })),
   };
   const invalidReviewValidation = validateAuthoritativeConsistency(invalidProvisional as any);
-  assert.equal(
+  checkEqual(
     invalidReviewValidation.errors.some((error) => /provisional marksLost.*must remain 0/i.test(error)),
     true,
     'A review-pending question must not publish a provisional deduction as confirmed marks lost.',
@@ -834,7 +836,7 @@ console.log('\\n--- TEST Q2: Provisional Marks-Lost Integrity ---');
     })),
   };
   const scoredValidation = validateAuthoritativeConsistency(scoredQuestion as any);
-  assert.equal(
+  checkEqual(
     scoredValidation.errors.some((error) => /Q2.*marks lost mismatch/i.test(error)),
     false,
     'A finalized 3/6 score must still record exactly 3 marks lost.',
