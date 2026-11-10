@@ -98,12 +98,12 @@ assert.equal(
 );
 
 assert.equal(
-  resolveOfficialPaperMaximumMarks(100, 'Question 1: Marks: 5\\nQuestion 2: 4 marks'),
+  resolveOfficialPaperMaximumMarks(100, 'Question 1: Marks: 5\nQuestion 2: 4 marks'),
   100,
   'A question-level marks entry must not be mistaken for the whole-paper maximum.',
 );
 assert.equal(
-  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\\nMarks: 80'),
+  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\nMarks: 80'),
   80,
   'A legacy generic two- or three-digit paper Marks header remains supported.',
 );
