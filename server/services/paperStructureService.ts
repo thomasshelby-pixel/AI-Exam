@@ -558,7 +558,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const explicitRegex = new RegExp(
     '(?:QUESTION' + horizontalSpace + '*(?:NO\\.?'+ horizontalSpace + '*)?|Q\\.?|Ans(?:wer)?\\.?)' +
     horizontalSpace + '*([0-9]+)' + horizontalSpace + '*' +
-    '(?:(' + namedPrefixPath + ')|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]?))?' +
+    '(?:(' + namedPrefixPath + ')|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]))?' +
     horizontalSpace + '*' +
     '(?:[-–—:]|\\b|is|carries?|carrying|worth|allotted|\\.)' + horizontalSpace + '*' +
     '(?:(?:for|carrying|carries|worth|allotted|of)?' + horizontalSpace + '*)?(?:\\[' + horizontalSpace + '*|\\(' + horizontalSpace + '*)?([0-9]+(?:\\.[0-9]+)?)' + horizontalSpace + '*(?:Marks?|M)\\b',
@@ -573,7 +573,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
   const explicitPartRegex = new RegExp(
     '(?:QUESTION' + horizontalSpace + '*(?:NO\\.?'+ horizontalSpace + '*)?|Q\\.?|Ans(?:wer)?\\.?)' +
     horizontalSpace + '*([0-9]+)' + horizontalSpace + '*' +
-    '(' + namedPrefixPath + '|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]?))([^\\r\\n]*)',
+    '(' + namedPrefixPath + '|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]))([^\\r\\n]*)',
     'gi',
   );
   while ((match = explicitPartRegex.exec(text)) !== null) {
@@ -878,6 +878,21 @@ function getSourceBackedMcqMaximumMarks(
  * the primary allocation source; an explicit standalone disagreement with the
  * Marking Scheme blocks scoring rather than silently choosing either value.
  */
+/**
+ * A question-part suffix must be visibly numbered, not ordinary prose.
+ * Accepted forms include (a), [ii], a), .1.2 and Part IV Clause 2.
+ */
+function isExplicitQuestionPartSuffix(value: string): boolean {
+  const suffix = String(value || '').trim();
+  if (!suffix) return true;
+
+  const namedPath = /^(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\\s+[a-zA-Z0-9]+)(?:\\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\\s+[a-zA-Z0-9]+)*$/i;
+  const bracketPath = /^(?:\\(\\s*[a-zA-Z0-9]+(?:\\s*\\(\\s*[a-zA-Z0-9]+\\s*\\))*\\s*\\)|\\[\\s*[a-zA-Z0-9]+(?:\\s*\\[\\s*[a-zA-Z0-9]+\\s*\\])*\\s*\\])+$/i;
+  const dottedPath = /^(?:\\.[a-zA-Z0-9]+){1,4}$/;
+  const punctuatedLabel = /^[a-zA-Z0-9]+[.)]$/;
+  return namedPath.test(suffix) || bracketPath.test(suffix) || dottedPath.test(suffix) || punctuatedLabel.test(suffix);
+}
+
 function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<string, number> {
   const allocations = new Map<string, number>();
   const linePattern = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?)\s*(\d{1,3})\s*(.*?)\s*(?:(?:[-–—:]|carries?|carrying|worth|allotted|is|for)\s*)?(?:[\[(]\s*)?(\d+(?:\.\d+)?)\s*(?:Marks?|M)\s*[\])]?\s*[\s.]*$/i;
@@ -886,6 +901,7 @@ function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<strin
     if (!match) continue;
     const questionNumber = match[1];
     const suffix = String(match[2] || '').trim();
+    if (!isExplicitQuestionPartSuffix(suffix)) continue;
     const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
     const marks = Number(match[3]);
     if (!Number.isFinite(marks) || marks <= 0) continue;
