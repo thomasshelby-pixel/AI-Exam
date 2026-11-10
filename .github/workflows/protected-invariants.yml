@@ -57,6 +57,9 @@ jobs:
       - name: PYQ mode-independent marking and missed-question recovery regression
         run: node_modules/.bin/tsx server/tests/pyqCheckedCopyZeroAndCoverageRecovery.test.ts
 
+      - name: Strict-mode positive quarter-mark preservation regression
+        run: node_modules/.bin/tsx server/tests/strictModePartialCreditSafety.test.ts
+
       - name: PYQ reference fallback and student review explanation regressions
         run: |
           node_modules/.bin/tsx server/tests/pyqAuthoritativeStructureReferenceFallback.test.ts
