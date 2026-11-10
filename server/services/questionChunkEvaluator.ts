@@ -221,21 +221,25 @@ export function parseAndValidateQuestionChunkOutput(
     if (available < 0 || awarded < 0 || awarded > available + 0.01) {
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has marks outside its component limit.`);
     }
+    // Clamp only a tiny floating-point overrun (<= 0.01); never repair a
+    // substantive over-award beyond the official component maximum.
+    component.marksAwarded = Math.min(available, awarded);
+    const normalizedAwarded = component.marksAwarded as number;
 
     const reportedAssessment = typeof component.assessment === 'string'
       ? component.assessment.trim().toUpperCase()
       : '';
-    component.assessment = reportedAssessment === 'OMITTED' && awarded <= 0
+    component.assessment = reportedAssessment === 'OMITTED' && normalizedAwarded <= 0
       ? 'OMITTED'
-      : available > 0 && awarded >= available - 0.01
+      : available > 0 && normalizedAwarded >= available - 0.01
         ? 'CORRECT'
-        : awarded > 0.01
+        : normalizedAwarded > 0.01
           ? 'PARTIALLY_CORRECT'
           : 'INCORRECT';
 
-    component.marksDeducted = Math.round(Math.max(0, available - awarded) * 100) / 100;
+    component.marksDeducted = Math.round(Math.max(0, available - normalizedAwarded) * 100) / 100;
     availableTotal += available;
-    awardedTotal += awarded;
+    awardedTotal += normalizedAwarded;
   }
 
   if (Math.abs(availableTotal - maxMarks) > 0.05) {
