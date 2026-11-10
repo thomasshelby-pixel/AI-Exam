@@ -833,7 +833,8 @@ export function buildEvaluationReconciliationSection(
     .filter((r) => r.attempted)
     .every((r) =>
       r.evaluationStatus === 'EXCLUDED_ALTERNATIVE' ||
-      (r.evaluationStatus === 'EVALUATED' && r.counted)
+      (r.evaluationStatus === 'EVALUATED' && r.counted) ||
+      (r.evaluationStatus === 'EVALUATED' && r.isAlternative === true && !r.counted)
     );
 
   const summary =
@@ -1045,15 +1046,21 @@ export function buildFourSetReconciliation(options: {
 
   // Check 3: RenderedSet == CountedSet (for scorable questions)
   const unselectedAlternatives = ledger.records
-    .filter((r) => r.evaluationStatus === 'EXCLUDED_ALTERNATIVE')
+    .filter((r) =>
+      r.evaluationStatus === 'EXCLUDED_ALTERNATIVE' ||
+      (r.isAlternative === true && r.counted === false)
+    )
     .map((r) => r.questionId);
 
-  const nonAltEvaluated = evaluatedSet.filter((id) => !unselectedAlternatives.includes(id));
+  // Alternative branches remain in EvaluatedSet and RenderedSet so their
+  // feedback is preserved, but only the selected/scorable branch belongs in
+  // the CountedSet equality check.
+  const scorableRenderedSet = renderedSet.filter((id) => !unselectedAlternatives.includes(id));
   const isRenderedEqualToCounted =
-    nonAltEvaluated.length === countedSet.length &&
-    nonAltEvaluated.every((qId) => countedSet.includes(qId));
+    scorableRenderedSet.length === countedSet.length &&
+    scorableRenderedSet.every((qId) => countedSet.includes(qId));
   if (!isRenderedEqualToCounted) {
-    mismatches.push(`COUNTED_SET_MISMATCH: Counted set (${countedSet.length}) does not match scorable evaluated set (${nonAltEvaluated.length})`);
+    mismatches.push(`COUNTED_SET_MISMATCH: Counted set (${countedSet.length}) does not match scorable rendered set (${scorableRenderedSet.length})`);
   }
 
   // Check 4: Score Reconciliation
