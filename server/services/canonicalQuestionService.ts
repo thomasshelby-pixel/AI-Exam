@@ -291,6 +291,11 @@ export function toCanonicalQuestionId(
     }
   }
 
+  // Re-normalize after composing separately supplied parent/sub-part fields.
+  // A page continuation may arrive as parent Q2(a) plus child label "i";
+  // that pair must resolve to the same scoreable parent as the full source ID
+  // Q2(a)(i), rather than leaking a non-existent nested score task.
+  parts = normalizeCanonicalQuestionPartPath(parts);
   let finalCanonId = buildCanonicalQuestionCode(parsedQ.questionNumber, parts);
 
   // Align only on an exact normalized identity. Falling back to the first
