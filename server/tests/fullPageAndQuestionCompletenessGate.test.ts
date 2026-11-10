@@ -3,6 +3,7 @@ import { validateAnswerSheetCoverageCompleteness } from '../services/answerSheet
 import {
   buildCanonicalEvaluationLedger,
   buildCanonicalQuestionInventory,
+  buildFourSetReconciliation,
 } from '../services/canonicalQuestionInventoryService.js';
 import {
   validatePreRenderGate,
@@ -197,5 +198,24 @@ assert.equal(unselectedAttemptedAlternative.annotationRequired, true,
   'The unselected alternative was still attempted and must have an examiner disposition on the checked copy.');
 assert.equal(unselectedAttemptedAlternative.awardedMarks, 3,
   'Keep the independently evaluated feedback available while excluded from the final total.');
+
+const physicallyRenderedAlternativeLedger: any = {
+  ...alternativeLedger,
+  records: alternativeLedger.records.map((record) => ({ ...record, rendered: true })),
+};
+const alternativeReconciliation = buildFourSetReconciliation({
+  ledger: physicallyRenderedAlternativeLedger,
+  manifest: { manifestId: 'alternative-manifest', evaluationRunId: 'alternative-attempt', totalPages: 2, attempts: [], pageCoverageAudit: [] },
+  scorecardTotal: alternativeLedger.totalAwardedMarks,
+  evaluationReportTotal: alternativeLedger.totalAwardedMarks,
+  checkedCopyTotal: alternativeLedger.totalAwardedMarks,
+  finalDisplayedTotal: alternativeLedger.totalAwardedMarks,
+});
+assert.equal(alternativeReconciliation.isEvaluatedEqualToRendered, true,
+  'Both the selected and unselected attempted alternatives must appear in the checked copy.');
+assert.equal(alternativeReconciliation.isRenderedEqualToCounted, true,
+  'Only the selected alternative is included when reconciling rendered marks to the grand total.');
+assert.equal(alternativeReconciliation.isFullyReconciled, true,
+  alternativeReconciliation.mismatches.join(' | '));
 
 console.log('✅ Full page and question disposition completeness gates passed.');
