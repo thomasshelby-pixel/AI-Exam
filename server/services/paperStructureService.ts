@@ -912,13 +912,13 @@ function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<strin
  */
 function extractUnambiguousFacultyMockMarkAllocations(sourceText: string): PaperStructureSubQuestion[] {
   const filteredSource = String(sourceText || '')
-    .replace(/\\r/g, '')
-    .split('\\n')
+    .replace(/\r/g, '')
+    .split('\n')
     .map((line) => {
-      const allocations = line.match(/\\b\\d+(?:\\.\\d+)?\\s*(?:Marks?|M)\\b/gi) || [];
+      const allocations = line.match(/\b\d+(?:\.\d+)?\s*(?:Marks?|M)\b/gi) || [];
       return allocations.length > 1 ? '' : line;
     })
-    .join('\\n');
+    .join('\n');
   return extractSubQuestionsFromText(filteredSource);
 }
 
