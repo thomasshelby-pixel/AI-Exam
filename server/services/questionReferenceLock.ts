@@ -277,20 +277,33 @@ export function extractLockedQuestionSlice(
   if (docType === 'MS' && /^\s*SUBQUESTION\s*:/im.test(docText)) {
     const rawLines = docText.replace(/\r/g, '').split('\n');
     const targetNumber = String(Number(qNum));
-    const requestedSuffix = subQ && subQ.toUpperCase() !== 'MCQ'
-      ? subQuestionSuffixPattern(subQ)
-      : '';
-    const exactSchemeHeader = new RegExp(
-      '^\\s*SUBQUESTION\\s*:\\s*(?:Q\\s*)?' + escapeRegex(targetNumber) +
-        (requestedSuffix ? '\\s*' + requestedSuffix : '(?=\\s|[:.)]|$)'),
-      'i',
-    );
-    const start = rawLines.findIndex((line) => exactSchemeHeader.test(line));
+    const schemeHeaderPattern = /^\s*SUBQUESTION\s*:\s*(?:Q\s*)?(\d{1,3})(.*)$/i;
+    const targetPath = subQ && subQ.toUpperCase() !== 'MCQ'
+      ? normalizeCanonicalQuestionPartPath(getSubQuestionPath(subQ))
+      : [];
+    const isSameScoreableSchemePart = (line: string): boolean => {
+      const match = line.match(schemeHeaderPattern);
+      if (!match || String(Number(match[1])) !== targetNumber) return false;
+      const parsedHeader = parseCanonicalQuestionIdentity('Q' + targetNumber + match[2]);
+      const headerPath = normalizeCanonicalQuestionPartPath(
+        parsedHeader.sourceSubQuestionPath || parsedHeader.subQuestionPath || [],
+      );
+      return headerPath.length === targetPath.length &&
+        headerPath.every((part, index) => part.toLowerCase() === targetPath[index]?.toLowerCase());
+    };
+    // The parent scoreable Q2(a) can be represented by separate source blocks
+    // Q2(a)(i) and Q2(a)(ii). Include every adjacent Roman child block whose
+    // normalized identity is still Q2(a); stop at a sibling such as Q2(b).
+    const start = rawLines.findIndex(isSameScoreableSchemePart);
     if (start >= 0) {
       let end = rawLines.length;
       for (let index = start + 1; index < rawLines.length; index += 1) {
+        if (/^\s*SUBQUESTION\s*:/i.test(rawLines[index])) {
+          if (isSameScoreableSchemePart(rawLines[index])) continue;
+          end = index;
+          break;
+        }
         if (
-          /^\s*SUBQUESTION\s*:/i.test(rawLines[index]) ||
           /^\s*QUESTION\s+MARK\s+RECONCILIATION\b/i.test(rawLines[index]) ||
           /^\s*={3,}\s*QUESTION\s+\d+\b/i.test(rawLines[index])
         ) {
