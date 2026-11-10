@@ -147,12 +147,12 @@ const crossWiredMarkingSchemeCases = [
   {
     id: 'Q6(b)',
     question: {
-      topic: 'Listed company classification and exclusions under Rule 2A',
-      provision: 'Companies Act section 2(52) and Rule 2A',
-      questionText: 'Determine whether Arya Limited, Chirag Limited and Prism Limited qualify as listed companies based on equity shares, debt securities and foreign stock exchange listing.',
+      topic: 'Demand for a poll at an annual general meeting and voting rights of members present personally or by proxy',
+      provision: 'Companies Act section 109 and applicable poll-demand thresholds',
+      questionText: 'At Sunrise Limited AGM, 75 members present personally or through proxies and representing more than one-tenth of total voting power demand a poll. The Chairman refuses because some members are represented by proxies. Examine whether the refusal is valid.',
     },
-    suggestedAnswer: 'A listed company is one with its specified securities listed on a recognised stock exchange; the Rule 2A exclusions apply to debt securities and permitted foreign stock exchange listings.',
-    wrongMarkingScheme: 'Foreign company registration under Chapter XXII, validity of contracts and restriction on filing suits for non-compliance.',
+    suggestedAnswer: 'A poll may be demanded by members present in person or by proxy who hold at least the prescribed voting power or paid-up share threshold. The Chairman cannot reject a valid poll demand merely because members are represented by proxies.',
+    wrongMarkingScheme: 'Foreign company registration under Chapter XXII, section 393, validity of contracts and restriction on a foreign company filing suits before compliance.',
   },
 ];
 for (const item of crossWiredMarkingSchemeCases) {
