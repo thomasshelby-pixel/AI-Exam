@@ -248,6 +248,8 @@ export interface PageAnnotation {
   /** A technical/reference/step-evidence hold; zero is not an academic award. */
   reviewRequired?: boolean;
   reviewReason?: string;
+  /** Evaluated feedback for an attempted alternative excluded from the final total. */
+  excludedFromTotal?: boolean;
   /** Page-only unresolved content note; not a canonical question and never scored. */
   pageReviewOnly?: boolean;
   studentSelectedOption?: string;
@@ -682,6 +684,7 @@ export function buildStructuredAnnotations(
       maxMarks: rec.maxMarks,
       reviewRequired,
       reviewReason,
+      excludedFromTotal: Boolean(rec.isAlternative && !rec.counted),
       studentSelectedOption: rec.studentSelectedOption,
       officialAnswer: rec.officialAnswer,
       steps: steps.map((s: any) => {
@@ -1101,12 +1104,14 @@ export async function generateCheckedCopyPdf(
 
       safeDrawText(page, qAnn.reviewRequired
         ? 'NEEDS REVIEW'
-        : `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
+        : qAnn.excludedFromTotal
+          ? 'ALT NOT COUNTED'
+          : `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
         x: marginX + (isCompactMode ? 46 : 50),
         y: currY - (isCompactMode ? 12 : 14),
-        size: qAnn.reviewRequired ? 6.5 : isCompactMode ? 9.5 : 10.5,
+        size: qAnn.reviewRequired || qAnn.excludedFromTotal ? 6.5 : isCompactMode ? 9.5 : 10.5,
         font: helveticaBold,
-        color: qAnn.reviewRequired ? amberExaminer : redExaminer,
+        color: qAnn.reviewRequired || qAnn.excludedFromTotal ? amberExaminer : redExaminer,
       });
 
       if (isMcqAnnotation) {
@@ -1152,7 +1157,9 @@ export async function generateCheckedCopyPdf(
         ? 'PAGE CONTENT REQUIRES EXAMINER REVIEW - NOT SCORED'
         : qAnn.reviewRequired
           ? 'SCORE WITHHELD - NOT AN ACADEMIC ZERO'
-          : 'STEP-WISE EVALUATION', {
+          : qAnn.excludedFromTotal
+            ? 'FEEDBACK ONLY - ALTERNATIVE NOT INCLUDED IN TOTAL'
+            : 'STEP-WISE EVALUATION', {
         x: marginX + 6,
         y: currY - (isCompactMode ? 24 : 28),
         size: qAnn.reviewRequired ? (qAnn.pageReviewOnly ? 4.8 : 5.2) : isCompactMode ? 5.8 : 6.5,
