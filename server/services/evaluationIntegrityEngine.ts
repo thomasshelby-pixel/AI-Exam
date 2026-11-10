@@ -22,6 +22,7 @@ import {
   parseCanonicalQuestionIdentity,
 } from './canonicalQuestionService.js';
 import { validatePostEvaluationGate } from './evaluationIntegrityHardening.js';
+import { validateAnswerSheetCoverageCompleteness } from './answerSheetCoverageService.js';
 import {
   extractSourceGroundedTransformations,
   auditNumericalReasoningIntegrity,
@@ -1473,6 +1474,7 @@ export function processEvaluationIntegrity(
     totalPages,
     inventory,
     rawPageOccurrences: rawOccurrences,
+    pageCoverageRecords: coverageMap?.pages || [],
     mcqSelections: coverageMap?.mcqSelections || (rawResult as any).mcqSelections,
   });
 
@@ -1587,6 +1589,10 @@ export function processEvaluationIntegrity(
   const paperStructure = options.paperStructure || rawResult.paperStructure;
   evaluationResult.coverageMap = coverageMap;
 
+  const coverageCompleteness = coverageMap
+    ? validateAnswerSheetCoverageCompleteness(coverageMap)
+    : { isComplete: false, errors: ['ANSWER_SHEET_COVERAGE_MAP_MISSING: No page-level coverage map is available.'], missingPages: [] };
+
   const consistencyReport = validateAuthoritativeConsistency(evaluationResult, {
     coverageMap,
     paperStructure,
@@ -1607,12 +1613,14 @@ export function processEvaluationIntegrity(
   const combinedValid =
     consistencyReport.isValid &&
     postGateReport.isValid &&
+    coverageCompleteness.isComplete &&
     canonicalLedger.isReconciled &&
     totalReconciliation.passed &&
     questionReferenceReviewErrors.length === 0;
   const combinedErrors = Array.from(new Set([
     ...consistencyReport.errors,
     ...postGateReport.errors,
+    ...coverageCompleteness.errors,
     ...ledgerErrors,
     ...questionReferenceReviewErrors,
   ]));
