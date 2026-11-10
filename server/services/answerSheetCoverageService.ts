@@ -1500,7 +1500,10 @@ async function analyzeSinglePageCoverage(
         }
         const detectedAnswerBlockCount = Math.max(
           raw.answerBlocksObserved || 0,
-          raw.detectedQuestions.length + Object.keys(raw.mcqSelections || {}).length + raw.mcqNeedsReview.length
+          raw.detectedQuestions.length +
+            Object.keys(raw.mcqSelections || {}).length +
+            raw.mcqNeedsReview.length +
+            raw.unresolvedAnswerBlocks.length
         );
         detectedQuestions.push({
           fullQuestionCode: parsed.canonicalId,
