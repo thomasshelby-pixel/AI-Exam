@@ -38,9 +38,11 @@ function makeResponse(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-const nestedDirective = buildQuestionChunkSubPartCompletenessDirective('Q2(a(ii))', 3);
-assert.match(nestedDirective, /exactly the authoritative leaf Q2\(a\(ii\)\)/i);
-assert.match(nestedDirective, /Do not merge this leaf with its parent/i);
+const nestedDirective = buildQuestionChunkSubPartCompletenessDirective('Q2(a(ii))', 5);
+assert.match(nestedDirective, /exactly the authoritative scoreable part Q2\(a\) for 5 marks/i);
+assert.match(nestedDirective, /Roman-numbered children under this lettered part/i);
+assert.match(nestedDirective, /Keep other lettered sibling parts/i);
+assert.doesNotMatch(nestedDirective, /Q2\(a\(ii\)\) for 3 marks/i);
 assert.match(nestedDirective, /each distinct, independently mark-bearing source criterion exactly once/i);
 assert.match(nestedDirective, /source's own component allocations/i);
 assert.match(nestedDirective, /visibly not attempted/i);
