@@ -33,6 +33,12 @@ jobs:
       - name: Marks Leak Detector question and paper maximum regression
         run: node_modules/.bin/tsx server/tests/marksLeakDetector.test.ts
 
+      - name: Question chunk output validation regression
+        run: node_modules/.bin/tsx server/tests/questionChunkOutputValidation.test.ts
+
+      - name: Question evaluation failure classification regression
+        run: node_modules/.bin/tsx server/tests/questionEvaluationFailureClassification.test.ts
+
       - name: MCQ attempt preservation and unreadable-selection review regression
         run: node_modules/.bin/tsx server/tests/mcqAttemptReviewRequired.test.ts
 
