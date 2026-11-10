@@ -153,9 +153,11 @@ export function resolveOfficialPaperMaximumMarks(
   }
 
   const qpText = String(questionPaperText || '').trim();
-  const maxMarksHeaderMatch = qpText.match(/\b(maximum\s+marks|max\s+marks|marks)\s*[:\-–]?\s*(\d{1,3})\b/i);
-  if (maxMarksHeaderMatch && maxMarksHeaderMatch[2]) {
-    const parsedMax = parseInt(maxMarksHeaderMatch[2], 10);
+  const explicitMaximumHeader = qpText.match(/\b(?:maximum\s+marks|max\s+marks)\s*[:\-–]?\s*(\d{1,3})\b/i);
+  const legacyMarksHeader = qpText.match(/\bmarks\s*[:\-–]\s*(\d{2,3})\b/i);
+  const maxMarksHeaderValue = explicitMaximumHeader?.[1] || legacyMarksHeader?.[1];
+  if (maxMarksHeaderValue) {
+    const parsedMax = parseInt(maxMarksHeaderValue, 10);
     // Faculty Mock administrators may publish custom 20/30/60/80-mark papers.
     // The explicit Question Paper total is authoritative within the admin
     // form's supported 1-500 range, not only standard ICAI paper totals.
