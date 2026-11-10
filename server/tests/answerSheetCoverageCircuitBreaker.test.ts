@@ -127,7 +127,7 @@ async function run() {
     } as any,
   });
   assert.match(nestedDescriptivePrompt, /Q2\(a\): Q2\(a\(i\)\), Q2\(a\(ii\)\)/);
-  assert.match(nestedDescriptivePrompt, /each listed leaf independently/i);
+  assert.match(nestedDescriptivePrompt, /each listed\\s+leaf independently/i);
   assert.match(nestedDescriptivePrompt, /never return only Q2 or Q2\(a\)/i);
   assert.match(nestedDescriptivePrompt, /Each attempted leaf must appear exactly once/i);
 
