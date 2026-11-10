@@ -682,11 +682,14 @@ async function run() {
   assert.deepEqual(nestedReadModes, [false, true],
     'A confident first pass on one nested leaf must still trigger one bounded sibling-verification read.');
   assert.deepEqual(
-    nestedPartCoverage.attemptedQuestions.map((attempt) => attempt.fullQuestionCode).sort(),
-    ['Q2(a(i))', 'Q2(a(ii))'],
-    'The independent read must recover and preserve each attempted nested leaf separately.',
+    nestedPartCoverage.attemptedQuestions.map((attempt) => attempt.fullQuestionCode),
+    ['Q2(a)'],
+    'Roman answer blocks must consolidate into one scoreable lettered parent after coverage verification.',
   );
-  assert.ok(nestedPartCoverage.attemptedQuestions.every((attempt) => attempt.pages.length === 1 && attempt.pages[0] === 1));
+  assert.match(nestedPartCoverage.attemptedQuestions[0].studentSnippet || '', /Visible answer work for Q2\(a\(i\)\)/);
+  assert.match(nestedPartCoverage.attemptedQuestions[0].studentSnippet || '', /Visible answer work for Q2\(a\(ii\)\)/,
+    'The single parent attempt must preserve evidence from both Roman answer blocks.');
+  assert.deepEqual(nestedPartCoverage.attemptedQuestions[0].pages, [1]);
 
   clearCoverageMapCache();
   const mcqStructure: any = {
