@@ -51,6 +51,12 @@ assert.equal(
 );
 assert.equal(toCanonicalQuestionId('Q2(a(i))'), 'Q2(a)');
 assert.equal(toCanonicalQuestionId('Q2(a(ii))'), 'Q2(a)');
+assert.equal(toCanonicalQuestionId('Q2(a)', 'i'), 'Q2(a)',
+  'A separately supplied Roman child label must normalize to its parent scoreable ID.');
+assert.equal(toCanonicalQuestionId('Q2(a)', 'ii'), 'Q2(a)',
+  'A separately supplied sibling Roman label must normalize to the same parent scoreable ID.');
+assert.equal(toCanonicalQuestionId('Q2', 'iv'), 'Q2(iv)',
+  'A standalone Roman question part must remain independently scoreable.');
 assert.equal(toCanonicalQuestionId('Q2(a(i)(1))'), 'Q2(a)');
 assert.equal(toCanonicalQuestionId('Q2(a(1)(i))'), 'Q2(a(1))');
 assert.equal(toCanonicalQuestionId('Q2(i)'), 'Q2(i)', 'A standalone Roman-numbered part remains distinct.');
