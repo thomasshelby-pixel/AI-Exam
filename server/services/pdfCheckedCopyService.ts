@@ -732,17 +732,23 @@ export function buildStructuredAnnotations(
     item.answerBlocksObserved !== undefined ||
     item.hasUnresolvedContent !== undefined
   );
+  const resultRequiresPageReview = Boolean(
+    hasExplicitPageAnalysisAudit ||
+    resultJson?.validationStatus === 'NEEDS_REVIEW' ||
+    resultJson?.certificationStatus === 'REVIEW_REQUIRED' ||
+    resultJson?.isTechnicalReviewState === true
+  );
   for (let pageNumber = 1; pageNumber <= safeTotalPages; pageNumber++) {
-    if (!hasExplicitPageAnalysisAudit) continue;
+    if (!resultRequiresPageReview) continue;
     const audit = pageAuditByNumber.get(pageNumber);
     const reasons: string[] = [];
     if (!audit) {
       reasons.push('This original page has no page-level analysis audit record.');
     } else {
-      if (audit.analysisCompleted === false) {
+      if (audit.analysisCompleted !== true) {
         reasons.push(audit.analysisFailureCode
           ? `Page analysis did not complete (${audit.analysisFailureCode}).`
-          : 'Page analysis did not complete.');
+          : 'This original page has no completed page-analysis record.');
       }
       if (audit.mappingReviewReason) reasons.push(audit.mappingReviewReason);
       if (audit.unresolvedAnswerBlocks?.length) {
