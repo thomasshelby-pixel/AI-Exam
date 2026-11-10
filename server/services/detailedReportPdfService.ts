@@ -839,10 +839,10 @@ export async function generateDetailedReportPdf(
   });
 
   safeDrawText(p1, 'Q. No.', { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'Marks Awarded', { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'Max Marks', { x: 175, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'Score %', { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'ICAI Step Status & Key Remarks', { x: 310, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Topic / Statutory Provision', { x: 100, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Max', { x: 350, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Awarded', { x: 405, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Status', { x: 485, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
 
   y -= 18;
 
@@ -859,8 +859,12 @@ export async function generateDetailedReportPdf(
     );
     const qMarks = Number(q.marksAwarded ?? 0);
     const qMax = Number(q.maximumMarks ?? q.maxMarks ?? 0);
-    const qPct = qMax > 0 ? Math.round((qMarks / qMax) * 100) : 0;
-    const qRemarks = q.detailedFeedback || q.examinerRemarks || q.reasonForDeduction || q.remarks || 'Step evaluation completed';
+    const qStatusRaw = String(q.reportStatus || q.evaluationStatus || q.status || '').toLowerCase();
+    const isAttempted = q.attempted === true || (!['not_attempted', 'unattempted', 'skipped', 'blank'].includes(qStatusRaw) && q.attempted !== false);
+    const qStatus = qStatusRaw.includes('unclear') || qStatusRaw.includes('review')
+      ? 'Needs Review'
+      : isAttempted ? 'Attempted' : (q.counted === false ? 'Skipped (Choice)' : 'Unattempted');
+    const qTopic = String(q.topic || q.topicName || q.questionTitle || q.subjectTopic || 'Topic not specified').replace(/\\s+/g, ' ').slice(0, 48);
 
     if (y - 18 < 60) {
       pageNum++;
@@ -877,10 +881,10 @@ export async function generateDetailedReportPdf(
         color: brandBlue,
       });
       safeDrawText(currentScorecardPage, 'Q. No.', { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'Marks Awarded', { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'Max Marks', { x: 175, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'Score %', { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'ICAI Step Status & Key Remarks', { x: 310, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Topic / Statutory Provision', { x: 100, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Max', { x: 350, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Awarded', { x: 405, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Status', { x: 485, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
       y -= 18;
     }
 
@@ -894,12 +898,11 @@ export async function generateDetailedReportPdf(
       borderWidth: 0.5,
     });
 
-    safeDrawText(currentScorecardPage, qNum, { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
-    safeDrawText(currentScorecardPage, `${qMarks}`, { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
-    safeDrawText(currentScorecardPage, `${qMax}`, { x: 175, y: y - 13, size: 7.5, font: helvetica, color: darkSlate });
-    safeDrawText(currentScorecardPage, `${qPct}%`, { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: qPct >= 50 ? passGreen : failRed });
-    const remarkLines = wrapText(qRemarks, 62);
-    safeDrawText(currentScorecardPage, remarkLines[0] || qRemarks, { x: 310, y: y - 13, size: 7, font: helvetica, color: mutedSlate });
+    safeDrawText(currentScorecardPage, qNum, { x: 44, y: y - 13, size: 7.2, font: helveticaBold, color: darkSlate });
+    safeDrawText(currentScorecardPage, qTopic, { x: 100, y: y - 13, size: 6.8, font: helvetica, color: darkSlate });
+    safeDrawText(currentScorecardPage, `${qMax}`, { x: 350, y: y - 13, size: 7.2, font: helvetica, color: darkSlate });
+    safeDrawText(currentScorecardPage, `${qMarks}`, { x: 405, y: y - 13, size: 7.2, font: helveticaBold, color: darkSlate });
+    safeDrawText(currentScorecardPage, qStatus, { x: 485, y: y - 13, size: 6.8, font: helvetica, color: qStatus === 'Needs Review' ? accentGold : darkSlate });
 
     y -= 18;
   });
