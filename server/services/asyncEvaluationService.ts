@@ -1348,6 +1348,22 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
     const runPackage = evaluationResult.evaluationRunPackage;
     const renderManifest = runPackage?.renderManifest;
+    const pageAudit = runPackage?.pageCoverageAudit || [];
+    const pageAnalysisAuditPassed = Boolean(
+      pageAudit.length === originalPageCount &&
+      Array.from({ length: originalPageCount }, (_, index) => index + 1).every((pageNumber) => {
+        const page = pageAudit.find((item) => item.pageNumber === pageNumber);
+        return Boolean(
+          page &&
+          page.analysisCompleted === true &&
+          !page.analysisFailureCode &&
+          !page.hasUnresolvedContent &&
+          !page.mappingReviewReason &&
+          (page.answerBlocksObserved === undefined ||
+            page.answerBlocksObserved === page.accountedAnswerBlocks)
+        );
+      })
+    );
     const physicalPageRenderPassed = Boolean(
       renderManifest?.isRenderValid === true &&
       renderManifest?.isAllPagesRendered === true &&
@@ -1358,10 +1374,13 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     );
     const checkedCopyArtifactReady = checkedCopyStatus === 'READY';
 
-    // A valid score is not enough: certification also requires a saved checked
-    // copy proving that every original page and every attempted question was
-    // physically annotated. Missing render evidence keeps the result in review.
+    // A valid score is not enough: certification also requires (1) a completed
+    // analysis disposition for every source page, (2) a saved checked copy, and
+    // (3) physical render proof for every original page and attempted question.
     const renderCompletenessErrors = [
+      ...(!pageAnalysisAuditPassed
+        ? [`PAGE_ANALYSIS_COVERAGE_INCOMPLETE: ${pageAudit.filter((page) => page.analysisCompleted === true && !page.hasUnresolvedContent).length}/${originalPageCount} source pages have a complete, resolved analysis audit.`]
+        : []),
       ...(!checkedCopyArtifactReady
         ? [`CHECKED_COPY_ARTIFACT_NOT_READY: Checked-copy artifact status is ${checkedCopyStatus}.`]
         : []),
@@ -1385,6 +1404,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       isMathConsistent &&
       evaluationValidationPassed &&
       supervisorApproved &&
+      pageAnalysisAuditPassed &&
       checkedCopyArtifactReady &&
       physicalPageRenderPassed;
 
