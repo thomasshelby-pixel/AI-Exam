@@ -723,10 +723,30 @@ export function validateAuthoritativeConsistency(
       }
     }
 
-    const expectedLost = Math.max(0, q.maximumMarks - q.marksAwarded);
+    const reviewFlags = new Set([
+      'REVIEW_REQUIRED',
+      'QUESTION_REFERENCE_REVIEW_REQUIRED',
+      'NEEDS_MAPPING_REVIEW',
+      'FAILED_TO_EVALUATE',
+      'TECHNICAL_FAILURE',
+      'MODEL_UNCERTAIN',
+      'HANDWRITING_UNCLEAR',
+      'UNSUPPORTED_ZERO_REQUIRES_REVIEW',
+      'RECHECK_RECOMMENDED',
+    ]);
+    const isProvisionalReviewQuestion =
+      q.status === 'unclear' ||
+      (Array.isArray(q.flags) && q.flags.some((flag) => reviewFlags.has(String(flag))));
+    // A review-pending award is provisional. No academic deduction is confirmed
+    // until the answer/reference is resolved, so marksLost must remain exactly 0.
+    const expectedLost = isProvisionalReviewQuestion
+      ? 0
+      : Math.max(0, q.maximumMarks - q.marksAwarded);
     if (Math.abs(q.marksLost - expectedLost) > 0.01) {
       errors.push(
-        `Question Q${qNum} marks lost mismatch: q.marksLost (${q.marksLost}) !== maximumMarks - marksAwarded (${expectedLost}).`
+        isProvisionalReviewQuestion
+          ? `Question Q${qNum} has provisional marksLost (${q.marksLost}); it must remain 0 until review is finalized.`
+          : `Question Q${qNum} marks lost mismatch: q.marksLost (${q.marksLost}) !== maximumMarks - marksAwarded (${expectedLost}).`
       );
     }
 
@@ -1160,10 +1180,10 @@ export function processEvaluationIntegrity(
           ? balancedComponents.reduce((sum, c) => sum + c.marksAwarded, 0)
           : finalAwarded)
       : 0;
-    const verifiedLost = unsupportedZeroNeedsReview || attemptDetectedButClassifiedBlank
+    // Human-review awards are provisional. Never persist an academic deduction
+    // until the reference/readability/technical ambiguity has been resolved.
+    const verifiedLost = finalNeedsHumanReview
       ? 0
-      : finalNeedsHumanReview
-        ? Math.max(0, Math.round((Number(rawQ.marksLost) || 0) * 4) / 4)
       : Math.max(0, Math.round((maxMarks - verifiedAwarded) * 4) / 4);
 
     let status: 'correct' | 'partially_correct' | 'incorrect' | 'not_attempted' | 'unclear' = 'correct';
