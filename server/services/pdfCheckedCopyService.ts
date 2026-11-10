@@ -808,7 +808,10 @@ export async function generateCheckedCopyPdf(
     let estimatedStandardHeight = 0;
     for (const qAnn of pageAnnotations) {
       const isMcq = qAnn.questionNumber.startsWith('MCQ');
-      if (isMcq) {
+      if (qAnn.reviewRequired) {
+        const reasonLines = wrapText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2);
+        estimatedStandardHeight += 58 + reasonLines.length * 8;
+      } else if (isMcq) {
         const optionStep = qAnn.steps[0];
         const rawFeedback = optionStep?.comment || '';
         const lineCount = rawFeedback ? Math.min(3, Math.ceil(rawFeedback.length / 32)) : 0;
@@ -828,13 +831,18 @@ export async function generateCheckedCopyPdf(
 
     for (const qAnn of pageAnnotations) {
       const isMcqAnnotation = qAnn.questionNumber.startsWith('MCQ');
+      const reviewLines = qAnn.reviewRequired
+        ? wrapText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2)
+        : [];
       const optionStep = qAnn.steps[0];
       const optionMatch = optionStep?.stepName.match(/Option:\s*([^|]+)\|\s*Key:\s*([^|]+)/i);
       const selectedOption = qAnn.studentSelectedOption || optionMatch?.[1]?.trim() || '-';
       const officialKey = qAnn.officialAnswer || optionMatch?.[2]?.trim() || '-';
-      const mcqStatus = qAnn.marksAwarded >= qAnn.maxMarks
-        ? 'CORRECT'
-        : qAnn.marksAwarded > 0 ? 'PARTIAL' : 'INCORRECT';
+      const mcqStatus = qAnn.reviewRequired
+        ? 'NEEDS REVIEW'
+        : qAnn.marksAwarded >= qAnn.maxMarks
+          ? 'CORRECT'
+          : qAnn.marksAwarded > 0 ? 'PARTIAL' : 'INCORRECT';
       const mcqFeedbackLines: string[] = [];
       const mcqFeedback = optionStep?.comment || '';
       if (mcqFeedback) {
@@ -890,8 +898,12 @@ export async function generateCheckedCopyPdf(
       // Preflight the whole canonical annotation before drawing any of it. A
       // page-height limit is an integrity failure, never a reason to drop the
       // current question or its remaining steps silently.
-      const qHeaderHeight = isCompactMode ? 30 : 36;
-      const qHeaderAdvance = isCompactMode ? 36 : 44;
+      const qHeaderHeight = qAnn.reviewRequired
+        ? (isCompactMode ? 42 : 48) + reviewLines.length * (isCompactMode ? 6 : 8)
+        : isCompactMode ? 30 : 36;
+      const qHeaderAdvance = qAnn.reviewRequired
+        ? qHeaderHeight + (isCompactMode ? 4 : 6)
+        : isCompactMode ? 36 : 44;
       const stepGap = isCompactMode ? 2.5 : 4;
 
       if (isMcqAnnotation) {
@@ -935,12 +947,14 @@ export async function generateCheckedCopyPdf(
         color: redExaminer,
       });
 
-      safeDrawText(page, `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
+      safeDrawText(page, qAnn.reviewRequired
+        ? 'NEEDS REVIEW'
+        : `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
         x: marginX + (isCompactMode ? 46 : 50),
         y: currY - (isCompactMode ? 12 : 14),
-        size: isCompactMode ? 9.5 : 10.5,
+        size: qAnn.reviewRequired ? 6.5 : isCompactMode ? 9.5 : 10.5,
         font: helveticaBold,
-        color: redExaminer,
+        color: qAnn.reviewRequired ? amberExaminer : redExaminer,
       });
 
       if (isMcqAnnotation) {
@@ -980,13 +994,28 @@ export async function generateCheckedCopyPdf(
         continue;
       }
 
-      safeDrawText(page, 'STEP-WISE EVALUATION', {
+      safeDrawText(page, qAnn.reviewRequired
+        ? 'SCORE WITHHELD - NOT AN ACADEMIC ZERO'
+        : 'STEP-WISE EVALUATION', {
         x: marginX + 6,
         y: currY - (isCompactMode ? 24 : 28),
-        size: isCompactMode ? 5.8 : 6.5,
+        size: qAnn.reviewRequired ? 5.2 : isCompactMode ? 5.8 : 6.5,
         font: helveticaBold,
-        color: darkSlate,
+        color: qAnn.reviewRequired ? amberExaminer : darkSlate,
       });
+      if (qAnn.reviewRequired) {
+        let reviewY = currY - (isCompactMode ? 34 : 40);
+        for (const line of reviewLines) {
+          safeDrawText(page, line, {
+            x: marginX + 6,
+            y: reviewY,
+            size: isCompactMode ? 4.4 : 4.8,
+            font: helvetica,
+            color: darkSlate,
+          });
+          reviewY -= (isCompactMode ? 5.5 : 7);
+        }
+      }
 
       currY -= qHeaderAdvance;
 
