@@ -39,7 +39,7 @@ assert.match(nestedDirective, /Do not merge this leaf with its parent/i);
 assert.match(nestedDirective, /each distinct, independently mark-bearing source criterion exactly once/i);
 assert.match(nestedDirective, /source's own component allocations/i);
 assert.match(nestedDirective, /visibly not attempted/i);
-assert.match(nestedDirective, /unreadable evidence requires UNCLEAR\/review/i);
+assert.match(nestedDirective, /unreadable\s+evidence requires UNCLEAR\/review/i);
 assert.match(nestedDirective, /no source criterion may be silently skipped or duplicated/i);
 assert.match(nestedDirective, /do not fabricate a balancing step/i);
 
