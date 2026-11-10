@@ -716,7 +716,7 @@ export function resolveContextualQuestionIdentity(options: {
   );
 
   if (matchingCanonicalIds.size === 1) {
-    return { canonicalId: Array.from(matchingCanonicalIds)[0], requiresReview: false };
+    return { canonicalId: Array.from(matchingCanonicalIds)[0]!, requiresReview: false };
   }
 
   return {
