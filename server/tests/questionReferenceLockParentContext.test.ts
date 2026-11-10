@@ -104,38 +104,51 @@ assert.equal(lockedQ6d.suggestedAnswerSlice.found, false);
 assert.equal(lockedQ6d.needsReview, true, 'A missing Q6(d) reference must be sent for human review, not treated as verified');
 
 
-// Universal nested numbering must lock each Roman-numbered leaf separately.
+// Roman child headings under a lettered part are now one reference/evaluation
+// slice. The slice must include every Roman clause and stop at the next letter.
 const nestedRomanAnswers = [
   'ANSWERS OF FACULTY MOCK',
   'Division B',
   '1. (a) Parent part overview.',
   '(i) First Roman sub-part.',
-  'Only-first evidence belongs to sub-part one.',
+  'Only-first evidence belongs to Roman sub-part one.',
   '(ii) Second Roman sub-part.',
-  'Only-second evidence belongs to sub-part two.',
-  '(1) First numeric child under sub-part two.',
-  'Only-numeric-one evidence.',
-  '(2) Second numeric child under sub-part two.',
-  'Only-numeric-two evidence.',
+  'Only-second evidence belongs to Roman sub-part two.',
+  '(1) Numeric detail below the Roman clauses.',
+  'Only numeric detail one evidence.',
+  '(2) Another numeric detail below the Roman clauses.',
+  'Only numeric detail two evidence.',
   '(b) Sibling alphabetic part.',
   'Sibling-b evidence must not leak into part a.',
-].join('\n');
-const nestedOne = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(i)', 'SA');
-assert.equal(nestedOne.found, true, 'The first Roman sub-part must resolve under its exact parent part.');
-assert.match(nestedOne.snippet, /Only-first evidence/);
-assert.doesNotMatch(nestedOne.snippet, /Only-second evidence|Sibling-b evidence/);
-const nestedTwo = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(ii)', 'SA');
-assert.equal(nestedTwo.found, true, 'The second Roman sub-part must remain a different reference slice.');
-assert.match(nestedTwo.snippet, /Only-second evidence/);
-assert.doesNotMatch(nestedTwo.snippet, /Only-first evidence|Sibling-b evidence/);
-const nestedNumericOne = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(ii)(1)', 'SA');
-assert.equal(nestedNumericOne.found, true, 'A numeric child beneath a Roman sub-part must resolve to its complete path.');
-assert.match(nestedNumericOne.snippet, /Only-numeric-one evidence/);
-assert.doesNotMatch(nestedNumericOne.snippet, /Only-numeric-two evidence/);
-const nestedNumericTwo = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a(ii)(2)', 'SA');
-assert.equal(nestedNumericTwo.found, true, 'A second numeric child must not be merged into its sibling.');
-assert.match(nestedNumericTwo.snippet, /Only-numeric-two evidence/);
-assert.doesNotMatch(nestedNumericTwo.snippet, /Only-numeric-one evidence|Sibling-b evidence/);
+].join('\\n');
+const nestedLetteredPart = extractLockedQuestionSlice(nestedRomanAnswers, '1', 'a', 'SA');
+assert.equal(nestedLetteredPart.found, true, 'The complete Q1(a) parent part must resolve.');
+assert.match(nestedLetteredPart.snippet, /Only-first evidence/);
+assert.match(nestedLetteredPart.snippet, /Only-second evidence/);
+assert.match(nestedLetteredPart.snippet, /Only numeric detail one evidence/);
+assert.match(nestedLetteredPart.snippet, /Only numeric detail two evidence/);
+assert.doesNotMatch(nestedLetteredPart.snippet, /Sibling-b evidence/);
+
+// Arabic children remain separate scoreable parts when they are directly
+// numbered under a lettered parent.
+const nestedNumericAnswers = [
+  'ANSWERS OF FACULTY MOCK',
+  'Division B',
+  'Question 7(a)(1) First numeric child with its own working and conclusion.',
+  'Only numeric one evidence.',
+  'Question 7(a)(2) Second numeric child with separate working and conclusion.',
+  'Only numeric two evidence.',
+  'Question 7(b) Sibling lettered part.',
+  'Sibling-b evidence must not leak into numeric children.',
+].join('\\n');
+const nestedNumericOne = extractLockedQuestionSlice(nestedNumericAnswers, '7', 'a(1)', 'SA');
+assert.equal(nestedNumericOne.found, true, 'The first Arabic child under Q7(a) must resolve independently.');
+assert.match(nestedNumericOne.snippet, /Only numeric one evidence/);
+assert.doesNotMatch(nestedNumericOne.snippet, /Only numeric two evidence|Sibling-b evidence/);
+const nestedNumericTwo = extractLockedQuestionSlice(nestedNumericAnswers, '7', 'a(2)', 'SA');
+assert.equal(nestedNumericTwo.found, true, 'The second Arabic child under Q7(a) must resolve independently.');
+assert.match(nestedNumericTwo.snippet, /Only numeric two evidence/);
+assert.doesNotMatch(nestedNumericTwo.snippet, /Only numeric one evidence|Sibling-b evidence/);
 // Dotted and named source headings must lock to the same universal canonical paths.
 const dottedAnswers = [
   'SUGGESTED ANSWERS',
@@ -187,41 +200,36 @@ assert.doesNotMatch(mixedLabelTwo.snippet, /Only mixed one evidence/);
 
 const nestedBracketAnswers = [
   'SUGGESTED ANSWERS',
-  'Question 6(a(i)) First nested-parenthesis answer with its own working and conclusion.',
+  'Question 6(a(i)) First Roman child answer with its own working and conclusion.',
   'Only nested-bracket evidence.',
-  'Question 6(a(ii)) Second nested-parenthesis answer with separate working and conclusion.',
+  'Question 6(a(ii)) Second Roman child answer with separate working and conclusion.',
   'Only nested-bracket sibling evidence.',
-].join('\n');
-const nestedBracketOne = extractLockedQuestionSlice(nestedBracketAnswers, '6', 'a(i)', 'SA');
-assert.equal(nestedBracketOne.found, true, 'The compact nested-bracket heading (a(i)) must resolve to Q6(a(i)).');
-assert.match(nestedBracketOne.snippet, /Only nested-bracket evidence/);
-assert.doesNotMatch(nestedBracketOne.snippet, /Only nested-bracket sibling evidence/);
-const nestedBracketTwo = extractLockedQuestionSlice(nestedBracketAnswers, '6', 'a(ii)', 'SA');
-assert.equal(nestedBracketTwo.found, true, 'Sibling nested-bracket headings must remain independently retrievable.');
-assert.match(nestedBracketTwo.snippet, /Only nested-bracket sibling evidence/);
-assert.doesNotMatch(nestedBracketTwo.snippet, /Only nested-bracket evidence/);
-// A paper may show only the parent question heading, then use compact
-// nested-parenthesis labels as bare child headings: (a(i)), (a(ii)).
-// Each leaf must be found independently and the first slice must stop at its sibling.
+  'Question 6(b) Sibling lettered part.',
+  'Lettered sibling evidence must not leak into Q6(a).',
+].join('\\n');
+const nestedBracketParent = extractLockedQuestionSlice(nestedBracketAnswers, '6', 'a', 'SA');
+assert.equal(nestedBracketParent.found, true, 'Compact nested Roman headings must resolve through their lettered parent.');
+assert.match(nestedBracketParent.snippet, /Only nested-bracket evidence/);
+assert.match(nestedBracketParent.snippet, /Only nested-bracket sibling evidence/);
+assert.doesNotMatch(nestedBracketParent.snippet, /Lettered sibling evidence/);
+
+// A document may have only the parent question heading and use compact
+// nested-parenthesis Roman labels as children. Both belong to Q8(a).
 const bareNestedParentAnswers = [
   'SUGGESTED ANSWERS',
   'Question 8 Parent question with nested Roman sub-parts.',
-  '(a(i)) First nested leaf with its own working and conclusion.',
-  'Only bare nested leaf one evidence.',
-  '(a(ii)) Second nested leaf with separate working and conclusion.',
-  'Only bare nested leaf two evidence.',
+  '(a(i)) First Roman child with its own working and conclusion.',
+  'Only bare nested child one evidence.',
+  '(a(ii)) Second Roman child with separate working and conclusion.',
+  'Only bare nested child two evidence.',
   '(b) Sibling top-level alphabetic answer.',
-  'Top-level sibling evidence must not leak into nested leaves.',
-].join('\n');
-const bareNestedOne = extractLockedQuestionSlice(bareNestedParentAnswers, '8', 'a(i)', 'SA');
-assert.equal(bareNestedOne.found, true,
-  'A bare compact nested heading (a(i)) below Question 8 must resolve to Q8(a(i)).');
-assert.match(bareNestedOne.snippet, /Only bare nested leaf one evidence/);
-assert.doesNotMatch(bareNestedOne.snippet, /Only bare nested leaf two evidence|Top-level sibling evidence/);
-const bareNestedTwo = extractLockedQuestionSlice(bareNestedParentAnswers, '8', 'a(ii)', 'SA');
-assert.equal(bareNestedTwo.found, true,
-  'A bare compact sibling heading (a(ii)) below Question 8 must resolve to Q8(a(ii)).');
-assert.match(bareNestedTwo.snippet, /Only bare nested leaf two evidence/);
-assert.doesNotMatch(bareNestedTwo.snippet, /Only bare nested leaf one evidence|Top-level sibling evidence/);
+  'Top-level sibling evidence must not leak into part a.',
+].join('\\n');
+const bareNestedParent = extractLockedQuestionSlice(bareNestedParentAnswers, '8', 'a', 'SA');
+assert.equal(bareNestedParent.found, true,
+  'Compact nested (a(i)) / (a(ii)) headings must be retrieved as one Q8(a) reference.');
+assert.match(bareNestedParent.snippet, /Only bare nested child one evidence/);
+assert.match(bareNestedParent.snippet, /Only bare nested child two evidence/);
+assert.doesNotMatch(bareNestedParent.snippet, /Top-level sibling evidence/);
 
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');

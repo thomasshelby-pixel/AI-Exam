@@ -10,16 +10,14 @@ import {
 } from '../services/evaluationIntegrityHardening.js';
 
 const validNestedIds = [
-  'Q2(a(i))',
-  'Q2(a(ii))',
-  'Q4(a(i))',
-  'Q4(a(ii))',
-  'Q5(b(i))',
-  'Q5(c(i))',
-  'Q6(5(i))',
-  'Q6(5(ii))',
+  'Q2(a(1))',
+  'Q2(b(2))',
+  'Q6(5)',
+  'Q6(6)',
   'Q3(1(1))',
-  'Q4(iv(iv))',
+  'Q3(1(2))',
+  'Q4(iv)',
+  'Q5(2)',
 ];
 
 for (const id of validNestedIds) {
@@ -51,7 +49,14 @@ assert.equal(
   false,
   'A separate Roman child below an alphabetic parent is valid.',
 );
-assert.equal(toCanonicalQuestionId('Q2(a(i))'), 'Q2(a(i))');
+assert.equal(toCanonicalQuestionId('Q2(a(i))'), 'Q2(a)');
+assert.equal(toCanonicalQuestionId('Q2(a(ii))'), 'Q2(a)');
+assert.equal(toCanonicalQuestionId('Q2(a(i)(1))'), 'Q2(a)');
+assert.equal(toCanonicalQuestionId('Q2(a(1)(i))'), 'Q2(a(1))');
+assert.equal(toCanonicalQuestionId('Q2(i)'), 'Q2(i)', 'A standalone Roman-numbered part remains distinct.');
+assert.equal(toCanonicalQuestionId('Q2(iv(1))'), 'Q2(iv(1))', 'A Roman parent with an Arabic child remains distinct.');
+assert.equal(toCanonicalQuestionId('Q2(1)(i)'), 'Q2(1)', 'Roman children below a numeric parent are folded into that parent.');
+assert.equal(toCanonicalQuestionId('Q2(iv)(i)'), 'Q2(iv)', 'Roman child clauses are folded even when the parent label is Roman.');
 
 const paperStructure: any = {
   paperTitle: 'Nested numbering regression',

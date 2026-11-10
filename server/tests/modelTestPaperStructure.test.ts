@@ -237,15 +237,11 @@ assert.equal(unparseableGate.passed, false);
 assert.ok(unparseableGate.failedInvariants.some((message) => message.includes('QUESTION_PAPER_NOT_PARSED')));
 
 
-// Universal hierarchical sub-part recognition. The numbering style is opaque:
-// letters, Roman numerals, Arabic numerals, dotted paths and mixed nesting all
-// remain separate authoritative identities with their own maximum marks.
+// Roman-numbered children beneath a lettered part are grouped into that
+// parent scoreable question. Arabic children and standalone Roman parts remain distinct.
 const universalPartSource = [
-  'Question 1(a) - 10 Marks',
   'Question 1(a)(i) - 2 Marks',
   'Question 1(a)(ii) - 3 Marks',
-  'Question 1(a)(1) - 1 Mark',
-  'Question 1(a)(2) - 4 Marks',
   'Question 1(b) - 5 Marks',
   'Question 2 Part IV - 3 Marks',
   'Question 2 Clause 2 - 4 Marks',
@@ -253,14 +249,11 @@ const universalPartSource = [
   'Question 3.1.2 - 2 Marks',
   'Question 4.iv.1 - 2 Marks',
   'Question 4.iv.2 - 3 Marks',
-].join('\n');
+].join('\\n');
 const universalParts = extractSubQuestionsFromText(universalPartSource);
 const universalMaxima = new Map(universalParts.map((part) => [part.fullQuestionCode, part.maximumMarks]));
 for (const [code, marks] of [
-  ['Q1(a(i))', 2],
-  ['Q1(a(ii))', 3],
-  ['Q1(a(1))', 1],
-  ['Q1(a(2))', 4],
+  ['Q1(a)', 5],
   ['Q1(b)', 5],
   ['Q2(iv)', 3],
   ['Q2(2)', 4],
@@ -269,52 +262,111 @@ for (const [code, marks] of [
   ['Q4(iv(1))', 2],
   ['Q4(iv(2))', 3],
 ] as const) {
-  assert.equal(universalMaxima.get(code), marks, code + ' must retain its own official maximum marks.');
+  assert.equal(universalMaxima.get(code), marks, code + ' must retain its source-backed maximum.');
 }
-assert.equal(universalMaxima.has('Q1(a)'), false, 'A parent with separately-marked children must be removed from scorable leaf IDs.');
+assert.equal(universalMaxima.has('Q1(a)(i)'), false,
+  'Roman child labels must not become separate scoreable question IDs.');
+assert.equal(universalMaxima.has('Q1(a)(ii)'), false,
+  'A second Roman child must be absorbed into the same parent part.');
+assert.equal(toCanonicalQuestionId('Q1(1)(i)'), 'Q1(1)',
+  'Roman children under a numeric parent must be folded as well.');
+assert.equal(toCanonicalQuestionId('Q1(iv)(i)'), 'Q1(iv)',
+  'Roman children below a Roman parent are also absorbed.');
+const rawNestedIdentity = parseCanonicalQuestionIdentity('Q1(a)(ii)');
+assert.equal(rawNestedIdentity.canonicalId, 'Q1(a)');
+assert.deepEqual(rawNestedIdentity.subQuestionPath, ['a']);
+assert.deepEqual(rawNestedIdentity.sourceSubQuestionPath, ['a', 'ii'],
+  'The original Roman path must remain available for source-mark aggregation after scoreable identity is flattened.');
+
+// An explicit parent total takes precedence over child allocations; never add
+// the same marks twice when the source states both a total and its breakdown.
+const explicitParentTotal = extractSubQuestionsFromText([
+  'Question 5(a) - 10 Marks',
+  'Question 5(a)(i) - 2 Marks',
+  'Question 5(a)(ii) - 3 Marks',
+].join('\\n'));
+assert.deepEqual(
+  explicitParentTotal.map((part) => [part.fullQuestionCode, part.maximumMarks]),
+  [['Q5(a)', 10]],
+  'An explicit lettered-part maximum must not be inflated by its Roman rubric rows.',
+);
+
+const sourceDrivenRomanParts = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'MTP',
+  officialPaperMaxMarks: 100,
+  questionPaperText: [
+    'MODEL TEST PAPER 1 QUESTION PAPER',
+    'Question 11(a)(i) - 2 Marks',
+    'Question 11(a)(ii) - 3 Marks',
+    'Question 11(b) - 4 Marks',
+    'Question 12(a) - 10 Marks',
+    'Question 12(a)(i) - 2 Marks',
+    'Question 12(a)(ii) - 3 Marks',
+  ].join('\\n'),
+});
+const sourceDrivenRomanMaxima = new Map(sourceDrivenRomanParts.subQuestions.map((part) => [
+  part.fullQuestionCode,
+  part.maximumMarks,
+]));
+assert.deepEqual(
+  Array.from(sourceDrivenRomanMaxima.entries()).sort((left, right) => left[0].localeCompare(right[0])),
+  [['Q11(a)', 5], ['Q11(b)', 4], ['Q12(a)', 10]],
+  'The MTP inventory must expose only lettered scoreable parts, sum Roman-only allocations, and respect explicit parent maxima.',
+);
+const groupedQuestionText = sourceDrivenRomanParts.subQuestions.find((part) => part.fullQuestionCode === 'Q11(a)')?.questionText || '';
+assert.match(groupedQuestionText, /Question 11\\(a\\)\\(i\\)/i);
+assert.match(groupedQuestionText, /Question 11\\(a\\)\\(ii\\)/i,
+  'The parent question reference slice must retain all Roman child source content.');
 assert.equal(
-  toCanonicalQuestionId('Q1(a(iii))', undefined, universalParts),
-  'Q1(a(iii))',
-  'An unknown nested part must not be fuzzy-mapped to another part with the same leading letter.',
+  toCanonicalQuestionId('Q1(a)(iii)', undefined, universalParts),
+  'Q1(a)',
+  'Unknown Roman child labels intentionally resolve to their lettered parent.',
+);
+assert.equal(
+  toCanonicalQuestionId('Q1(a)(i)'),
+  toCanonicalQuestionId('Q1(a)(ii)'),
+  'Roman-numbered siblings below the same lettered part share one canonical identity.',
 );
 assert.notEqual(
-  toCanonicalQuestionId('Q1(a(i))'),
-  toCanonicalQuestionId('Q1(a(ii))'),
-  'Roman-numeral siblings must have independent canonical identities.',
-);
-assert.notEqual(
-  toCanonicalQuestionId('Q1(a(1))'),
-  toCanonicalQuestionId('Q1(a(2))'),
-  'Arabic-numbered siblings must have independent canonical identities.',
+  toCanonicalQuestionId('Q1(a)(1)'),
+  toCanonicalQuestionId('Q1(a)(2)'),
+  'Arabic-numbered siblings remain independently identifiable.',
 );
 assert.equal(
   parseCanonicalQuestionIdentity('Question 4 Part IV Clause 2').canonicalId,
   'Q4(iv(2))',
-  'Named Part/Clause prefixes must produce a reusable hierarchical identity.',
+  'Named Part/Clause numbering outside a lettered parent remains hierarchical.',
 );
+
 const nestedParentDedup = deduplicateQuestionList([
   { fullQuestionCode: 'Q7(a)', questionNumber: '7', subQuestion: 'a', maximumMarks: 10 },
   { fullQuestionCode: 'Q7(a(i))', questionNumber: '7', subQuestion: 'a(i)', maximumMarks: 4 },
   { fullQuestionCode: 'Q7(a(ii))', questionNumber: '7', subQuestion: 'a(ii)', maximumMarks: 6 },
 ]);
 assert.deepEqual(
-  nestedParentDedup.map((item) => item.fullQuestionCode).sort(),
-  ['Q7(a(i))', 'Q7(a(ii))'],
-  'Deduplication must remove both intermediate and root containers while preserving nested leaf parts.',
+  nestedParentDedup.map((item) => item.fullQuestionCode),
+  ['Q7(a)'],
+  'All Roman children and their lettered parent must collapse into one scoreable part.',
 );
 
-// The integrity validator must catch intermediate nested parents too.
+// Arabic nested leaves are still separate, so both root and intermediate
+// containers remain detectable by the structural integrity validator.
 const nestedParentValidation = validateQuestionDeduplication([
   { fullQuestionCode: 'Q8', questionNumber: '8' },
   { fullQuestionCode: 'Q8(a)', questionNumber: '8', subQuestion: 'a' },
-  { fullQuestionCode: 'Q8(a(i))', questionNumber: '8', subQuestion: 'a(i)' },
-  { fullQuestionCode: 'Q8(a(ii))', questionNumber: '8', subQuestion: 'a(ii)' },
+  { fullQuestionCode: 'Q8(a(1))', questionNumber: '8', subQuestion: 'a(1)' },
+  { fullQuestionCode: 'Q8(a(2))', questionNumber: '8', subQuestion: 'a(2)' },
 ]);
 assert.equal(nestedParentValidation.isValid, false);
 assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8'));
 assert.ok(nestedParentValidation.parentChildCollisions.includes('Q8(a)'),
-  'A nested leaf must flag its immediate parent container, not only the root question.');
+  'An Arabic nested leaf must still flag its immediate parent container.');
 
+// Detected Roman child occurrences are coalesced into one attempt and preserve
+// every source page rather than generating separate leaf tasks.
 const normalizedDetectedAttempts = normalizeDetectedAttemptHierarchy([
   { fullQuestionCode: 'Q1', pages: [1] },
   { fullQuestionCode: 'Q1(a)', pages: [1, 2] },
@@ -325,22 +377,18 @@ const normalizedDetectedAttempts = normalizeDetectedAttemptHierarchy([
 ]);
 assert.deepEqual(
   normalizedDetectedAttempts.attemptedQuestions.map((attempt) => attempt.fullQuestionCode).sort(),
-  ['Q1(a(i))', 'Q1(a(ii))', 'Q1(b)', 'Q2(a)'],
-  'Detected root/intermediate containers must be removed only when canonical descendant leaves are present.',
+  ['Q1(a)', 'Q1(b)', 'Q2(a)'],
+  'Roman child detections must be represented by their parent lettered question.',
 );
 assert.deepEqual(
-  normalizedDetectedAttempts.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'Q1(a(i))')?.pages,
-  [1, 2],
-  'Parent/container pages must transfer to the nested leaf for complete answer-page context.',
-);
-assert.ok(
-  normalizedDetectedAttempts.attemptedQuestions.some((attempt) => attempt.fullQuestionCode === 'Q2(a)'),
-  'A parent-only detection with no detected child must be preserved for review rather than guessed.',
+  normalizedDetectedAttempts.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'Q1(a)')?.pages,
+  [1, 2, 3],
+  'The consolidated part must retain all pages from its parent and Roman child detections.',
 );
 
 const nestedAttemptInventory = buildCanonicalQuestionInventory({
   paperStructure: {
-    paperTitle: 'Nested Attempt Regression',
+    paperTitle: 'Roman Child Aggregation Regression',
     totalPaperMaxMarks: 10,
     questions: [],
     subQuestions: [
@@ -351,6 +399,11 @@ const nestedAttemptInventory = buildCanonicalQuestionInventory({
   } as any,
   totalPaperMaxMarks: 10,
 });
+assert.deepEqual(
+  nestedAttemptInventory.items.map((item) => [item.questionId, item.maxMarks]),
+  [['Q1(a)', 5]],
+  'Legacy/source structures with Roman child rows must become one parent inventory item with summed child marks.',
+);
 const nestedAttemptMap = detectIndependentAttempts({
   inventory: nestedAttemptInventory,
   rawPageOccurrences: [
@@ -360,20 +413,20 @@ const nestedAttemptMap = detectIndependentAttempts({
   ],
 });
 assert.deepEqual(
-  Array.from(nestedAttemptMap.keys()).sort(),
-  ['Q1(a(i))', 'Q1(a(ii))'],
-  'Canonical attempt detection must remove intermediate parents with detected nested leaves.',
+  Array.from(nestedAttemptMap.keys()),
+  ['Q1(a)'],
+  'All Roman children must coalesce into one independent attempt.',
 );
 assert.deepEqual(
-  nestedAttemptMap.get('Q1(a(i))')?.sourcePages,
-  [1, 2],
-  'Intermediate parent pages must be transferred to the nested leaf in the durable attempt manifest.',
+  nestedAttemptMap.get('Q1(a)')?.sourcePages,
+  [1, 2, 3],
+  'The parent attempt must keep every Roman child source page.',
 );
 
 const nestedContinuationAttempts = detectIndependentAttempts({
   inventory: nestedAttemptInventory,
   rawPageOccurrences: [
-    { questionCode: 'Q1(a(i))', pageNumber: 1, studentSnippet: '(i) First clause solution.' },
+    { questionCode: 'Q1(a)(i)', pageNumber: 1, studentSnippet: '(i) First clause solution.' },
     {
       questionCode: 'Q1(a)',
       pageNumber: 2,
@@ -384,35 +437,70 @@ const nestedContinuationAttempts = detectIndependentAttempts({
 });
 assert.deepEqual(
   Array.from(nestedContinuationAttempts.keys()),
-  ['Q1(a(i))', 'Q1(a(ii))'],
-  'A continuation containing a Roman-numeral child label must resolve to that exact nested leaf.',
+  ['Q1(a)'],
+  'A Roman-labelled continuation must remain part of the same lettered evaluation.',
 );
+assert.deepEqual(nestedContinuationAttempts.get('Q1(a)')?.sourcePages, [1, 2]);
 
-// Contextual numbering under a single parent header must also retain each level.
+// Contextual Roman headings beneath one question/lettered parent aggregate
+// their source marks into one Q9(a) maximum.
 const contextualParts = extractSubQuestionsFromText([
   'Question 9',
-  '(a) Parent part - 5 Marks',
+  '(a) Parent part overview.',
   '(i) First roman clause - 2 Marks',
   '(ii) Second roman clause - 3 Marks',
-].join('\n'));
+  '(b) Sibling lettered part - 4 Marks',
+].join('\\n'));
 assert.deepEqual(
   contextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-  [['Q9(a(i))', 2], ['Q9(a(ii))', 3]],
-  'Bare contextual sub-part labels must be attached to the active parent and retained as separate leaves.',
+  [['Q9(a)', 5], ['Q9(b)', 4]],
+  'Contextual Roman children must aggregate under the active lettered question.',
 );
 const namedContextualParts = extractSubQuestionsFromText([
   'Question 10 Part IV',
   'Clause 1 - 2 Marks',
   'Clause 2 - 3 Marks',
-].join('\n'));
+].join('\\n'));
 assert.deepEqual(
   namedContextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
   [['Q10(iv(1))', 2], ['Q10(iv(2))', 3]],
-  'A named parent heading and its named child clauses must create separately marked nested leaves.',
+  'A named Roman parent followed by Arabic clauses must retain distinct numeric children.',
 );
 
 
- // PYQ and MTP must not inherit the old hardcoded Q1-Q6 marks when their
+// A numeric detail nested inside a Roman clause must remain within the
+// lettered parent after the Roman layer is flattened, while direct Arabic
+// sub-parts under (a) remain separate scoreable parts.
+const romanWithNumericDetails = extractSubQuestionsFromText([
+  'Question 13',
+  '(a) Main lettered answer.',
+  '(i) First Roman clause - 2 Marks',
+  '(1) First detail inside Roman clause - 1 Mark',
+  '(2) Second detail inside Roman clause - 1 Mark',
+  '(ii) Second Roman clause - 2 Marks',
+  '(b) Separate lettered sibling - 3 Marks',
+].join('\\n'));
+assert.deepEqual(
+  romanWithNumericDetails.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  [['Q13(a)', 6], ['Q13(b)', 3]],
+  'All detail rows inside Roman children must be included in the lettered part maximum.',
+);
+
+const directArabicChildren = extractSubQuestionsFromText([
+  'Question 14',
+  '(a) Parent heading.',
+  '(1) First independently numbered Arabic part - 2 Marks',
+  '(2) Second independently numbered Arabic part - 3 Marks',
+  '(b) Separate lettered sibling - 1 Mark',
+].join('\\n'));
+assert.deepEqual(
+  directArabicChildren.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+  [['Q14(a(1))', 2], ['Q14(a(2))', 3], ['Q14(b)', 1]],
+  'Arabic children directly under the lettered parent must stay independently scoreable.',
+);
+
+
+// PYQ and MTP must not inherit the old hardcoded Q1-Q6 marks when their
  // independently supplied source text cannot be parsed.
 for (const materialType of ['PYQ', 'MTP'] as const) {
   const unparseable = getAuthoritativePaperStructure({

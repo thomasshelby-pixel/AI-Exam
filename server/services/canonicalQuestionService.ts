@@ -19,7 +19,8 @@ export interface CanonicalQuestionIdentity {
   canonicalId: string;       // e.g. 'Q3(b)', 'Q4(b)', 'Q1', 'MCQ1', 'Q6(a)(1)'
   questionNumber: string;    // e.g. '3', '4', '1', '6'
   subQuestion?: string;      // e.g. 'b', 'a(i)(1)'
-  subQuestionPath?: string[]; // Every numbering level, e.g. ['a', 'ii', '1']
+  subQuestionPath?: string[]; // Normalized scoreable path, e.g. ['a'] for Q3(a)(i)
+  sourceSubQuestionPath?: string[]; // Original source path retained for distinct mark-allocation aggregation
   parentQuestionId: string;  // e.g. 'Q3', 'Q4', 'Q1', 'Q6'
   isMcq: boolean;
   isAlternative?: boolean;
@@ -62,9 +63,8 @@ function findBalancedClosing(source: string, start: number, opening: '(' | '['):
 }
 
 /**
- * Extract every level of a question's numbering path. The tokens are deliberately
- * opaque: letters, Arabic numerals, Roman numerals and future numbering systems
- * are identities, not punctuation that may be discarded.
+ * Extract every level of a question's numbering path before scoreable-path normalization.
+ * The original path remains available for safe aggregation of source allocations.
  */
 function parseQuestionPartPath(source: string, allowBareToken = false): string[] {
   let rest = String(source || '').trim();
@@ -161,11 +161,29 @@ const ROMAN_QUESTION_PART_TOKENS = new Set([
 ]);
 
 /**
+ * CA descriptive evaluation treats a parent part as the scoreable unit.
+ * Roman-numbered children below a non-Roman parent (for example Q2(a)(i),
+ * Q2(1)(ii), or compact Q2(a(ii))) are sections of that SAME question.
+ * A first Roman child collapses its complete child branch into the parent;
+ * later Roman levels are removed while preserving intervening Arabic parts.
+ * A standalone Roman part such as Q2(iv) remains distinct.
+ */
+export function normalizeCanonicalQuestionPartPath(parts: string[]): string[] {
+  const path = (Array.isArray(parts) ? parts : [])
+    .map((part) => String(part || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (path.length > 1 && !ROMAN_QUESTION_PART_TOKENS.has(path[0]) && ROMAN_QUESTION_PART_TOKENS.has(path[1])) {
+    return [path[0]];
+  }
+  return path.filter((part, index) => index === 0 || !ROMAN_QUESTION_PART_TOKENS.has(part));
+}
+
+/**
  * Detect an actual repeated alphabetic sub-part echo such as Q3(b(b)).
  *
- * Nested parentheses alone are valid CA numbering: Q2(a(i)), Q4(a(ii)),
- * Q6(5(i)) and Q6(5(ii)) are legitimate independent leaves. This checks the
- * raw path before the canonical parser collapses repeated alphabetic OCR echoes.
+ * Nested parentheses alone are not malformed. The canonical parser folds
+ * Roman-numbered child clauses into their parent scoreable part; this check
+ * independently rejects repeated alphabetic OCR echoes in the raw source path.
  */
 export function hasInvalidRecursiveQuestionNesting(
   questionNumberInput?: string | number | null,
@@ -224,9 +242,10 @@ function buildCanonicalQuestionCode(questionNumber: string, parts: string[]): st
 }
 
 /**
- * Normalizes questionNumber and subQuestion into a stable hierarchical ID.
- * Every explicitly numbered level is retained: Q3(a)(i), Q3(a)(ii),
- * Q3(a)(1), Q3(a)(2), Q3.1.2 and Q3(IV) remain distinct.
+ * Normalizes questionNumber and subQuestion into a stable scoreable ID.
+ * Roman child clauses under a lettered part are grouped into that parent:
+ * Q3(a)(i) and Q3(a)(ii) both become Q3(a). Arabic children such as Q3(a)(1)
+ * and standalone Roman parts such as Q3(iv) remain distinct.
  */
 export function toCanonicalQuestionId(
   questionNumberInput?: string | number | null,
@@ -292,7 +311,8 @@ export function toCanonicalQuestionId(
 /**
  * Parses any arbitrary question string into a complete CanonicalQuestionIdentity.
  * Handles alphabetic, Arabic, Roman-numeral, dotted and arbitrarily nested part
- * labels while retaining each level as a separate canonical path segment.
+ * labels while retaining the original source path and returning a normalized
+ * scoreable path with Roman child clauses folded into their parent part.
  */
 export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuestionIdentity {
   let trimmed = String(rawCode || '').trim();
@@ -342,7 +362,8 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
     if (parsedParts.length > 1 && /^(?:cont|contd|continued|continuation)$/i.test(parsedParts[parsedParts.length - 1])) {
       parsedParts = parsedParts.slice(0, -1);
     }
-    const parts = parsedParts;
+    const sourceParts = [...parsedParts];
+    const parts = normalizeCanonicalQuestionPartPath(sourceParts);
     const canonicalId = buildCanonicalQuestionCode(qNum, parts);
     const parentQuestionId = buildCanonicalQuestionCode(qNum, parts.slice(0, -1));
     const subQuestion = parts.length
@@ -353,6 +374,7 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
       questionNumber: qNum,
       subQuestion,
       subQuestionPath: parts,
+      sourceSubQuestionPath: sourceParts,
       parentQuestionId,
       isMcq: false,
       isAlternative,

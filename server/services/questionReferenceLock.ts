@@ -10,7 +10,7 @@
  */
 
 import crypto from 'node:crypto';
-import { parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
+import { normalizeCanonicalQuestionPartPath, parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 
 export interface LockedReferenceSlice {
   found: boolean;
@@ -159,7 +159,8 @@ function findSubQuestionInsideParent(
 
   const namedHeader = /^\s*(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(\d{1,2})\b/i;
   const numberedHeader = /^\s*(\d{1,2})\s*[.)]\s*(?=\(|[A-Z]|$)/;
-  // Accept flat labels (a)(i) and compact nested labels (a(i)) as separate leaves.
+  // Accept flat labels (a)(i) and compact nested labels (a(i)); Roman children
+  // normalize to their lettered parent rather than becoming separate tasks.
   const partLabel = /^\s*((?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+(?:\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+)*|(?:\(\s*[a-zA-Z0-9]+\s*(?:\(\s*[a-zA-Z0-9]+\s*\)\s*)+\))|(?:\(\s*[a-zA-Z0-9]+\s*\)|\[\s*[a-zA-Z0-9]+\s*\])+|[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)])(?=\s|[-–—:]|$)/i;
   const roman = new Set([
     'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
@@ -224,8 +225,8 @@ function findSubQuestionInsideParent(
       const parentPrefix = trimmed.match(/^(?:(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(?:NO\.?)?\s*)?\d{1,3}\s*[.)]?\s*/i);
       const parentRemainder = parentPrefix ? trimmed.slice(parentPrefix[0].length) : '';
       const explicitIdentity = parseCanonicalQuestionIdentity('Q' + target + parentRemainder);
-      activePath = [...(explicitIdentity.subQuestionPath || [])];
-      if (samePath(activePath, targetPath)) return index;
+      activePath = [...(explicitIdentity.sourceSubQuestionPath || explicitIdentity.subQuestionPath || [])];
+      if (samePath(normalizeCanonicalQuestionPartPath(activePath), targetPath)) return index;
       continue;
     }
 
@@ -238,9 +239,9 @@ function findSubQuestionInsideParent(
       ? 'Q' + target + normalizedLabel
       : 'Q' + target + '(' + normalizedLabel.replace(/[.)]$/, '') + ')';
     const parsedLabel = parseCanonicalQuestionIdentity(labelCode);
-    const incoming = parsedLabel.subQuestionPath || [];
+    const incoming = parsedLabel.sourceSubQuestionPath || parsedLabel.subQuestionPath || [];
     activePath = combine(activePath, incoming);
-    if (samePath(activePath, targetPath)) return index;
+    if (samePath(normalizeCanonicalQuestionPartPath(activePath), targetPath)) return index;
   }
 
   return -1;
@@ -301,7 +302,7 @@ export function extractLockedQuestionSlice(
   if (canonicalSuffixPattern) {
     startRegexes.push(new RegExp(
       '^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*(?:NO\\.?)?\\s*)?' +
-      qNum + '\\s*\\.?\\s*' + canonicalSuffixPattern + '(?=\\s|[-–—:.)]|$)',
+      qNum + '\\s*\\.?\\s*' + canonicalSuffixPattern + '(?=\\s|[-–—:.)]|\\(|\\[|$)',
       'i',
     ));
   }
@@ -470,13 +471,18 @@ export function extractLockedQuestionSlice(
     };
   }
 
-  // Determine stop boundary using the complete numbering path, not only
-  // the first alphabetic letter. For Q1(a)(i), the next (ii) must stop the
-  // current reference slice even though both share the same top-level (a).
+  // Determine the stop boundary using the normalized scoreable path. Roman
+  // headings (i), (ii), etc. below Q1(a) remain inside the same reference slice;
+  // the next top-level lettered sibling (b) ends the slice.
   const firstLine = lineOffset > 0 ? lines[startIndex].slice(lineOffset).trim() : lines[startIndex];
   const capturedLines: string[] = [firstLine];
   const targetSubPath = subQ && subQ.toUpperCase() !== 'MCQ' ? getSubQuestionPath(subQ) : [];
-  let activeBoundaryPath = [...targetSubPath];
+  const firstExplicitQuestion = firstLine.trim().match(/^(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*(?:NO\\.?)?\\s*)?(\\d{1,3})\\s*(.*)$/i);
+  const initialSourcePath = firstExplicitQuestion &&
+    String(Number(firstExplicitQuestion[1])) === String(Number(qNum))
+      ? (parseCanonicalQuestionIdentity('Q' + qNum + firstExplicitQuestion[2]).sourceSubQuestionPath || [])
+      : [];
+  let activeBoundaryPath = initialSourcePath.length ? initialSourcePath : [...targetSubPath];
   const nextQ = String(num + 1);
   const romanTokens = new Set(['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx']);
   const pathFamily = (token: string, depth: number): string => {
@@ -529,7 +535,8 @@ export function extractLockedQuestionSlice(
       let candidatePath: string[] = [];
       if (explicitQuestion && String(Number(explicitQuestion[1])) === String(Number(qNum))) {
         const tail = explicitQuestion[2].replace(/^[-–—:]\s*/, '').replace(/^\.(?=\s*[\(\[])/, '');
-        candidatePath = parseCanonicalQuestionIdentity('Q' + qNum + tail).subQuestionPath || [];
+        const parsedCandidate = parseCanonicalQuestionIdentity('Q' + qNum + tail);
+        candidatePath = parsedCandidate.sourceSubQuestionPath || parsedCandidate.subQuestionPath || [];
         if (candidatePath.length === 0 && /^(?:QUESTION|Q\.?|ANSWER|ANS\.?)/i.test(trimmed)) {
           isStop = true;
         }
@@ -539,18 +546,20 @@ export function extractLockedQuestionSlice(
           const bareLabelCode = /^[([{]/.test(barePart[1])
             ? 'Q' + qNum + barePart[1]
             : 'Q' + qNum + '(' + barePart[1].replace(/[.)]$/, '') + ')';
-          const incoming = parseCanonicalQuestionIdentity(bareLabelCode).subQuestionPath || [];
+          const parsedIncoming = parseCanonicalQuestionIdentity(bareLabelCode);
+          const incoming = parsedIncoming.sourceSubQuestionPath || parsedIncoming.subQuestionPath || [];
           candidatePath = mergeBoundaryPath(activeBoundaryPath, incoming);
           activeBoundaryPath = candidatePath;
         }
       }
 
       if (candidatePath.length > 0) {
+        const normalizedCandidatePath = normalizeCanonicalQuestionPartPath(candidatePath);
         const targetIsPrefix = targetSubPath.every((part, index) =>
-          candidatePath[index]?.toLowerCase() === part.toLowerCase()
+          normalizedCandidatePath[index]?.toLowerCase() === part.toLowerCase()
         );
-        const exactTarget = targetIsPrefix && candidatePath.length === targetSubPath.length;
-        const descendantOfTarget = targetIsPrefix && candidatePath.length > targetSubPath.length;
+        const exactTarget = targetIsPrefix && normalizedCandidatePath.length === targetSubPath.length;
+        const descendantOfTarget = targetIsPrefix && normalizedCandidatePath.length > targetSubPath.length;
         if (!exactTarget && !descendantOfTarget) isStop = true;
       }
     } else if (subQ === 'a') {

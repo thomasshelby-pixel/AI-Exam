@@ -476,8 +476,9 @@ export function buildQuestionChunkSubPartCompletenessDirective(
 ): string {
   const canonicalCode = String(fullQuestionCode || '').trim();
   return `SINGLE-LEAF IDENTITY AND MARKING-RUBRIC COMPLETENESS:
-- This call evaluates exactly the authoritative leaf ${canonicalCode} for ${maximumMarks} marks.
-- Do not merge this leaf with its parent, any sibling sub-part, or another nested question ID.
+- This call evaluates exactly the authoritative scoreable part ${canonicalCode} for ${maximumMarks} marks.
+- Roman-numbered children under this lettered part (for example ${canonicalCode}(i), ${canonicalCode}(ii), etc.) are sections of this SAME question. Read and assess every such child together; do not create separate question tasks or separate maximum-mark allocations for them.
+- Keep other lettered sibling parts (for example Q2(b) when this is Q2(a)) separate. Do not merge this question with its parent container or a different canonical question.
 - Read the complete locked Question Paper / Suggested Answer / Marking Scheme slice for this leaf,
   including continuation lines, tables, working notes and every separately mark-bearing criterion.
 - Represent each distinct, independently mark-bearing source criterion exactly once as a

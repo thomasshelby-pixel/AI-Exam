@@ -490,14 +490,65 @@ function buildTaxationPaperStructure(options: {
 
 /**
  * Universal Sub-Question and Max Marks Extractor from official scheme/question paper text.
- * Accurately extracts questions like:
- * "QUESTION 1 – 15 MARKS", "QUESTION 4(b) – 3 MARKS", "Q6(a)(1) - 2 MARKS", "Q6(a)(2) - 3 MARKS", "4(b) [3 Marks]"
+ * Roman-numbered child clauses below a lettered part are grouped into that
+ * lettered question; their distinct source allocations are summed exactly once.
  */
-export function extractSubQuestionsFromText(text: string): PaperStructureSubQuestion[] {
-  const subQuestions: PaperStructureSubQuestion[] = [];
-  if (!text || typeof text !== 'string') return subQuestions;
+interface QuestionMarkAllocationAccumulator {
+  canonicalId: string;
+  seenSourcePaths: Set<string>;
+  directMaximumMarks?: number;
+  collapsedRomanMaximums: Map<string, number>;
+}
 
-  const seen = new Set<string>();
+function hasFlattenedRomanSourceChild(identity: ReturnType<typeof parseCanonicalQuestionIdentity>): boolean {
+  const sourcePath = identity.sourceSubQuestionPath || identity.subQuestionPath || [];
+  const normalizedPath = identity.subQuestionPath || [];
+  return sourcePath.length > normalizedPath.length && sourcePath.some((part, index) =>
+    index > 0 && /^[ivxlcdm]+$/i.test(part)
+  );
+}
+
+function addQuestionMarkAllocation(
+  allocations: Map<string, QuestionMarkAllocationAccumulator>,
+  rawQuestionCode: string,
+  maximumMarks: number,
+): void {
+  const identity = parseCanonicalQuestionIdentity(rawQuestionCode);
+  const canonicalId = identity.canonicalId;
+  const sourcePath = identity.sourceSubQuestionPath || identity.subQuestionPath || [];
+  const sourcePathKey = sourcePath.map((part) => part.toLowerCase()).join('/');
+  let accumulator = allocations.get(canonicalId);
+  if (!accumulator) {
+    accumulator = {
+      canonicalId,
+      seenSourcePaths: new Set<string>(),
+      collapsedRomanMaximums: new Map<string, number>(),
+    };
+    allocations.set(canonicalId, accumulator);
+  }
+  if (accumulator.seenSourcePaths.has(sourcePathKey)) return;
+  accumulator.seenSourcePaths.add(sourcePathKey);
+
+  if (hasFlattenedRomanSourceChild(identity)) {
+    accumulator.collapsedRomanMaximums.set(sourcePathKey, maximumMarks);
+  } else if (accumulator.directMaximumMarks === undefined) {
+    // An explicit parent total is authoritative over the sum of child lines.
+    // This prevents Q2(a) = 10 from becoming 15 merely because its rubric also
+    // lists Roman criteria (i) = 2 and (ii) = 3.
+    accumulator.directMaximumMarks = maximumMarks;
+  }
+}
+
+function resolvedQuestionMaximumMarks(accumulator: QuestionMarkAllocationAccumulator): number {
+  if (accumulator.directMaximumMarks !== undefined) return accumulator.directMaximumMarks;
+  return Array.from(accumulator.collapsedRomanMaximums.values())
+    .reduce((total, marks) => total + marks, 0);
+}
+
+export function extractSubQuestionsFromText(text: string): PaperStructureSubQuestion[] {
+  if (!text || typeof text !== 'string') return [];
+
+  const allocations = new Map<string, QuestionMarkAllocationAccumulator>();
   const addQuestion = (questionNumber: string, subQuestion: string | undefined, maximumMarks: number) => {
     if (!questionNumber || !Number.isFinite(maximumMarks) || maximumMarks <= 0) return;
     const label = String(subQuestion || '').trim();
@@ -513,22 +564,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
       else if (/^(?:PART|SUB[- ]?PART|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARA)\s+/i.test(label)) suffix = label;
       else suffix = '(' + label + ')';
     }
-    const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
-    if (seen.has(canonicalId)) return;
-    seen.add(canonicalId);
-    const parsed = parseCanonicalQuestionIdentity(canonicalId);
-    subQuestions.push({
-      fullQuestionCode: parsed.canonicalId,
-      questionNumber: parsed.questionNumber,
-      subQuestionNumber: parsed.subQuestion,
-      maximumMarks,
-      // Generic paper parts are required by default. Only an explicit, parsed
-      // optional-selection rule may mark a parent and its leaf parts optional.
-      compulsory: true,
-      isMcq: false,
-      section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
-      division: 'B',
-    });
+    addQuestionMarkAllocation(allocations, 'Q' + questionNumber + suffix, maximumMarks);
   };
 
   const extractMarks = (value: string): number | undefined => {
@@ -639,8 +675,8 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     const lastFamily = numberingFamily(last, current.length - 1);
     const firstFamily = numberingFamily(first, 0);
 
-    // Same numbering family means a sibling at that level. A change from the
-    // top-level alpha label to Roman/Arabic normally opens a nested level.
+    // Same numbering family means a sibling at that level. Preserve the raw
+    // hierarchy here; scoreable-path normalization happens only when allocating.
     if (nextFamily === lastFamily || (last === 'i' && romanNumerals.has(token))) {
       return current.slice(0, -1).concat(token);
     }
@@ -667,8 +703,11 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
         /^[([{]/.test(parentSuffix) ||
         /^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\b/i.test(parentSuffix) ||
         /^\.[a-zA-Z0-9]+/.test(parentSuffix);
-      activeSubQuestionPath = startsWithExplicitPartPath
-        ? (parseCanonicalQuestionIdentity('Q' + activeParentQNum + ' ' + parentSuffix).subQuestionPath || [])
+      const parsedParentIdentity = startsWithExplicitPartPath
+        ? parseCanonicalQuestionIdentity('Q' + activeParentQNum + ' ' + parentSuffix)
+        : undefined;
+      activeSubQuestionPath = parsedParentIdentity
+        ? (parsedParentIdentity.sourceSubQuestionPath || parsedParentIdentity.subQuestionPath || [])
         : [];
     }
 
@@ -686,7 +725,7 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     const parsedLabel = parseCanonicalQuestionIdentity(
       'Q' + activeParentQNum + ' ' + labelSuffix
     );
-    const incomingPath = parsedLabel.subQuestionPath || [];
+    const incomingPath = parsedLabel.sourceSubQuestionPath || parsedLabel.subQuestionPath || [];
     activeSubQuestionPath = combineContextPath(activeSubQuestionPath, incomingPath);
     const remainder = line.slice(childMatch[0].length);
     const marks = extractMarks(remainder);
@@ -696,6 +735,21 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     }
   }
 
+  const subQuestions: PaperStructureSubQuestion[] = Array.from(allocations.values()).map((allocation) => {
+    const parsed = parseCanonicalQuestionIdentity(allocation.canonicalId);
+    return {
+      fullQuestionCode: parsed.canonicalId,
+      questionNumber: parsed.questionNumber,
+      subQuestionNumber: parsed.subQuestion,
+      maximumMarks: resolvedQuestionMaximumMarks(allocation),
+      // Generic paper parts are required by default. Only an explicit, parsed
+      // optional-selection rule may mark a parent and its leaf parts optional.
+      compulsory: true,
+      isMcq: false,
+      section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
+      division: 'B',
+    };
+  });
   return deduplicateQuestionList(subQuestions);
 }
 
@@ -894,7 +948,7 @@ function isExplicitQuestionPartSuffix(value: string): boolean {
 }
 
 function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<string, number> {
-  const allocations = new Map<string, number>();
+  const accumulated = new Map<string, QuestionMarkAllocationAccumulator>();
   const linePattern = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?)\s*(\d{1,3})\s*(.*?)\s*(?:(?:[-–—:]|carries?|carrying|worth|allotted|is|for)\s*)?(?:[\[(]\s*)?(\d+(?:\.\d+)?)\s*(?:Marks?|M)\s*[\])]?\s*[\s.]*$/i;
   for (const line of String(sourceText || '').replace(/\r/g, '').split('\n')) {
     const match = line.match(linePattern);
@@ -902,12 +956,15 @@ function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<strin
     const questionNumber = match[1];
     const suffix = String(match[2] || '').trim();
     if (!isExplicitQuestionPartSuffix(suffix)) continue;
-    const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
+    const rawQuestionCode = 'Q' + questionNumber + suffix;
     const marks = Number(match[3]);
     if (!Number.isFinite(marks) || marks <= 0) continue;
-    allocations.set(canonicalId, marks);
+    addQuestionMarkAllocation(accumulated, rawQuestionCode, marks);
   }
-  return allocations;
+  return new Map(Array.from(accumulated.entries()).map(([canonicalId, allocation]) => [
+    canonicalId,
+    resolvedQuestionMaximumMarks(allocation),
+  ]));
 }
 
 /**
