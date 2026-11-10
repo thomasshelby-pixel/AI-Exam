@@ -713,6 +713,54 @@ export function buildStructuredAnnotations(
     });
   }
 
+  // Every original source page with unresolved/failed coverage receives a
+  // page-level review marker. This preserves unlabelled handwriting without
+  // inventing a question ID, maximum mark or academic score.
+  const pageCoverageAudit: PageCoverageAuditItem[] =
+    runPkg?.pageCoverageAudit ||
+    resultJson?.pageCoverageAudit ||
+    resultJson?.studentAttemptManifest?.pageCoverageAudit ||
+    [];
+  const pageAuditByNumber = new Map(pageCoverageAudit.map((item) => [item.pageNumber, item]));
+  for (let pageNumber = 1; pageNumber <= safeTotalPages; pageNumber++) {
+    const audit = pageAuditByNumber.get(pageNumber);
+    const reasons: string[] = [];
+    if (!audit) {
+      reasons.push('This original page has no page-level analysis audit record.');
+    } else {
+      if (audit.analysisCompleted === false) {
+        reasons.push(audit.analysisFailureCode
+          ? `Page analysis did not complete (${audit.analysisFailureCode}).`
+          : 'Page analysis did not complete.');
+      }
+      if (audit.mappingReviewReason) reasons.push(audit.mappingReviewReason);
+      if (audit.unresolvedAnswerBlocks?.length) {
+        reasons.push(`Unmapped answer block(s): ${audit.unresolvedAnswerBlocks.join(' | ')}`);
+      }
+      if (audit.hasUnresolvedContent) {
+        reasons.push('One or more answer blocks on this page remain unresolved.');
+      }
+      if (
+        audit.answerBlocksObserved !== undefined &&
+        audit.accountedAnswerBlocks !== undefined &&
+        audit.answerBlocksObserved !== audit.accountedAnswerBlocks
+      ) {
+        reasons.push(`Observed ${audit.answerBlocksObserved} answer block(s), but accounted for ${audit.accountedAnswerBlocks}.`);
+      }
+    }
+    if (reasons.length === 0) continue;
+    pagesMap.get(pageNumber)!.push({
+      pageNumber,
+      questionNumber: `PAGE ${pageNumber} REVIEW`,
+      marksAwarded: 0,
+      maxMarks: 0,
+      reviewRequired: true,
+      reviewReason: Array.from(new Set(reasons)).join(' '),
+      pageReviewOnly: true,
+      steps: [],
+    });
+  }
+
   // Section 9: POST-RENDER VALIDATION GATE
   const postGate = validatePostRenderGate({
     evaluationId: evalData.id,
