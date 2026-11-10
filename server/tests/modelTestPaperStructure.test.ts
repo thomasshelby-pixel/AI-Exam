@@ -403,6 +403,35 @@ assert.deepEqual(
   [1, 2, 3],
   'The consolidated part must retain all pages from its parent and Roman child detections.',
 );
+const mergedRomanEvidence = normalizeDetectedAttemptHierarchy([
+  {
+    fullQuestionCode: 'Q3(a)',
+    pages: [6],
+    studentSnippet: 'Parent answer opening',
+    status: 'ATTEMPTED_READABLE',
+  },
+  {
+    fullQuestionCode: 'Q3(a)(i)',
+    pages: [7],
+    studentSnippet: 'First Roman answer block',
+    status: 'ATTEMPTED_READABLE',
+  },
+  {
+    fullQuestionCode: 'Q3(a)(ii)',
+    pages: [8],
+    studentSnippet: 'Second Roman answer block',
+    status: 'ATTEMPTED_PARTIALLY_READABLE',
+  },
+] as any);
+assert.equal(mergedRomanEvidence.attemptedQuestions.length, 1,
+  'Roman child detections must be coalesced before hierarchy filtering.');
+assert.deepEqual(mergedRomanEvidence.attemptedQuestions[0].pages, [6, 7, 8]);
+assert.match(mergedRomanEvidence.attemptedQuestions[0].studentSnippet, /Parent answer opening/);
+assert.match(mergedRomanEvidence.attemptedQuestions[0].studentSnippet, /First Roman answer block/);
+assert.match(mergedRomanEvidence.attemptedQuestions[0].studentSnippet, /Second Roman answer block/);
+assert.equal(mergedRomanEvidence.attemptedQuestions[0].status, 'ATTEMPTED_PARTIALLY_READABLE',
+  'The parent attempt must retain the most conservative child readability status.');
+
 
 const nestedAttemptInventory = buildCanonicalQuestionInventory({
   paperStructure: {
