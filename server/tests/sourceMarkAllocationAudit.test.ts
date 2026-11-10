@@ -139,4 +139,31 @@ assert.equal(
   'A Marking Scheme leaf allocation can fill a maximum omitted by the QP.',
 );
 
+// A QP sub-part with no total allocation must not be assigned the first
+// component award found in an explanatory Marking Scheme paragraph.
+const explanationOnlyMarkingScheme = [
+  'Marking Scheme',
+  'Question 1(a) - Award 2 marks for the correct principle and 3 marks for application.',
+  'Question 2(a) - 4 Marks',
+].join('\\n');
+const explanationOnlyStructure = structureFor('PYQ', {
+  questionPaperText: [
+    'Question Paper',
+    'Question 1(a)',
+    'Prepare the required treatment.',
+    'Question 2(a) - 4 Marks',
+  ].join('\\n'),
+  markingSchemeText: explanationOnlyMarkingScheme,
+});
+assert.equal(
+  explanationOnlyStructure.subQuestions.some((question) => question.fullQuestionCode === 'Q1(a)'),
+  false,
+  'Component-level 2/3-mark wording must not be mistaken for a 2-mark question maximum.',
+);
+assert.equal(
+  explanationOnlyStructure.subQuestions.find((question) => question.fullQuestionCode === 'Q2(a)')?.maximumMarks,
+  4,
+  'A genuine standalone total remains available as a fallback allocation.',
+);
+
 console.log('Source-backed PYQ/MTP question maxima and source-conflict regressions passed.');
