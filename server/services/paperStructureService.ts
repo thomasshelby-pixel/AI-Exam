@@ -888,7 +888,7 @@ function getSourceBackedMcqMaximumMarks(
  */
 function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<string, number> {
   const allocations = new Map<string, number>();
-  const linePattern = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?)\s*(\d{1,3})\s*(.*?)\s*(?:[-–—:]|carries?|carrying|worth|allotted|is)\s*(?:[\[(]\s*)?(\d+(?:\.\d+)?)\s*(?:Marks?|M)\s*[\])]?[\s.]*$/i;
+  const linePattern = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?)\s*(\d{1,3})\s*(.*?)\s*(?:(?:[-–—:]|carries?|carrying|worth|allotted|is|for)\s*)?(?:[\[(]\s*)?(\d+(?:\.\d+)?)\s*(?:Marks?|M)\s*[\])]?\s*[\s.]*$/i;
   for (const line of String(sourceText || '').replace(/\r/g, '').split('\n')) {
     const match = line.match(linePattern);
     if (!match) continue;
