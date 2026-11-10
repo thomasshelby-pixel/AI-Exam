@@ -212,6 +212,30 @@ function drawCrossmark(page: any, x: number, y: number, color: any) {
  * Generates an Authentic Checked Copy PDF with Examiner annotations, red-pen step marks,
  * and official scorecard.
  */
+export function resolveCheckedCopyReviewState(
+  record: Pick<CanonicalEvaluationRecord,
+    'questionId' | 'questionType' | 'evaluationStatus' | 'reviewRequired' | 'reviewReason' |
+    'markingComponents' | 'stepMarkingBreakdown' | 'technicalFailureReason'
+  >,
+): { reviewRequired: boolean; reviewReason?: string } {
+  const isMcq = record.questionType === 'MCQ' || String(record.questionId || '').toUpperCase().startsWith('MCQ');
+  const hasSteps =
+    (Array.isArray(record.markingComponents) && record.markingComponents.length > 0) ||
+    (Array.isArray(record.stepMarkingBreakdown) && record.stepMarkingBreakdown.length > 0);
+  const statusRequiresReview = ['NEEDS_REVIEW', 'FAILED_TO_EVALUATE', 'NEEDS_MAPPING_REVIEW']
+    .includes(String(record.evaluationStatus || ''));
+  const reviewRequired = Boolean(record.reviewRequired || statusRequiresReview || (!isMcq && !hasSteps));
+  if (!reviewRequired) return { reviewRequired: false };
+  return {
+    reviewRequired: true,
+    reviewReason: record.reviewReason || (
+      !isMcq && !hasSteps
+        ? 'No persisted component-level marking evidence exists for this attempted descriptive question. The score is withheld; this is not an academic zero.'
+        : record.technicalFailureReason || 'The answer was detected, but a verified step-wise score was not produced. No academic zero has been assigned.'
+    ),
+  };
+}
+
 export interface PageAnnotation {
   pageNumber: number;
   questionNumber: string;
@@ -585,13 +609,9 @@ export function buildStructuredAnnotations(
       ];
     }
 
-    const reviewRequired = Boolean(
-      rec.reviewRequired ||
-      ['NEEDS_REVIEW', 'FAILED_TO_EVALUATE', 'NEEDS_MAPPING_REVIEW'].includes(String(rec.evaluationStatus || ''))
-    );
-    const reviewReason = reviewRequired
-      ? String(rec.reviewReason || rec.technicalFailureReason || 'The answer was detected, but a verified step-wise score was not produced. No academic zero has been assigned.')
-      : undefined;
+    const reviewState = resolveCheckedCopyReviewState(rec);
+    const reviewRequired = reviewState.reviewRequired;
+    const reviewReason = reviewState.reviewReason;
 
     // Never fabricate a generic 2+1 mark split for a descriptive answer.
     // Without persisted step evidence, the canonical ledger places the question
