@@ -38,7 +38,7 @@ for (const [questionId, maxMarks] of [
   ['Q1(a)', 5],
   ['Q2(iv(2))', 3],
   ['Q3(a(i))', 2],
-  ['Q4(1)(2)', 4],
+  ['Q4(1(2))', 4],
   ['Q5(b)', 5],
 ] as const) {
   assert.equal(
