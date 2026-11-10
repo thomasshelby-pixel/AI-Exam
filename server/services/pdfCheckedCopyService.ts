@@ -12,9 +12,12 @@ import { loadEvaluationRunPackage } from '../db.js';
 import { isEvaluationPendingReview } from './evaluationReviewState.js';
 import {
   CanonicalEvaluationRecord,
+  PageCoverageAuditItem,
+  PageRenderManifestItem,
   RenderManifest,
   RenderManifestItem,
 } from '../../src/types/index.js';
+import { buildFourSetReconciliation } from './canonicalQuestionInventoryService.js';
 
 export interface EvaluationData {
   id: string;
@@ -245,6 +248,8 @@ export interface PageAnnotation {
   /** A technical/reference/step-evidence hold; zero is not an academic award. */
   reviewRequired?: boolean;
   reviewReason?: string;
+  /** Page-only unresolved content note; not a canonical question and never scored. */
+  pageReviewOnly?: boolean;
   studentSelectedOption?: string;
   officialAnswer?: string;
   steps: Array<{
@@ -293,24 +298,29 @@ export function validatePreRenderGate(options: {
   const failedQuestionIds: string[] = [];
 
   for (const rec of records) {
-    // Section 13: Attempted questions that failed to evaluate MUST block finalization
-    if (rec.attempted && rec.evaluationStatus === 'FAILED_TO_EVALUATE') {
-      errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Attempted question failed to evaluate. Cannot generate clean checked copy.`);
+    const isEvaluated = rec.evaluationStatus === 'EVALUATED' || rec.evaluated === true;
+    const isExcludedAlternative = rec.evaluationStatus === 'EXCLUDED_ALTERNATIVE';
+    const isAnnotationReq = rec.annotationRequired !== false && (rec.attempted || isEvaluated);
+
+    // Every attempted question must either be an explicitly excluded alternative
+    // or receive a question-level examiner annotation, including review/technical
+    // failures. A failed score must not make the question disappear from the copy.
+    if (rec.attempted && !isExcludedAlternative && !isAnnotationReq) {
+      errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Attempted question has no checked-copy annotation requirement.`);
       failedQuestionIds.push(rec.questionId);
     }
 
-    // For every evaluated record where annotation is required:
-    const isEvaluated = rec.evaluationStatus === 'EVALUATED' || rec.evaluated === true;
-    const isAnnotationReq = rec.annotationRequired !== false && (rec.attempted || isEvaluated);
-
-    if (isEvaluated && isAnnotationReq) {
+    if (isAnnotationReq) {
       if (!rec.questionId || typeof rec.questionId !== 'string') {
         errors.push(`PRE_RENDER_ERROR: Missing or invalid questionId.`);
         failedQuestionIds.push(rec.questionId || 'UNKNOWN');
         continue;
       }
-      if (rec.maxMarks === undefined || rec.maxMarks === null || isNaN(rec.maxMarks) || rec.maxMarks <= 0) {
-        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid maxMarks (${rec.maxMarks}). Must be positive.`);
+      if (
+        rec.maxMarks === undefined || rec.maxMarks === null || isNaN(rec.maxMarks) ||
+        (isEvaluated ? rec.maxMarks <= 0 : rec.maxMarks < 0)
+      ) {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid maxMarks (${rec.maxMarks}) for ${rec.evaluationStatus}.`);
         failedQuestionIds.push(rec.questionId);
       }
       if (rec.awardedMarks === undefined || rec.awardedMarks === null || isNaN(rec.awardedMarks) || rec.awardedMarks < 0) {
@@ -331,8 +341,8 @@ export function validatePreRenderGate(options: {
         errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid or missing annotationAnchor.`);
         failedQuestionIds.push(rec.questionId);
       }
-      if (rec.evaluationStatus !== 'EVALUATED') {
-        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: evaluationStatus is ${rec.evaluationStatus}, expected EVALUATED.`);
+      if (isEvaluated && rec.evaluationStatus !== 'EVALUATED') {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: evaluated flag conflicts with evaluationStatus ${rec.evaluationStatus}.`);
         failedQuestionIds.push(rec.questionId);
       }
     }
@@ -360,13 +370,14 @@ export function validatePostRenderGate(options: {
   records: CanonicalEvaluationRecord[];
   renderedAnnotations: Array<{ pageNumber: number; questionNumber: string; canonicalId?: string; marksAwarded: number; maxMarks: number }>;
   totalPages: number;
+  physicalPageRenders?: PageRenderManifestItem[];
 }): {
   isValid: boolean;
   renderManifest: RenderManifest;
   orphanAnnotations: string[];
   errors: string[];
 } {
-  const { evaluationId, runId, records, renderedAnnotations, totalPages } = options;
+  const { evaluationId, runId, records, renderedAnnotations, totalPages, physicalPageRenders } = options;
   const errors: string[] = [];
   const orphanAnnotations: string[] = [];
 
@@ -408,12 +419,12 @@ export function validatePostRenderGate(options: {
     const annotationCount = renderEntry ? renderEntry.count : 0;
     const renderedPages = renderEntry ? renderEntry.pages : [];
 
-    if (isEvaluated && isAnnotationReq) {
+    if (isAnnotationReq) {
       if (!wasRendered) {
-        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Evaluated question was NOT rendered on checked copy.`);
+        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Attempted question disposition was NOT rendered on checked copy (status ${rec.evaluationStatus}).`);
       }
-      if (annotationCount > 1) {
-        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Duplicate rendering detected (${annotationCount} occurrences). Exactly 1 required.`);
+      if (annotationCount !== 1) {
+        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Expected exactly one examiner annotation but found ${annotationCount}.`);
       }
     }
 
@@ -429,7 +440,46 @@ export function validatePostRenderGate(options: {
     });
   }
 
-  const isRenderValid = errors.length === 0 && orphanAnnotations.length === 0;
+  let pageItems: PageRenderManifestItem[] | undefined;
+  let allPagesRendered: boolean | undefined;
+  if (physicalPageRenders) {
+    pageItems = [...physicalPageRenders].sort((a, b) => a.pageNumber - b.pageNumber);
+    const pageCounts = new Map<number, number>();
+    for (const page of pageItems) pageCounts.set(page.pageNumber, (pageCounts.get(page.pageNumber) || 0) + 1);
+    for (let expectedPage = 1; expectedPage <= totalPages; expectedPage++) {
+      const page = pageItems.find((item) => item.pageNumber === expectedPage);
+      if (!page) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Original page ${expectedPage} was not rendered.`);
+        continue;
+      }
+      if ((pageCounts.get(expectedPage) || 0) !== 1) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Original page ${expectedPage} was rendered more than once.`);
+      }
+      if (!page.originalPagePresent || !page.headerRendered || !page.footerRendered) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Original page ${expectedPage} is missing its preserved source page/header/footer render.`);
+      }
+      if (expectedPage === totalPages && !page.examinerSealRendered) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Final examiner seal was not rendered on original page ${totalPages}.`);
+      }
+      if (expectedPage !== totalPages && page.examinerSealRendered) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Examiner seal was incorrectly rendered on non-final page ${expectedPage}.`);
+      }
+    }
+    const invalidPageNumbers = pageItems.filter((page) =>
+      !Number.isInteger(page.pageNumber) || page.pageNumber < 1 || page.pageNumber > totalPages
+    );
+    if (invalidPageNumbers.length > 0) {
+      errors.push(`POST_RENDER_PAGE_ERROR: Found ${invalidPageNumbers.length} out-of-range physical page record(s).`);
+    }
+    allPagesRendered = pageItems.length === totalPages &&
+      Array.from({ length: totalPages }, (_, index) => index + 1)
+        .every((pageNumber) => pageCounts.get(pageNumber) === 1) &&
+      pageItems.every((page) => page.originalPagePresent && page.headerRendered && page.footerRendered) &&
+      pageItems.find((page) => page.pageNumber === totalPages)?.examinerSealRendered === true;
+  }
+
+  const isRenderValid = errors.length === 0 && orphanAnnotations.length === 0 &&
+    (allPagesRendered === undefined || allPagesRendered);
 
   const renderManifest: RenderManifest = {
     evaluationId,
@@ -440,6 +490,12 @@ export function validatePostRenderGate(options: {
     isRenderValid,
     orphanAnnotations,
     renderErrors: errors,
+    ...(physicalPageRenders ? {
+      totalPages,
+      totalPagesRendered: pageItems?.length || 0,
+      isAllPagesRendered: Boolean(allPagesRendered),
+      pages: pageItems || [],
+    } : {}),
     timestamp: new Date().toISOString(),
   };
 
