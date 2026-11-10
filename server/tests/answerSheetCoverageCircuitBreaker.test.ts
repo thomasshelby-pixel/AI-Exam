@@ -119,17 +119,31 @@ async function run() {
     paperStructure: {
       ...paperStructure,
       subQuestions: [
-        { fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false },
-        { fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 2, isMcq: false },
+        {
+          fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false,
+          questionText: 'Question 2(a)(i): first legal requirement.',
+          suggestedAnswerAnchor: 'First Roman clause answer evidence.',
+        },
+        {
+          fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 2, isMcq: false,
+          questionText: 'Question 2(a)(ii): second legal requirement.',
+          suggestedAnswerAnchor: 'Second Roman clause answer evidence.',
+        },
         { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 3, isMcq: false },
       ],
       mcqs: [],
     } as any,
   });
-  assert.match(nestedDescriptivePrompt, /Q2\(a\): Q2\(a\(i\)\), Q2\(a\(ii\)\)/);
-  assert.match(nestedDescriptivePrompt, /each listed\s+leaf independently/i);
-  assert.match(nestedDescriptivePrompt, /never return only Q2 or Q2\(a\)/i);
-  assert.match(nestedDescriptivePrompt, /Each attempted leaf must appear exactly once/i);
+  assert.match(nestedDescriptivePrompt, /Q2\(a\) — 4 marks/,
+    'Roman child allocations must be presented as one parent scoreable question.');
+  assert.doesNotMatch(nestedDescriptivePrompt, /Q2\(a\(i\)\)|Q2\(a\(ii\)\)/,
+    'Roman child labels must not leak into the mapper inventory as separate scoreable IDs.');
+  assert.match(nestedDescriptivePrompt, /First Roman clause answer evidence/);
+  assert.match(nestedDescriptivePrompt, /Second Roman clause answer evidence/,
+    'The combined parent reference must retain both Roman child answer anchors.');
+  assert.match(nestedDescriptivePrompt, /ROMAN-CHILD NORMALIZATION/);
+  assert.match(nestedDescriptivePrompt, /one detectedQuestions object per visible block/i);
+  assert.match(nestedDescriptivePrompt, /Each visible attempted block must appear exactly once/i);
 
   const nestedMcqStructure: any = [
     { fullQuestionCode: 'MCQ1', questionNumber: '1', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 1(i)' },
