@@ -1348,6 +1348,28 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
     const runPackage = evaluationResult.evaluationRunPackage;
     const renderManifest = runPackage?.renderManifest;
+    const physicalPageRenderPassed = Boolean(
+      renderManifest?.isRenderValid === true &&
+      renderManifest?.isAllPagesRendered === true &&
+      renderManifest.totalPages === originalPageCount &&
+      renderManifest.totalPagesRendered === originalPageCount &&
+      Array.isArray(renderManifest.pages) &&
+      renderManifest.pages.length === originalPageCount
+    );
+    const checkedCopyArtifactReady = checkedCopyStatus === 'READY';
+
+    // A valid score is not enough: certification also requires a saved checked
+    // copy proving that every original page and every attempted question was
+    // physically annotated. Missing render evidence keeps the result in review.
+    const renderCompletenessErrors = [
+      ...(!checkedCopyArtifactReady
+        ? [`CHECKED_COPY_ARTIFACT_NOT_READY: Checked-copy artifact status is ${checkedCopyStatus}.`]
+        : []),
+      ...(!physicalPageRenderPassed
+        ? [`PHYSICAL_PAGE_RENDER_INCOMPLETE: ${renderManifest?.totalPagesRendered ?? 0}/${originalPageCount} source pages have a verified physical render manifest.`]
+        : []),
+      ...(renderManifest?.renderErrors || []),
+    ];
 
     // Check critical integrity: questions exist, ledger arithmetic is sound, no bounds violations
     const hasValidQuestions = Array.isArray(evaluationResult.questions) && evaluationResult.questions.length > 0;
@@ -1362,7 +1384,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       hasValidQuestions &&
       isMathConsistent &&
       evaluationValidationPassed &&
-      supervisorApproved;
+      supervisorApproved &&
+      checkedCopyArtifactReady &&
+      physicalPageRenderPassed;
 
     let durablePackagePersisted = false;
     let finalStatus: 'COMPLETED' | 'NEEDS_REVIEW' = criticalIntegrityPassed ? 'COMPLETED' : 'NEEDS_REVIEW';
@@ -1427,6 +1451,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       reviewErrors = Array.from(new Set([
         ...(!consistencyReport.isValid ? consistencyReport.errors : []),
         ...(evaluationResult.validationErrors || []),
+        ...renderCompletenessErrors,
         ...finalizationErrors,
       ]));
       evaluationResult.validationStatus = 'NEEDS_REVIEW';
