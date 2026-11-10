@@ -900,7 +900,20 @@ export async function buildAnswerSheetCoverageMap(
                 existing.studentSelectedOption = incomingOption;
                 existing.mcqSelectionNeedsReview = false;
                 existing.mappingReviewReason = undefined;
-                existing.status = detected.status;
+                existing.status = 'ATTEMPTED_READABLE';
+              }
+            } else if (!detected.isMcq) {
+              const readableStates = new Set<PageAttemptStatus>([
+                'ATTEMPTED_READABLE',
+                'ATTEMPTED_PARTIALLY_READABLE',
+                'ATTEMPTED_UNCLEAR',
+              ]);
+              if (readableStates.has(existing.status) && readableStates.has(detected.status)) {
+                // Two passes must agree before declaring fully readable or fully
+                // unclear. A disagreement localizes to partial readability.
+                existing.status = existing.status === detected.status
+                  ? existing.status
+                  : 'ATTEMPTED_PARTIALLY_READABLE';
               }
             }
 
