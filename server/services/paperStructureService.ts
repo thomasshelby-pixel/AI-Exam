@@ -119,6 +119,7 @@ export function getAuthoritativePaperStructure(options: {
     questionPaperText,
     markingSchemeText,
     suggestedAnswersText,
+    materialType,
   });
 
   // An explicit optional-question instruction must be resolved into a known
@@ -926,10 +927,29 @@ function auditSourceMarkAllocations(options: {
   questionPaperText?: string;
   markingSchemeText?: string;
   suggestedAnswersText?: string;
+  materialType?: string;
 }): string[] {
   const questionPaperAllocations = extractStandaloneQuestionMarkAllocations(options.questionPaperText || '');
   const markingSchemeAllocations = extractStandaloneQuestionMarkAllocations(options.markingSchemeText || '');
   const suggestedAnswerAllocations = extractStandaloneQuestionMarkAllocations(options.suggestedAnswersText || '');
+  const isFacultyMock = String(options.materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
+
+  if (isFacultyMock) {
+    for (const [source, allocations] of [
+      [options.questionPaperText, questionPaperAllocations],
+      [options.markingSchemeText, markingSchemeAllocations],
+      [options.suggestedAnswersText, suggestedAnswerAllocations],
+    ] as Array<[string | undefined, Map<string, number>]>) {
+      for (const question of extractUnambiguousFacultyMockMarkAllocations(String(source || ''))) {
+        const canonicalId = toCanonicalQuestionId(
+          question.fullQuestionCode || question.questionNumber,
+          question.subQuestionNumber,
+        );
+        if (!allocations.has(canonicalId)) allocations.set(canonicalId, question.maximumMarks);
+      }
+    }
+  }
+
   const conflicts: string[] = [];
 
   const compareAllocations = (
