@@ -258,4 +258,27 @@ assert.match(q1cSchemeBlock.snippet, /Companies Act section 68 buy-back/i,
 assert.doesNotMatch(q1cSchemeBlock.snippet, /FEMA consultancy remittance threshold/,
   'The next scoreable scheme block must not leak into Q1(c).');
 
+// When generated marking schemes split Roman clauses into separate SUBQUESTION
+// blocks, the parent scoreable part must receive every child block, not only (i).
+const generatedRomanScheme = [
+  'MARKING SCHEME',
+  'SUBQUESTION: Q2(a)(i)',
+  'SUBQUESTION MARKS: 2',
+  'First Roman child marking criteria: identify the applicable FEMA rule and threshold.',
+  'SUBQUESTION: Q2(a)(ii)',
+  'SUBQUESTION MARKS: 3',
+  'Second Roman child marking criteria: apply the threshold to the infrastructure facts.',
+  'SUBQUESTION: Q2(b)',
+  'SUBQUESTION MARKS: 5',
+  'Sibling part b criteria must remain separate from part a.',
+].join('\n');
+const combinedRomanScheme = extractLockedQuestionSlice(generatedRomanScheme, '2', 'a', 'MS');
+assert.equal(combinedRomanScheme.found, true,
+  'The parent scoreable Marking Scheme block must resolve from Roman child sections.');
+assert.match(combinedRomanScheme.snippet, /First Roman child marking criteria/);
+assert.match(combinedRomanScheme.snippet, /Second Roman child marking criteria/,
+  'All Roman child Marking Scheme blocks must be combined under the lettered parent.');
+assert.doesNotMatch(combinedRomanScheme.snippet, /Sibling part b criteria/,
+  'The next lettered sibling must not leak into the consolidated parent scheme.');
+
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');
