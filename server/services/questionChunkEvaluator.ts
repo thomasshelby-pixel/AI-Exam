@@ -405,6 +405,18 @@ export function buildQuestionChunkSubPartCompletenessDirective(
   so the question can be reviewed.`;
 }
 
+/**
+ * Page-level uncertainty is an aggregate scan signal, not proof that this
+ * particular mapped answer is unreadable. The question evaluator gets the
+ * original page image and must make its own assessment unless the page reader
+ * explicitly classified this answer block as unreadable.
+ */
+export function requiresAnswerLevelReadabilityReview(
+  mapping: Pick<AttemptedQuestionMapping, 'status' | 'readabilityStatusExplicit'>,
+): boolean {
+  return mapping.status === 'ATTEMPTED_UNCLEAR' && mapping.readabilityStatusExplicit === true;
+}
+
 export async function evaluateQuestionChunk(
   ctx: ChunkEvaluationContext
 ): Promise<QuestionEvaluation> {
@@ -570,6 +582,9 @@ UNIVERSAL HANDWRITING AND QUESTION-ISOLATION RULES (all CA levels and subjects):
   contain multiple questions; never award neighbouring-question work to this question.
 - Hard-to-read writing is not automatically omitted or incorrect. Award partial credit for each
   independently readable relevant step; mark only genuinely unresolved evidence unclear.
+- A page-level scan warning is NOT proof that this specific answer block is unreadable. Re-read
+  this question's supplied page image independently; return UNCLEAR only if this answer itself
+  remains too illegible to assess after that focused visual read.
 - Quote studentEvidence faithfully. Mark partly readable text as "[partially legible]" instead of
   fabricating a transcription. Handwriting neatness/style must never affect academic marks.
 
@@ -683,7 +698,7 @@ Return strictly valid JSON with this schema:
       questionFlags.push('MODEL_UNCERTAIN');
       questionFlags.push('REVIEW_REQUIRED');
     }
-    if (mapping.status === 'ATTEMPTED_UNCLEAR') {
+    if (requiresAnswerLevelReadabilityReview(mapping)) {
       questionFlags.push('HANDWRITING_UNCLEAR');
       questionFlags.push('REVIEW_REQUIRED');
     }
