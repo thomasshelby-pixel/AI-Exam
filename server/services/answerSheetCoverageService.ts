@@ -1,7 +1,7 @@
 import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
 import { executeModelWithFallback, sanitizeSecretStrings } from '../models/modelRegistry.js';
-import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
+import { AuthoritativePaperStructure, consolidateRomanChildSubQuestions } from './paperStructureService.js';
 import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
@@ -1346,109 +1346,23 @@ export function buildPageCoveragePrompt(params: {
   const { pageNumber, totalPages, paperStructure, previousActiveQuestion, priorQuestionContexts = [], recoveryMode = false } = params;
   const compactSourceText = (value: string | undefined, limit: number): string =>
     String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
-  // Older persisted paper structures may still contain separate Roman child rows.
-  // Normalize them here as well as in the canonical score inventory so the page
-  // mapper never receives IDs that the evaluator will later collapse.
-  const descriptiveGroups = new Map<string, {
-    first: PaperStructureSubQuestion;
-    seenSourcePaths: Set<string>;
-    directMaximumMarks?: number;
-    romanChildMaximums: Map<string, number>;
-    questionTexts: string[];
-    suggestedAnchors: string[];
-    topics: string[];
-  }>();
-
-  for (const sourceQuestion of (paperStructure.subQuestions || []).filter((item) => !item.isMcq)) {
-    const baseCode = sourceQuestion.fullQuestionCode ||
-      `Q${sourceQuestion.questionNumber}${sourceQuestion.subQuestionNumber ? `(${sourceQuestion.subQuestionNumber})` : ''}`;
-    const identityFromCode = parseCanonicalQuestionIdentity(baseCode);
-    const identityFromSubQuestion = sourceQuestion.subQuestionNumber
-      ? parseCanonicalQuestionIdentity(`Q${identityFromCode.questionNumber}(${sourceQuestion.subQuestionNumber})`)
-      : identityFromCode;
-    const rawIdentity = (identityFromSubQuestion.sourceSubQuestionPath?.length || 0) >
-      (identityFromCode.sourceSubQuestionPath?.length || 0)
-      ? identityFromSubQuestion
-      : identityFromCode;
-    const canonicalId = toCanonicalQuestionId(
-      sourceQuestion.fullQuestionCode || sourceQuestion.questionNumber,
-      sourceQuestion.subQuestionNumber,
-      paperStructure.subQuestions,
-    );
-    const canonicalIdentity = parseCanonicalQuestionIdentity(canonicalId);
-    const sourcePath = rawIdentity.sourceSubQuestionPath || rawIdentity.subQuestionPath || [];
-    const normalizedPath = canonicalIdentity.subQuestionPath || [];
-    const sourcePathKey = sourcePath.map((part) => part.toLowerCase()).join('/');
-    const hasRomanChild = sourcePath.length > normalizedPath.length &&
-      sourcePath.some((part, index) =>
-        index > 0 &&
-        /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx|xxi|xxii|xxiii|xxiv|xxv|xxx|xl|l|lx|lxx|xc|c)$/i.test(part)
-      );
-
-    let group = descriptiveGroups.get(canonicalIdentity.canonicalId);
-    if (!group) {
-      group = {
-        first: sourceQuestion,
-        seenSourcePaths: new Set<string>(),
-        romanChildMaximums: new Map<string, number>(),
-        questionTexts: [],
-        suggestedAnchors: [],
-        topics: [],
-      };
-      descriptiveGroups.set(canonicalIdentity.canonicalId, group);
-    }
-    if (group.seenSourcePaths.has(sourcePathKey)) continue;
-    group.seenSourcePaths.add(sourcePathKey);
-
-    const maximum = Number(sourceQuestion.maximumMarks);
-    const safeMaximum = Number.isFinite(maximum) && maximum > 0 ? maximum : 0;
-    if (hasRomanChild) {
-      group.romanChildMaximums.set(sourcePathKey, safeMaximum);
-    } else if (group.directMaximumMarks === undefined) {
-      group.directMaximumMarks = safeMaximum;
-    }
-
-    for (const [target, value] of [
-      [group.questionTexts, sourceQuestion.questionText],
-      [group.suggestedAnchors, sourceQuestion.suggestedAnswerAnchor],
-      [group.topics, sourceQuestion.topic],
-    ] as Array<[string[], string | undefined]>) {
-      const normalized = String(value || '').trim();
-      if (normalized && !target.includes(normalized)) target.push(normalized);
-    }
-  }
-
-  const scoreableDescriptiveQuestions: PaperStructureSubQuestion[] =
-    Array.from(descriptiveGroups.entries()).map(([canonicalId, group]) => {
-      const identity = parseCanonicalQuestionIdentity(canonicalId);
-      const romanChildrenMaximum = Array.from(group.romanChildMaximums.values())
-        .reduce((total, marks) => total + marks, 0);
-      const questionText = group.questionTexts.join('\n\n');
-      const suggestedAnswerAnchor = group.suggestedAnchors.join('\n\n');
-      const topic = group.topics.join(' / ');
-      return {
-        ...group.first,
-        fullQuestionCode: canonicalId,
-        questionNumber: identity.questionNumber,
-        subQuestionNumber: identity.subQuestion,
-        maximumMarks: group.directMaximumMarks ?? romanChildrenMaximum,
-        ...(questionText ? { questionText } : {}),
-        ...(suggestedAnswerAnchor ? { suggestedAnswerAnchor } : {}),
-        ...(topic ? { topic } : {}),
-      };
-    });
-
+  // Use the same canonical source normalizer as the evaluator and scoring gates.
+  // This also protects older persisted paper structures that still contain
+  // separate Roman child rows.
+  const scoreableDescriptiveQuestions = consolidateRomanChildSubQuestions(
+    (paperStructure.subQuestions || []).filter((item) => !item.isMcq),
+  );
   const validDescriptiveList = scoreableDescriptiveQuestions
-    .map((s) => {
-      const questionText = compactSourceText(s.questionText, 420);
-      const answerAnchor = compactSourceText(s.suggestedAnswerAnchor, 260);
+    .map((question) => {
+      const questionText = compactSourceText(question.questionText, 420);
+      const answerAnchor = compactSourceText(question.suggestedAnswerAnchor, 260);
       return [
-        `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`,
+        `${question.fullQuestionCode} — ${question.maximumMarks} marks${question.topic ? ` — ${question.topic}` : ''}`,
         questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
         answerAnchor ? `  SUGGESTED ANSWER REFERENCE: ${answerAnchor}` : '',
-      ].filter(Boolean).join('\n');
+      ].filter(Boolean).join('\\n');
     })
-    .join('\n');
+    .join('\\n');
   const nestedLeafGroups = new Map<string, string[]>();
   for (const question of scoreableDescriptiveQuestions) {
     const parsed = parseCanonicalQuestionIdentity(question.fullQuestionCode);
@@ -1463,7 +1377,7 @@ export function buildPageCoveragePrompt(params: {
   const nestedLeafChecklist = Array.from(nestedLeafGroups.entries())
     .filter(([, leaves]) => leaves.length > 1)
     .map(([parent, leaves]) => `${parent}: ${leaves.sort().join(', ')}`)
-    .join('\n');
+    .join('\\n');
 
   const validMcqList = (paperStructure.mcqs || [])
     .map((m) => {
