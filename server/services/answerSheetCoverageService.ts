@@ -699,19 +699,29 @@ export function resolveContextualQuestionIdentity(options: {
   // serializer; string concatenation silently failed to match valid source leaves.
   const nestedCandidate = toCanonicalQuestionId(context.canonicalId, subPart, authoritativeLeaves).toLowerCase();
 
-  const matches = authoritativeLeaves.filter((question) => {
-    const code = question.fullQuestionCode.toLowerCase();
-    return code === siblingCandidate.toLowerCase() || code === nestedCandidate;
-  });
-  const uniqueMatches = Array.from(new Map(matches.map((question) => [question.fullQuestionCode.toLowerCase(), question])).values());
+  // Compare normalized scoreable identities, not raw source labels. A legacy
+  // structure may still contain Q2(a), Q2(a)(i) and Q2(a)(ii) rows, but all
+  // three intentionally resolve to the one scoreable parent Q2(a).
+  const matchingCanonicalIds = new Set(
+    authoritativeLeaves
+      .map((question) => toCanonicalQuestionId(
+        question.fullQuestionCode || question.questionNumber,
+        question.subQuestionNumber,
+        authoritativeLeaves,
+      ))
+      .filter((canonicalId) =>
+        canonicalId.toLowerCase() === siblingCandidate.toLowerCase() ||
+        canonicalId.toLowerCase() === nestedCandidate
+      ),
+  );
 
-  if (uniqueMatches.length === 1) {
-    return { canonicalId: uniqueMatches[0].fullQuestionCode, requiresReview: false };
+  if (matchingCanonicalIds.size === 1) {
+    return { canonicalId: Array.from(matchingCanonicalIds)[0], requiresReview: false };
   }
 
   return {
     requiresReview: true,
-    reason: uniqueMatches.length > 1
+    reason: matchingCanonicalIds.size > 1
       ? `The sub-question label "${subPart}" matches multiple authoritative questions under the active context.`
       : `The sub-question label "${subPart}" does not match an authoritative question under the active context.`,
   };
