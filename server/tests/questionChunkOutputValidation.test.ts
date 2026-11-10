@@ -3,6 +3,7 @@ import {
   buildQuestionChunkSubPartCompletenessDirective,
   parseAndValidateQuestionChunkOutput,
   requiresAnswerLevelReadabilityReview,
+  assessQuestionReferenceTopicAlignment,
 } from '../services/questionChunkEvaluator.js';
 
 function makeResponse(overrides: Record<string, unknown> = {}): string {
@@ -76,6 +77,33 @@ assert.equal(normalized.markingComponents[1].assessment, 'PARTIALLY_CORRECT',
 assert.equal(normalized.modelReportedMarksAwarded, 4.5,
   'The inconsistent model-reported total remains available for audit.');
 assert.match(normalized.scoreReconciliationNote, /reconciled/i);
+assert.equal(normalized.markingComponents[1].assessment, 'PARTIALLY_CORRECT',
+  'The model’s substantive PARTIALLY_CORRECT assessment must survive parsing for Strict mode.');
+
+const mismatchedListedCompanyReference = assessQuestionReferenceTopicAlignment({
+  topic: 'Listed vs unlisted companies and the exclusions under Rule 2A',
+  provision: 'Section 2(52) and Rule 2A',
+  questionText: 'Determine whether Arya Limited, Chirag Limited and Prism Limited are listed companies based on listed equity, debt securities and permitted foreign stock exchanges.',
+}, 'Section 139(2) concerns rotation of auditors and the appointment of an auditor at an annual general meeting.',
+'The auditor is appointed for the prescribed tenure subject to rotation requirements.');
+assert.equal(mismatchedListedCompanyReference.aligned, false,
+  'A syntactically matched question number must not authorize a Suggested Answer about an unrelated auditor-appointment topic.');
+
+const matchedDepositReference = assessQuestionReferenceTopicAlignment({
+  topic: 'Acceptance of deposits and premature repayment',
+  provision: 'Section 73 and Companies (Acceptance of Deposits) Rules',
+  questionText: 'Compute the deposit limits for public and private companies and determine the permitted amount of deposits. Also calculate interest on premature repayment.',
+}, 'Under Section 73 and the Companies (Acceptance of Deposits) Rules, private companies and public companies are subject to deposit limits. Premature repayment after six months attracts a reduction in the interest rate.',
+'Calculate the permitted deposit amount and applicable interest reduction.');
+assert.equal(matchedDepositReference.aligned, true,
+  'A topic-aligned deposits reference must remain scoreable.');
+
+const insufficientTopicAnchor = assessQuestionReferenceTopicAlignment({
+  topic: 'General provisions',
+  questionText: 'Explain the applicable provisions.',
+}, 'This suggested answer contains several detailed requirements and an application to the facts.');
+assert.equal(insufficientTopicAnchor.aligned, true,
+  'A short/generic source anchor is not reliable enough to trigger a reference-mismatch review.');
 
 const missingQuestionTotal = parseAndValidateQuestionChunkOutput(
   makeResponse({ marksAwarded: 'not-a-number' }),
@@ -152,6 +180,44 @@ assert.throws(
   }), 5),
   /missing candidate evidence/,
   'Missing student evidence is not fabricated or silently accepted.',
+);
+
+assert.throws(
+  () => parseAndValidateQuestionChunkOutput(makeResponse({
+    marksAwarded: 5,
+    markingComponents: [
+      {
+        componentId: 'partial-full-score',
+        componentType: 'PROVISION',
+        expectedRequirement: 'Identify the correct governing provision.',
+        studentEvidence: 'The candidate identifies the relevant provision but misses its statutory conditions.',
+        assessment: 'PARTIALLY_CORRECT',
+        marksAvailable: 5,
+        marksAwarded: 5,
+      },
+    ],
+  }), 5),
+  /CONTRADICTORY_ASSESSMENT/,
+  'A full numeric award cannot silently overwrite a PARTIALLY_CORRECT assessment and bypass strict scrutiny.',
+);
+
+assert.throws(
+  () => parseAndValidateQuestionChunkOutput(makeResponse({
+    marksAwarded: 5,
+    markingComponents: [
+      {
+        componentId: 'incorrect-full-score',
+        componentType: 'APPLICATION',
+        expectedRequirement: 'Apply the statutory requirement to the case facts.',
+        studentEvidence: 'The candidate applied a different statutory topic.',
+        assessment: 'INCORRECT',
+        marksAvailable: 5,
+        marksAwarded: 5,
+      },
+    ],
+  }), 5),
+  /CONTRADICTORY_ASSESSMENT/,
+  'An INCORRECT component cannot carry full marks and be normalized into CORRECT.',
 );
 
 console.log('Question chunk output validation tests passed.');
