@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
+import { buildQuestionChunkSubPartCompletenessDirective, parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
 
 function makeResponse(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -32,6 +32,16 @@ function makeResponse(overrides: Record<string, unknown> = {}): string {
     ...overrides,
   });
 }
+
+const nestedDirective = buildQuestionChunkSubPartCompletenessDirective('Q2(a(ii))', 3);
+assert.match(nestedDirective, /exactly the authoritative leaf Q2\(a\(ii\)\)/i);
+assert.match(nestedDirective, /Do not merge this leaf with its parent/i);
+assert.match(nestedDirective, /each distinct, independently mark-bearing source criterion exactly once/i);
+assert.match(nestedDirective, /source's own component allocations/i);
+assert.match(nestedDirective, /visibly not attempted/i);
+assert.match(nestedDirective, /unreadable evidence requires UNCLEAR\/review/i);
+assert.match(nestedDirective, /no source criterion may be silently skipped or duplicated/i);
+assert.match(nestedDirective, /do not fabricate a balancing step/i);
 
 const normalized = parseAndValidateQuestionChunkOutput(makeResponse(), 5);
 assert.equal(normalized.status, 'partially_correct',
