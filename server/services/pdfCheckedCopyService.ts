@@ -1368,22 +1368,28 @@ export async function generateCheckedCopyPdf(
       pageCoverageAudit: updatedPageAudit,
     };
 
-    const markRendered = (records: CanonicalEvaluationRecord[]) => {
-      for (const record of records) {
-        record.rendered = renderedQuestionIds.has(record.questionId);
-      }
+    const markRendered = (records: CanonicalEvaluationRecord[]): CanonicalEvaluationRecord[] =>
+      records.map((record) => ({
+        ...record,
+        rendered: renderedQuestionIds.has(record.questionId),
+      }));
+    const renderedEvaluationRecords = markRendered(runPkg.evaluationRecords);
+    const renderedLedgerRecords = markRendered(runPkg.scoreLedger.records);
+    const renderedLedger = {
+      ...runPkg.scoreLedger,
+      records: renderedLedgerRecords,
+      totalRendered: renderedLedgerRecords.filter((record) => record.rendered).length,
     };
-    markRendered(runPkg.evaluationRecords);
-    markRendered(runPkg.scoreLedger.records);
-    (runPkg.scoreLedger as any).totalRendered = runPkg.scoreLedger.records.filter((record) => record.rendered).length;
+    (runPkg as any).evaluationRecords = renderedEvaluationRecords;
+    (runPkg as any).scoreLedger = renderedLedger;
     (runPkg as any).renderManifest = physicalPostGate.renderManifest;
     (runPkg as any).reconciliation = buildFourSetReconciliation({
-      ledger: runPkg.scoreLedger,
+      ledger: renderedLedger,
       manifest: runPkg.studentAttemptManifest,
-      scorecardTotal: runPkg.scoreLedger.totalAwardedMarks,
-      evaluationReportTotal: runPkg.scoreLedger.totalAwardedMarks,
-      checkedCopyTotal: runPkg.scoreLedger.totalAwardedMarks,
-      finalDisplayedTotal: runPkg.scoreLedger.totalAwardedMarks,
+      scorecardTotal: renderedLedger.totalAwardedMarks,
+      evaluationReportTotal: renderedLedger.totalAwardedMarks,
+      checkedCopyTotal: renderedLedger.totalAwardedMarks,
+      finalDisplayedTotal: renderedLedger.totalAwardedMarks,
     });
   }
 
