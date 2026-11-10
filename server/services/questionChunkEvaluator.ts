@@ -378,6 +378,45 @@ CHECKED-COPY SCORE INDEPENDENCE:
 `;
 }
 
+export function buildQuestionChunkSubPartCompletenessDirective(
+  fullQuestionCode: string,
+  maximumMarks: number,
+): string {
+  const canonicalCode = String(fullQuestionCode || '').trim();
+  return `SINGLE-LEAF IDENTITY AND MARKING-RUBRIC COMPLETENESS:
+- This call evaluates exactly the authoritative leaf ${canonicalCode} for ${maximumMarks} marks.
+- Do not merge this leaf with its parent, any sibling sub-part, or another nested question ID.
+- Read the complete locked Question Paper / Suggested Answer / Marking Scheme slice for this leaf,
+  including continuation lines, tables, working notes and every separately mark-bearing criterion.
+- Represent each distinct, independently mark-bearing source criterion exactly once as a
+  markingComponents entry. Do not collapse multiple explicit rubric steps into one vague generic
+  component such as "application" or "working" when the source marks them separately.
+- Preserve the source's own component allocations. The sum of marksAvailable must equal the
+  authoritative ${maximumMarks} marks because the source allocates that amount, not because you
+  invented, scaled or redistributed component weights to force a total.
+- If a source-marked criterion is visibly not attempted, include it as OMITTED with zero awarded
+  marks and explicit evidence that no corresponding work appears in the supplied answer pages.
+  Do not call a criterion omitted merely because handwriting is difficult to read; unreadable
+  evidence requires UNCLEAR/review, not an assumed omission.
+- Before returning, compare every independently mark-bearing requirement in the locked marking
+  references with the component list: no source criterion may be silently skipped or duplicated.
+- If the reference does not provide enough information to reconcile source-grounded component
+  allocations to the authoritative maximum, do not fabricate a balancing step; return UNCLEAR
+  so the question can be reviewed.`;
+}
+
+/**
+ * Page-level uncertainty is an aggregate scan signal, not proof that this
+ * particular mapped answer is unreadable. The question evaluator gets the
+ * original page image and must make its own assessment unless the page reader
+ * explicitly classified this answer block as unreadable.
+ */
+export function requiresAnswerLevelReadabilityReview(
+  mapping: Pick<AttemptedQuestionMapping, 'status' | 'readabilityStatusExplicit'>,
+): boolean {
+  return mapping.status === 'ATTEMPTED_UNCLEAR' && mapping.readabilityStatusExplicit === true;
+}
+
 export async function evaluateQuestionChunk(
   ctx: ChunkEvaluationContext
 ): Promise<QuestionEvaluation> {
@@ -543,6 +582,9 @@ UNIVERSAL HANDWRITING AND QUESTION-ISOLATION RULES (all CA levels and subjects):
   contain multiple questions; never award neighbouring-question work to this question.
 - Hard-to-read writing is not automatically omitted or incorrect. Award partial credit for each
   independently readable relevant step; mark only genuinely unresolved evidence unclear.
+- A page-level scan warning is NOT proof that this specific answer block is unreadable. Re-read
+  this question's supplied page image independently; return UNCLEAR only if this answer itself
+  remains too illegible to assess after that focused visual read.
 - Quote studentEvidence faithfully. Mark partly readable text as "[partially legible]" instead of
   fabricating a transcription. Handwriting neatness/style must never affect academic marks.
 
@@ -550,6 +592,8 @@ STRICT QUESTION-IDENTITY LOCK:
 - The supplied question ID and maximum marks are immutable. Do not remap by page number, answer
   order, expected sequence or subject assumptions. If the answer block identity is ambiguous,
   preserve it for review rather than scoring another question.
+${buildQuestionChunkSubPartCompletenessDirective(fullCode, maxMarks)}
+
 CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
 2. Award step marks strictly according to the verified step-marking scheme and suggested answer above.
@@ -654,7 +698,7 @@ Return strictly valid JSON with this schema:
       questionFlags.push('MODEL_UNCERTAIN');
       questionFlags.push('REVIEW_REQUIRED');
     }
-    if (mapping.status === 'ATTEMPTED_UNCLEAR') {
+    if (requiresAnswerLevelReadabilityReview(mapping)) {
       questionFlags.push('HANDWRITING_UNCLEAR');
       questionFlags.push('REVIEW_REQUIRED');
     }

@@ -773,6 +773,77 @@ console.log('\n--- TEST Q: Handwriting & Degraded Scan Safety Guard ---');
 }
 
 // --------------------------------------------------------------------------
+// TEST Q2: Review-pending marks are provisional, not confirmed deductions.
+// --------------------------------------------------------------------------
+console.log('\\n--- TEST Q2: Provisional Marks-Lost Integrity ---');
+{
+  const checkEqual = (actual: unknown, expected: unknown, name: string) =>
+    assert(actual === expected, name, `Expected ${String(expected)}, got ${String(actual)}`);
+  const processed = processEvaluationIntegrity(
+    {
+      evaluationId: 'eval_review_provisional_marks',
+      totalMarks: 3,
+      maximumMarks: 6,
+      officialPaperMaxMarks: 6,
+      questions: [
+        {
+          questionNumber: '2',
+          subQuestion: 'a',
+          canonicalId: 'Q2(a)',
+          maximumMarks: 6,
+          marksAwarded: 3,
+          marksLost: 3,
+          status: 'unclear',
+          flags: ['REVIEW_REQUIRED', 'QUESTION_REFERENCE_REVIEW_REQUIRED'],
+          detailedFeedback: 'Attempted answer is retained for examiner review.',
+        },
+      ],
+    } as any,
+    {},
+  );
+  checkEqual(processed.questions[0].status, 'unclear',
+    'A question awaiting reference/reviewer resolution must remain provisional.');
+  checkEqual(processed.questions[0].marksAwarded, 3,
+    'The provisional component-backed award is preserved for examiner inspection.');
+  checkEqual(processed.questions[0].marksLost, 0,
+    'No academic deduction is confirmed while the question remains under review.');
+
+  const provisionalValidation = validateAuthoritativeConsistency(processed);
+  checkEqual(
+    provisionalValidation.errors.some((error) => /Q2.*marks lost mismatch/i.test(error)),
+    false,
+    'The consistency validator must not flag marksLost=0 as inconsistent for a review-pending question.',
+  );
+
+  const invalidProvisional = {
+    ...processed,
+    questions: processed.questions.map((question) => ({ ...question, marksLost: 1 })),
+  };
+  const invalidReviewValidation = validateAuthoritativeConsistency(invalidProvisional as any);
+  checkEqual(
+    invalidReviewValidation.errors.some((error) => /provisional marksLost.*must remain 0/i.test(error)),
+    true,
+    'A review-pending question must not publish a provisional deduction as confirmed marks lost.',
+  );
+
+  const scoredQuestion = {
+    ...processed,
+    questions: processed.questions.map((question) => ({
+      ...question,
+      status: 'partially_correct',
+      flags: [],
+      marksLost: 3,
+    })),
+  };
+  const scoredValidation = validateAuthoritativeConsistency(scoredQuestion as any);
+  checkEqual(
+    scoredValidation.errors.some((error) => /Q2.*marks lost mismatch/i.test(error)),
+    false,
+    'A finalized 3/6 score must still record exactly 3 marks lost.',
+  );
+}
+
+// --------------------------------------------------------------------------
 // TEST R: Authoritative MCQ Deterministic Scoring & Detailed Explanations
 // Regression Test: August 2026 CA Intermediate Paper 3 Taxation
 // Expected: Income Tax 8/15, GST 4/15, Total 12/30

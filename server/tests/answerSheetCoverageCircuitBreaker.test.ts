@@ -113,6 +113,24 @@ async function run() {
   assert.ok(sourcedQ1?.questionText?.includes('impairment loss'), 'The exact QP question wording must be attached to the authoritative ID.');
   assert.ok(sourcedQ1?.suggestedAnswerAnchor?.includes('recoverable amount'), 'The selected Suggested Answer must be attached as a reference anchor.');
 
+  const nestedDescriptivePrompt = buildPageCoveragePrompt({
+    pageNumber: 4,
+    totalPages: 12,
+    paperStructure: {
+      ...paperStructure,
+      subQuestions: [
+        { fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false },
+        { fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 2, isMcq: false },
+        { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 3, isMcq: false },
+      ],
+      mcqs: [],
+    } as any,
+  });
+  assert.match(nestedDescriptivePrompt, /Q2\(a\): Q2\(a\(i\)\), Q2\(a\(ii\)\)/);
+  assert.match(nestedDescriptivePrompt, /each listed\s+leaf independently/i);
+  assert.match(nestedDescriptivePrompt, /never return only Q2 or Q2\(a\)/i);
+  assert.match(nestedDescriptivePrompt, /Each attempted leaf must appear exactly once/i);
+
   const nestedMcqStructure: any = [
     { fullQuestionCode: 'MCQ1', questionNumber: '1', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 1(i)' },
     { fullQuestionCode: 'MCQ4', questionNumber: '4', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 1(iv)' },
@@ -541,6 +559,58 @@ async function run() {
   assert.deepEqual(interleavedCoverage.attemptedQuestions.find((attempt) => attempt.fullQuestionCode === 'Q1(a)')?.pages, [2]);
   assert.ok(observedPriorContexts[2].some((context: any) => context.fullQuestionCode === 'Q2(a)' && context.pages.includes(1)));
   assert.ok(observedPriorContexts[2].some((context: any) => context.fullQuestionCode === 'Q1(a)' && context.pages.includes(2)));
+
+  clearCoverageMapCache();
+  const nestedPartPdf = await createPdf(1);
+  const nestedPartStructure: any = {
+    paperTitle: 'Nested descriptive sibling verification',
+    totalPaperMaxMarks: 100,
+    questions: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false },
+      { fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 2, isMcq: false },
+    ],
+    mcqs: [],
+  };
+  const nestedReadModes: boolean[] = [];
+  const nestedPartCoverage = await buildAnswerSheetCoverageMap(nestedPartPdf, nestedPartStructure, {
+    enableTargetedRecovery: true,
+    analyzePage: async (_base64, pageNumber, _structure, _total, _previous, _prior, recoveryMode) => {
+      nestedReadModes.push(Boolean(recoveryMode));
+      const visibleLeaves = recoveryMode
+        ? ['Q2(a(i))', 'Q2(a(ii))']
+        : ['Q2(a(i))'];
+      return {
+        pageNumber,
+        status: 'ATTEMPTED_READABLE',
+        detectedQuestions: visibleLeaves.map((fullQuestionCode) => ({
+          fullQuestionCode,
+          questionNumber: '2',
+          subQuestionNumber: fullQuestionCode.includes('(ii)') ? 'a(ii)' : 'a(i)',
+          status: 'ATTEMPTED_READABLE',
+          isContinuation: false,
+          pageNumber,
+          isMcq: false,
+          snippet: `Visible answer work for ${fullQuestionCode}.`,
+        })),
+        rawSummary: recoveryMode
+          ? 'Independent read recovered both nested answer parts.'
+          : 'First read confidently identified one nested answer part.',
+        hasHandwriting: true,
+        answerBlocksObserved: recoveryMode ? 2 : 1,
+        unresolvedAnswerBlocks: [],
+        mcqNeedsReview: [],
+      };
+    },
+  });
+  assert.deepEqual(nestedReadModes, [false, true],
+    'A confident first pass on one nested leaf must still trigger one bounded sibling-verification read.');
+  assert.deepEqual(
+    nestedPartCoverage.attemptedQuestions.map((attempt) => attempt.fullQuestionCode).sort(),
+    ['Q2(a(i))', 'Q2(a(ii))'],
+    'The independent read must recover and preserve each attempted nested leaf separately.',
+  );
+  assert.ok(nestedPartCoverage.attemptedQuestions.every((attempt) => attempt.pages.length === 1 && attempt.pages[0] === 1));
 
   clearCoverageMapCache();
   const mcqStructure: any = {

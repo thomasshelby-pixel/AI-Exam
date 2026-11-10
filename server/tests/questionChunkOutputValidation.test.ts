@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { parseAndValidateQuestionChunkOutput } from '../services/questionChunkEvaluator.js';
+import {
+  buildQuestionChunkSubPartCompletenessDirective,
+  parseAndValidateQuestionChunkOutput,
+  requiresAnswerLevelReadabilityReview,
+} from '../services/questionChunkEvaluator.js';
 
 function makeResponse(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -32,6 +36,29 @@ function makeResponse(overrides: Record<string, unknown> = {}): string {
     ...overrides,
   });
 }
+
+const nestedDirective = buildQuestionChunkSubPartCompletenessDirective('Q2(a(ii))', 3);
+assert.match(nestedDirective, /exactly the authoritative leaf Q2\(a\(ii\)\)/i);
+assert.match(nestedDirective, /Do not merge this leaf with its parent/i);
+assert.match(nestedDirective, /each distinct, independently mark-bearing source criterion exactly once/i);
+assert.match(nestedDirective, /source's own component allocations/i);
+assert.match(nestedDirective, /visibly not attempted/i);
+assert.match(nestedDirective, /unreadable\s+evidence requires UNCLEAR\/review/i);
+assert.match(nestedDirective, /no source criterion may be silently skipped or duplicated/i);
+assert.match(nestedDirective, /do not fabricate a balancing step/i);
+
+assert.equal(requiresAnswerLevelReadabilityReview({
+  status: 'ATTEMPTED_UNCLEAR',
+  readabilityStatusExplicit: false,
+}), false, 'An aggregate page-level unclear label must not force review before the question evaluator independently reads the answer.');
+assert.equal(requiresAnswerLevelReadabilityReview({
+  status: 'ATTEMPTED_UNCLEAR',
+  readabilityStatusExplicit: true,
+}), true, 'An explicit answer-block unreadable decision must remain review-required.');
+assert.equal(requiresAnswerLevelReadabilityReview({
+  status: 'ATTEMPTED_PARTIALLY_READABLE',
+  readabilityStatusExplicit: true,
+}), false, 'A partially readable answer proceeds to source-grounded marking; the evaluator can still return UNCLEAR if evidence is insufficient.');
 
 const normalized = parseAndValidateQuestionChunkOutput(makeResponse(), 5);
 assert.equal(normalized.status, 'partially_correct',
