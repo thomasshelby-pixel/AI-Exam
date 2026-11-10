@@ -722,7 +722,15 @@ export function buildStructuredAnnotations(
     resultJson?.studentAttemptManifest?.pageCoverageAudit ||
     [];
   const pageAuditByNumber = new Map(pageCoverageAudit.map((item) => [item.pageNumber, item]));
+  const hasExplicitPageAnalysisAudit = pageCoverageAudit.some((item) =>
+    item.analysisCompleted !== undefined ||
+    item.analysisStatus !== undefined ||
+    item.analysisFailureCode !== undefined ||
+    item.answerBlocksObserved !== undefined ||
+    item.hasUnresolvedContent !== undefined
+  );
   for (let pageNumber = 1; pageNumber <= safeTotalPages; pageNumber++) {
+    if (!hasExplicitPageAnalysisAudit) continue;
     const audit = pageAuditByNumber.get(pageNumber);
     const reasons: string[] = [];
     if (!audit) {
