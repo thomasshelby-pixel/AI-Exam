@@ -57,6 +57,8 @@ export interface AuthoritativePaperStructure {
   mcqs: PaperStructureSubQuestion[];
   /** Present when the official source states an optional-attempt rule that could not be parsed safely. */
   optionalSelectionRuleError?: string;
+  /** Exact Question Paper / Marking Scheme allocations that explicitly disagree. */
+  markAllocationConflicts?: string[];
 }
 
 /**
@@ -113,6 +115,11 @@ export function getAuthoritativePaperStructure(options: {
   const structure = isTaxationPaper && !useUniversalSourceParser
     ? buildTaxationPaperStructure(options)
     : buildGenericPaperStructure(options);
+  const markAllocationConflicts = auditSourceMarkAllocations({
+    questionPaperText,
+    markingSchemeText,
+    suggestedAnswersText,
+  });
 
   // An explicit optional-question instruction must be resolved into a known
   // allowed set. Otherwise the ledger could count too many attempted choices.
@@ -129,6 +136,7 @@ export function getAuthoritativePaperStructure(options: {
   return {
     ...attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText),
     optionalSelectionRuleError,
+    markAllocationConflicts,
   };
 }
 
@@ -871,6 +879,71 @@ function getSourceBackedMcqMaximumMarks(
   return 0;
 }
 
+/**
+ * Read only standalone question-total lines for source-to-source mark checks.
+ * A rubric sentence such as "Question 1(a) - award 2 marks for the provision"
+ * is deliberately not treated as the question maximum. The selected QP remains
+ * the primary allocation source; an explicit standalone disagreement with the
+ * Marking Scheme blocks scoring rather than silently choosing either value.
+ */
+function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<string, number> {
+  const allocations = new Map<string, number>();
+  const linePattern = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?)\s*(\d{1,3})\s*(.*?)\s*(?:[-–—:]|carries?|carrying|worth|allotted|is)\s*(?:[\[(]\s*)?(\d+(?:\.\d+)?)\s*(?:Marks?|M)\s*[\])]?[\s.]*$/i;
+  for (const line of String(sourceText || '').replace(/\r/g, '').split('\n')) {
+    const match = line.match(linePattern);
+    if (!match) continue;
+    const questionNumber = match[1];
+    const suffix = String(match[2] || '').trim();
+    const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
+    const marks = Number(match[3]);
+    if (!Number.isFinite(marks) || marks <= 0) continue;
+    allocations.set(canonicalId, marks);
+  }
+  return allocations;
+}
+
+function auditSourceMarkAllocations(options: {
+  questionPaperText?: string;
+  markingSchemeText?: string;
+  suggestedAnswersText?: string;
+}): string[] {
+  const questionPaperAllocations = extractStandaloneQuestionMarkAllocations(options.questionPaperText || '');
+  const markingSchemeAllocations = extractStandaloneQuestionMarkAllocations(options.markingSchemeText || '');
+  const conflicts: string[] = [];
+
+  for (const [questionId, questionPaperMarks] of questionPaperAllocations) {
+    const markingSchemeMarks = markingSchemeAllocations.get(questionId);
+    if (markingSchemeMarks !== undefined && Math.abs(questionPaperMarks - markingSchemeMarks) > 0.01) {
+      conflicts.push(
+        'MARK_ALLOCATION_SOURCE_CONFLICT: ' + questionId + ' is ' + questionPaperMarks +
+        ' marks in the selected Question Paper but ' + markingSchemeMarks + ' marks in the selected Marking Scheme.'
+      );
+    }
+  }
+
+  const mcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  for (const questionNumber of mcqKeys.keys()) {
+    const questionPaperMarks = getSourceBackedMcqMaximumMarks(questionNumber, {
+      questionPaperText: options.questionPaperText,
+    });
+    const markingSchemeMarks = getSourceBackedMcqMaximumMarks(questionNumber, {
+      markingSchemeText: options.markingSchemeText,
+    });
+    if (
+      questionPaperMarks > 0 &&
+      markingSchemeMarks > 0 &&
+      Math.abs(questionPaperMarks - markingSchemeMarks) > 0.01
+    ) {
+      conflicts.push(
+        'MCQ_MARK_ALLOCATION_SOURCE_CONFLICT: MCQ' + questionNumber + ' is ' + questionPaperMarks +
+        ' marks in the selected Question Paper but ' + markingSchemeMarks + ' marks in the selected Marking Scheme.'
+      );
+    }
+  }
+
+  return Array.from(new Set(conflicts));
+}
+
 function buildGenericPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -878,16 +951,36 @@ function buildGenericPaperStructure(options: {
   officialPaperMaxMarks?: number;
   materialType?: string;
 }): AuthoritativePaperStructure {
-  const combined = `${options.markingSchemeText || ''}\n${options.questionPaperText || ''}\n${options.suggestedAnswersText || ''}`;
-  let subQuestions = extractSubQuestionsFromText(combined);
+  // Question Paper allocations take precedence over any repeated mark amounts
+  // inside a marking-scheme explanation. The Marking Scheme and Suggested
+  // Answers may fill identities/maxima that the QP omits, but they must never
+  // silently overwrite a maximum already stated by the selected QP.
+  const sourceTexts = [
+    options.questionPaperText,
+    options.markingSchemeText,
+    options.suggestedAnswersText,
+  ];
+  const subQuestions: PaperStructureSubQuestion[] = [];
+  const seenSourceQuestionIds = new Set<string>();
+  for (const sourceText of sourceTexts) {
+    for (const question of extractSubQuestionsFromText(String(sourceText || ''))) {
+      const canonicalId = toCanonicalQuestionId(
+        question.fullQuestionCode || question.questionNumber,
+        question.subQuestionNumber,
+      );
+      if (seenSourceQuestionIds.has(canonicalId)) continue;
+      seenSourceQuestionIds.add(canonicalId);
+      subQuestions.push(question);
+    }
+  }
 
   // Never fabricate question identities or maximum marks for PYQ, MTP,
   // Model Test, or Faculty Mock papers. If the selected source cannot be
   // parsed, the deterministic pre-evaluation gate must stop scoring.
-  subQuestions = deduplicateQuestionList(subQuestions);
+  const normalizedSubQuestions = deduplicateQuestionList(subQuestions);
 
   const questionsMap = new Map<string, PaperStructureQuestion>();
-  for (const sq of subQuestions) {
+  for (const sq of normalizedSubQuestions) {
     const key = `Q${sq.questionNumber}`;
     if (!questionsMap.has(key)) {
       questionsMap.set(key, {
@@ -933,7 +1026,7 @@ function buildGenericPaperStructure(options: {
     baseQuestions.map((question) => question.questionNumber),
   );
   const optionalQuestionNumbers = new Set(attemptRule?.questionNumbers || []);
-  const finalSubQuestions = subQuestions.map((subQuestion) => ({
+  const finalSubQuestions = normalizedSubQuestions.map((subQuestion) => ({
     ...subQuestion,
     compulsory: !optionalQuestionNumbers.has(String(Number(subQuestion.questionNumber))),
   }));
