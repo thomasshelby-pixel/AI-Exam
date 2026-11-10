@@ -1492,8 +1492,8 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
 - ROMAN-CHILD NORMALIZATION: Roman-numbered headings beneath an existing parent are evidence sections
   within that parent's scoreable question, not additional question IDs. For example, Q2(a)(i) and
   Q2(a)(ii) both map to the authoritative scoreable ID Q2(a); Q2(1)(i) maps to Q2(1).
-  A standalone Roman part such as Q2(iv) remains Q2(iv). Numeric details below a Roman heading retain
-  their own IDs when the normalized inventory lists them, for example Q2(a)(ii)(1) maps to Q2(a)(1).
+  A standalone Roman part such as Q2(iv) remains Q2(iv). Details numbered below a Roman heading
+  remain evidence within the normalized parent scoreable question, for example Q2(a)(ii)(1) maps to Q2(a).
 - When a student writes separate Roman child answer blocks, preserve each block's own snippet and return
   one detectedQuestions object per visible block, but set authoritativeQuestionCode to the exact
   normalized parent ID for each block. The page/attempt aggregation will combine those snippets and
