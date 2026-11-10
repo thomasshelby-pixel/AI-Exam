@@ -129,6 +129,11 @@ export function assessQuestionReferenceTopicAlignment(
     'requirement', 'requirements', 'according', 'accordance', 'candidate',
     'step', 'award', 'awarded', 'deduct', 'deduction', 'marksavailable',
     'marksawarded', 'accurately', 'correctly', 'relevant', 'applicable',
+    // Generic company-record context can appear in unrelated Companies Act
+    // questions (e.g. turnover is stated in financial statements); it is not
+    // sufficient evidence that two legal topics are the same.
+    'financial', 'statements', 'audited', 'meeting', 'annual', 'registrar',
+    'filing', 'filed', 'adopted', 'adjourned', 'documents',
   ]);
   const terms = (value: string) => new Set(
     String(value || '')
