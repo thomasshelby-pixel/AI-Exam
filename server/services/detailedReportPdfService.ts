@@ -319,32 +319,47 @@ export async function generateDetailedReportPdf(
 
   let questions: any[] = [];
   if (runPkg && Array.isArray(runPkg.evaluationRecords) && runPkg.evaluationRecords.length > 0) {
+    // Keep skipped/unattempted paper questions in the report scoreboard.
+    // The canonical ledger remains the authority for totals; including a skipped
+    // optional question here is display-only and must not inflate the score.
     questions = runPkg.evaluationRecords
-      .filter((r: any) => r.counted || r.attempted)
       .map((r: any) => ({
         questionNumber: r.questionId,
         canonicalId: r.questionId,
+        topic: r.topic || r.topicName || r.questionTitle || r.subjectTopic,
         maximumMarks: r.maxMarks,
         maxMarks: r.maxMarks,
         marksAwarded: r.awardedMarks,
+        attempted: typeof r.attempted === 'boolean' ? r.attempted : undefined,
+        counted: typeof r.counted === 'boolean' ? r.counted : undefined,
+        evaluationStatus: r.evaluationStatus,
+        reportStatus: r.reportStatus || r.status,
         detailedFeedback: r.evidence || `Evaluated with status ${r.evaluationStatus}`,
         markingComponents: r.markingComponents,
         stepMarkingBreakdown: r.stepMarkingBreakdown,
         stepsEvaluated: r.markingComponents,
+        idealAnswer: r.idealAnswer || r.modelAnswer || r.suggestedAnswer,
       }));
   } else if (resultJson?.canonicalLedger && Array.isArray(resultJson.canonicalLedger.records) && resultJson.canonicalLedger.records.length > 0) {
+    // Same display policy as the persisted run package: include skipped rows,
+    // but never add their marks into the canonical score total.
     questions = resultJson.canonicalLedger.records
-      .filter((r: any) => r.counted || r.attempted)
       .map((r: any) => ({
         questionNumber: r.questionId,
         canonicalId: r.questionId,
+        topic: r.topic || r.topicName || r.questionTitle || r.subjectTopic,
         maximumMarks: r.maxMarks,
         maxMarks: r.maxMarks,
         marksAwarded: r.awardedMarks,
+        attempted: typeof r.attempted === 'boolean' ? r.attempted : undefined,
+        counted: typeof r.counted === 'boolean' ? r.counted : undefined,
+        evaluationStatus: r.evaluationStatus,
+        reportStatus: r.reportStatus || r.status,
         detailedFeedback: r.evidence || `Evaluated with status ${r.evaluationStatus}`,
         markingComponents: r.markingComponents,
         stepMarkingBreakdown: r.stepMarkingBreakdown,
         stepsEvaluated: r.markingComponents,
+        idealAnswer: r.idealAnswer || r.modelAnswer || r.suggestedAnswer,
       }));
   } else {
     const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
@@ -824,10 +839,10 @@ export async function generateDetailedReportPdf(
   });
 
   safeDrawText(p1, 'Q. No.', { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'Marks Awarded', { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'Max Marks', { x: 175, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'Score %', { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-  safeDrawText(p1, 'ICAI Step Status & Key Remarks', { x: 310, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Topic / Statutory Provision', { x: 100, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Max', { x: 350, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Awarded', { x: 405, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+  safeDrawText(p1, 'Status', { x: 485, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
 
   y -= 18;
 
@@ -844,8 +859,12 @@ export async function generateDetailedReportPdf(
     );
     const qMarks = Number(q.marksAwarded ?? 0);
     const qMax = Number(q.maximumMarks ?? q.maxMarks ?? 0);
-    const qPct = qMax > 0 ? Math.round((qMarks / qMax) * 100) : 0;
-    const qRemarks = q.detailedFeedback || q.examinerRemarks || q.reasonForDeduction || q.remarks || 'Step evaluation completed';
+    const qStatusRaw = String(q.reportStatus || q.evaluationStatus || q.status || '').toLowerCase();
+    const isAttempted = q.attempted === true || (!['not_attempted', 'unattempted', 'skipped', 'blank'].includes(qStatusRaw) && q.attempted !== false);
+    const qStatus = qStatusRaw.includes('unclear') || qStatusRaw.includes('review')
+      ? 'Needs Review'
+      : isAttempted ? 'Attempted' : (q.counted === false ? 'Skipped (Choice)' : 'Unattempted');
+    const qTopic = String(q.topic || q.topicName || q.questionTitle || q.subjectTopic || 'Topic not specified').replace(/\\s+/g, ' ').slice(0, 48);
 
     if (y - 18 < 60) {
       pageNum++;
@@ -862,10 +881,10 @@ export async function generateDetailedReportPdf(
         color: brandBlue,
       });
       safeDrawText(currentScorecardPage, 'Q. No.', { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'Marks Awarded', { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'Max Marks', { x: 175, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'Score %', { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
-      safeDrawText(currentScorecardPage, 'ICAI Step Status & Key Remarks', { x: 310, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Topic / Statutory Provision', { x: 100, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Max', { x: 350, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Awarded', { x: 405, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
+      safeDrawText(currentScorecardPage, 'Status', { x: 485, y: y - 13, size: 7.5, font: helveticaBold, color: rgb(1, 1, 1) });
       y -= 18;
     }
 
@@ -879,12 +898,11 @@ export async function generateDetailedReportPdf(
       borderWidth: 0.5,
     });
 
-    safeDrawText(currentScorecardPage, qNum, { x: 44, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
-    safeDrawText(currentScorecardPage, `${qMarks}`, { x: 95, y: y - 13, size: 7.5, font: helveticaBold, color: darkSlate });
-    safeDrawText(currentScorecardPage, `${qMax}`, { x: 175, y: y - 13, size: 7.5, font: helvetica, color: darkSlate });
-    safeDrawText(currentScorecardPage, `${qPct}%`, { x: 245, y: y - 13, size: 7.5, font: helveticaBold, color: qPct >= 50 ? passGreen : failRed });
-    const remarkLines = wrapText(qRemarks, 62);
-    safeDrawText(currentScorecardPage, remarkLines[0] || qRemarks, { x: 310, y: y - 13, size: 7, font: helvetica, color: mutedSlate });
+    safeDrawText(currentScorecardPage, qNum, { x: 44, y: y - 13, size: 7.2, font: helveticaBold, color: darkSlate });
+    safeDrawText(currentScorecardPage, qTopic, { x: 100, y: y - 13, size: 6.8, font: helvetica, color: darkSlate });
+    safeDrawText(currentScorecardPage, `${qMax}`, { x: 350, y: y - 13, size: 7.2, font: helvetica, color: darkSlate });
+    safeDrawText(currentScorecardPage, `${qMarks}`, { x: 405, y: y - 13, size: 7.2, font: helveticaBold, color: darkSlate });
+    safeDrawText(currentScorecardPage, qStatus, { x: 485, y: y - 13, size: 6.8, font: helvetica, color: qStatus === 'Needs Review' ? accentGold : darkSlate });
 
     y -= 18;
   });
@@ -965,10 +983,11 @@ export async function generateDetailedReportPdf(
         color: brandBlue,
       });
 
-      safeDrawText(currentStepPage, `Marks Awarded: ${qMarks} / ${qMax}`, {
-        x: pW - 170,
+      const qMarksLost = Math.max(0, qMax - qMarks);
+      safeDrawText(currentStepPage, `Earned +${qMarks} | Deducted -${qMarksLost} | Max ${qMax}`, {
+        x: pW - 220,
         y: stepY - 15,
-        size: 8.5,
+        size: 7.5,
         font: helveticaBold,
         color: qMarks >= qMax ? passGreen : darkSlate,
       });
@@ -1104,7 +1123,9 @@ export async function generateDetailedReportPdf(
           });
 
           // Marks awarded and deduction pill (anchored to top-right of the box)
-          const markLabel = sDeducted > 0 ? `+${sAward} / ${sMax} (-${sDeducted})` : `+${sAward} / ${sMax}`;
+          const markLabel = sDeducted > 0
+            ? `Earned +${sAward} / ${sMax} | Deducted -${sDeducted}`
+            : `Earned +${sAward} / ${sMax}`;
           safeDrawText(currentStepPage, markLabel, {
             x: pW - 145,
             y: stepY - 12,
@@ -1142,6 +1163,73 @@ export async function generateDetailedReportPdf(
       }
 
       stepY -= 8;
+    }
+  }
+
+  // Examiner action plan: include only genuinely unattempted questions and
+  // surface model points only when they are present in the verified evaluation data.
+  const unattemptedQuestions = questions.filter((q: any) => {
+    const status = String(q.reportStatus || q.evaluationStatus || q.status || '').toLowerCase();
+    return q.attempted === false || ['not_attempted', 'unattempted', 'blank'].includes(status);
+  });
+  if (unattemptedQuestions.length > 0) {
+    pageNum++;
+    let { page: actionPage, width: actionWidth, height: actionHeight } = createReportPage(pageNum);
+    let actionY = actionHeight - 75;
+    safeDrawText(actionPage, "EXAMINER'S ACTION PLAN & MODEL NOTES FOR UNATTEMPTED QUESTIONS", {
+      x: 36, y: actionY, size: 10, font: helveticaBold, color: brandBlue,
+    });
+    actionY -= 24;
+    safeDrawText(actionPage, 'These questions were not attempted in the supplied answer book. The notes below are shown only when supported by the verified evaluation reference.', {
+      x: 36, y: actionY, size: 7.2, font: helvetica, color: mutedSlate,
+    });
+    actionY -= 22;
+
+    for (const q of unattemptedQuestions) {
+      const qId = String(q.canonicalId || q.questionNumber || 'Question');
+      const qMax = Number(q.maximumMarks ?? q.maxMarks ?? 0);
+      if (actionY < 110) {
+        pageNum++;
+        const nextPage = createReportPage(pageNum);
+        actionPage = nextPage.page;
+        actionY = nextPage.height - 75;
+      }
+      safeDrawText(actionPage, `${qId} — Unattempted (0 / ${qMax} marks)`, {
+        x: 40, y: actionY, size: 8.5, font: helveticaBold, color: failRed,
+      });
+      actionY -= 14;
+
+      const components: any[] = q.markingComponents || q.structuredEvidence?.markingComponents || [];
+      const notes = [
+        ...(q.idealAnswer ? [String(q.idealAnswer)] : []),
+        ...components.map((c: any) => c.idealAnswer || c.authoritativeAnswer || c.expectedRequirement).filter(Boolean),
+      ].filter((value: any, index: number, all: any[]) => all.indexOf(value) === index);
+
+      if (notes.length === 0) {
+        safeDrawText(actionPage, 'No answer was detected. A verified model-answer excerpt was not available in this evaluation record.', {
+          x: 48, y: actionY, size: 7.2, font: helvetica, color: darkSlate,
+        });
+        actionY -= 14;
+      } else {
+        for (const note of notes) {
+          const noteLines = wrapText(`• ${String(note)}`, 92);
+          const noteHeight = noteLines.length * 9 + 4;
+          if (actionY - noteHeight < 65) {
+            pageNum++;
+            const nextPage = createReportPage(pageNum);
+            actionPage = nextPage.page;
+            actionY = nextPage.height - 75;
+          }
+          for (const noteLine of noteLines) {
+            safeDrawText(actionPage, noteLine, {
+              x: 48, y: actionY, size: 7.2, font: helvetica, color: darkSlate,
+            });
+            actionY -= 9;
+          }
+          actionY -= 4;
+        }
+      }
+      actionY -= 12;
     }
   }
 
