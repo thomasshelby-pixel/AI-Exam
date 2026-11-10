@@ -760,6 +760,8 @@ export interface AttemptedQuestionMapping {
   subQuestionNumber?: string;
   pages: number[];
   status: PageAttemptStatus;
+  /** True only when the page auditor explicitly classified this individual answer block. */
+  readabilityStatusExplicit?: boolean;
   studentSnippet?: string;
   studentSelectedOption?: string; // For MCQs
   isMcq: boolean;
@@ -1105,6 +1107,7 @@ export async function buildAnswerSheetCoverageMap(
           subQuestionNumber: parsed.subQuestion,
           pages: [pageRec.pageNumber],
           status: det.status,
+          readabilityStatusExplicit: Boolean(det.readabilityStatusExplicit),
           studentSnippet: det.snippet,
           studentSelectedOption: det.mcqSelectionNeedsReview ? undefined : det.studentSelectedOption,
           isMcq: parsed.isMcq,
@@ -1121,6 +1124,17 @@ export async function buildAnswerSheetCoverageMap(
           existing.studentSnippet = (existing.studentSnippet ? `${existing.studentSnippet}\n\n` : '') + det.snippet;
         }
         if (det.mappingReviewReason) existing.mappingReviewReason = det.mappingReviewReason;
+        // A repeated answer may span several pages. Explicit per-answer reads
+        // override page-level fallback labels; conflicting explicit reads stay partial.
+        existing.status = reconcileDetectedAnswerReadability(
+          existing.status,
+          det.status,
+          Boolean(existing.readabilityStatusExplicit),
+          Boolean(det.readabilityStatusExplicit),
+        );
+        existing.readabilityStatusExplicit = Boolean(
+          existing.readabilityStatusExplicit || det.readabilityStatusExplicit,
+        );
         if (det.mcqSelectionNeedsReview) {
           existing.studentSelectedOption = undefined;
           existing.mcqSelectionNeedsReview = true;
