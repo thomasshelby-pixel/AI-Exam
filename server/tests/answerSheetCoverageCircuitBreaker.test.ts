@@ -474,8 +474,8 @@ async function run() {
     isContinuation: true,
     paperSubQuestions: nestedContinuationStructure.subQuestions,
   });
-  assert.equal(nestedRomanContinuation.canonicalId, 'Q2(a(i))',
-    'A bare Roman child after Q2(a) must resolve through canonical serialization, not Q2(a)(i).');
+  assert.equal(nestedRomanContinuation.canonicalId, 'Q2(a)',
+    'A bare Roman child after Q2(a) must resolve to the one scoreable parent ID.');
   assert.equal(nestedRomanContinuation.requiresReview, false);
   const nestedRomanSibling = resolveContextualQuestionIdentity({
     subQuestion: 'ii',
@@ -484,8 +484,8 @@ async function run() {
     isContinuation: true,
     paperSubQuestions: nestedContinuationStructure.subQuestions,
   });
-  assert.equal(nestedRomanSibling.canonicalId, 'Q2(a(ii))',
-    'A sibling Roman child must resolve under the authoritative parent Q2(a).');
+  assert.equal(nestedRomanSibling.canonicalId, 'Q2(a)',
+    'A sibling Roman child must resolve to the same authoritative scoreable parent Q2(a).');
   assert.equal(nestedRomanSibling.requiresReview, false);
 
   const wrappedNestedLeafStructure: any = {
@@ -522,8 +522,11 @@ async function run() {
     assert.equal(parsedNestedPage.detectedQuestions.length, 1,
       'Every compact/flat nested label variant must be retained as one answer block.');
     assert.equal(parsedNestedPage.detectedQuestions[0].questionNumber, '2');
-    assert.equal(parsedNestedPage.detectedQuestions[0].subQuestion, 'a(i)',
-      'The full hierarchical path must survive page-output normalization.');
+    assert.equal(parsedNestedPage.detectedQuestions[0].subQuestion, 'a',
+      'A visible Roman child label must normalize to its parent scoreable sub-question.');
+    assert.equal(parsedNestedPage.detectedQuestions[0].snippet,
+      'The nested Roman sub-part answer is visibly labelled and readable.',
+      'Normalizing the scoreable ID must not discard the student's actual answer evidence.');
     const mappedNestedLeaf = resolveContextualQuestionIdentity({
       questionNumber: parsedNestedPage.detectedQuestions[0].questionNumber,
       subQuestion: parsedNestedPage.detectedQuestions[0].subQuestion,
@@ -531,8 +534,8 @@ async function run() {
       mappingBasis: 'VISIBLE_LABEL',
       paperSubQuestions: wrappedNestedLeafStructure.subQuestions,
     });
-    assert.equal(mappedNestedLeaf.canonicalId, 'Q2(a(i))',
-      'Q2(a(i)) formatting variants must map to the exact authoritative canonical leaf.');
+    assert.equal(mappedNestedLeaf.canonicalId, 'Q2(a)',
+      'Every Q2(a)(i) formatting variant must map to the normalized scoreable parent.');
     assert.equal(mappedNestedLeaf.requiresReview, false,
       'A clearly visible nested leaf must not enter NEEDS_REVIEW solely because of bracket formatting.');
   }
@@ -543,8 +546,8 @@ async function run() {
     isContinuation: true,
     paperSubQuestions: wrappedNestedLeafStructure.subQuestions,
   });
-  assert.equal(compactBareNestedContinuation.canonicalId, 'Q2(a(i))',
-    'A bare Roman label after a verified Q2(a) parent must map to Q2(a(i)).');
+  assert.equal(compactBareNestedContinuation.canonicalId, 'Q2(a)',
+    'A bare Roman label after a verified Q2(a) parent must map to Q2(a).');
 
   const inventory = buildCanonicalQuestionInventory({ paperStructure: arbitraryOrderStructure });
   const independentAttempts = detectIndependentAttempts({
