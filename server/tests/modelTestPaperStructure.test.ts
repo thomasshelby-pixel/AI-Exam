@@ -138,7 +138,9 @@ const taxationSourceBundle = {
     'Question 1(a) - 4 Marks',
     'Question 1(b) - 6 Marks',
     'Question 2(a)(i) - 2 Marks',
+    'First Roman clause QP requirement: determine the applicable legal condition.',
     'Question 2(a)(ii) - 3 Marks',
+    'Second Roman clause QP requirement: apply the condition to the given facts.',
   ].join('\n'),
   suggestedAnswersText: [
     'Taxation Suggested Answers',
@@ -148,8 +150,8 @@ const taxationSourceBundle = {
     'SECTION B - DESCRIPTIVE QUESTIONS',
     'Question 1(a) - Official answer for Taxation sub-part 1(a).',
     'Question 1(b) - Official answer for Taxation sub-part 1(b).',
-    'Question 2(a)(i) - Official answer for the first nested clause.',
-    'Question 2(a)(ii) - Official answer for the second nested clause.',
+    'Question 2(a)(i) - Official answer for the first nested clause: explain the legal condition.',
+    'Question 2(a)(ii) - Official answer for the second nested clause: apply and conclude on the facts.',
   ].join('\n'),
   markingSchemeText: [
     'Taxation Marking Scheme',
@@ -176,6 +178,22 @@ assert.deepEqual(
   taxationStructures.MTP.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
   [['Q1(a)', 4], ['Q1(b)', 6], ['Q2(a)', 5]],
   'Taxation Roman child allocations must aggregate under the lettered scoreable question using source-backed marks.',
+);
+const consolidatedTaxationQ2a = taxationStructures.MTP.subQuestions.find(
+  (question) => question.fullQuestionCode === 'Q2(a)',
+);
+assert.equal(consolidatedTaxationQ2a?.maximumMarks, 5,
+  'The evaluator must receive the combined authoritative parent maximum, not the first Roman child's 2 marks.');
+assert.match(consolidatedTaxationQ2a?.questionText || '', /First Roman clause QP requirement/);
+assert.match(consolidatedTaxationQ2a?.questionText || '', /Second Roman clause QP requirement/,
+  'The consolidated QP source context must retain both Roman clauses.');
+assert.match(consolidatedTaxationQ2a?.suggestedAnswerAnchor || '', /first nested clause/);
+assert.match(consolidatedTaxationQ2a?.suggestedAnswerAnchor || '', /second nested clause/,
+  'The consolidated SA source context must retain both Roman answer sections.');
+assert.equal(
+  taxationStructures.MTP.questions.find((question) => question.questionNumber === '2')?.maximumMarks,
+  5,
+  'The parent question summary must use the same consolidated maximum as the scoreable sub-question.',
 );
 assert.deepEqual(
   taxationStructures.MTP.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks]),
