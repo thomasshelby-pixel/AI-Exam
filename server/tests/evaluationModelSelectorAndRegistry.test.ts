@@ -668,13 +668,24 @@ async function runTests() {
     /QUESTION_CHUNK_ALLOCATION_MISMATCH/,
     'Component allocation must equal the official question maximum.',
   );
-  assert.throws(
-    () => parseAndValidateQuestionChunkOutput(JSON.stringify({
-      ...validChunk,
-      marksAwarded: 4,
-    }), 5),
-    /QUESTION_CHUNK_SCORE_MISMATCH/,
-    'Question total must equal the sum of component awards.',
+  const reconciledQuestionTotal = parseAndValidateQuestionChunkOutput(JSON.stringify({
+    ...validChunk,
+    marksAwarded: 4,
+  }), 5);
+  assert.equal(
+    reconciledQuestionTotal.marksAwarded,
+    2,
+    'Validated component awards remain authoritative when the redundant question total differs.',
+  );
+  assert.equal(
+    reconciledQuestionTotal.modelReportedMarksAwarded,
+    4,
+    'The inconsistent question-level total is retained for audit rather than silently discarded.',
+  );
+  assert.match(
+    reconciledQuestionTotal.scoreReconciliationNote,
+    /reconciled from 4 to 2/i,
+    'A material question-total mismatch must be explicitly auditable.',
   );
 
   const unclearChunk = {
