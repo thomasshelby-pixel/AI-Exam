@@ -1052,8 +1052,10 @@ function buildGenericPaperStructure(options: {
   // headings. Accept only one numeric marks value per line; ambiguous
   // multi-component mark prose stays unallocated and fails closed.
   if (String(options.materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST') {
-    for (const question of extractUnambiguousFacultyMockMarkAllocations(String(options.markingSchemeText || ''))) {
-      addQuestionOnce(question);
+    for (const sourceText of [options.markingSchemeText, options.suggestedAnswersText]) {
+      for (const question of extractUnambiguousFacultyMockMarkAllocations(String(sourceText || ''))) {
+        addQuestionOnce(question);
+      }
     }
   }
 
