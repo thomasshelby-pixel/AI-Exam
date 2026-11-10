@@ -907,9 +907,11 @@ function extractUnambiguousDescriptiveQuestionMarkAllocations(sourceText: string
     .split('\n')
     .map((line) => {
       const allocations = line.match(/\b\d+(?:\.\d+)?\s*(?:Marks?|M)\b/gi) || [];
-      // A line with multiple mark values is a component rubric, not a safe
-      // question maximum. Keep it out of the shared source parser.
-      return allocations.length > 1 ? '' : line;
+      const explicitComponentAward =
+        /\b(?:award|allow|give)\s+(?:up to\s+)?\d+(?:\.\d+)?\s*(?:Marks?|M)\b/i.test(line);
+      // Multiple mark values or an explicit criterion-award instruction is
+      // component-level rubric text, not a safe question maximum.
+      return allocations.length > 1 || explicitComponentAward ? '' : line;
     })
     .join('\n');
   return extractSubQuestionsFromText(filteredSource);
