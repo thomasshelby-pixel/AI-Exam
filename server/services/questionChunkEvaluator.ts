@@ -184,6 +184,27 @@ export function assessQuestionReferenceTopicAlignment(
   };
 }
 
+/**
+ * When a generated examiner-style scheme has a topic-mismatched source anchor,
+ * retain its derived step allocations but remove the unrelated answer text.
+ * This preserves the selected sub-question's mark split without importing law
+ * or facts from a neighbouring question. Unknown/non-derived formats fail closed.
+ */
+export function removeMismatchedDerivedSourceAnchor(markingSchemeSnippet: string): string {
+  const source = String(markingSchemeSnippet || '');
+  const anchorMatch = /^\s*SOURCE-DERIVED CONTENT ANCHOR\s*:/im.exec(source);
+  const allocationMatch = /^\s*DERIVED EXAMINER-STYLE ALLOCATION\s*:/im.exec(source);
+  if (!anchorMatch || !allocationMatch || allocationMatch.index <= anchorMatch.index) return '';
+
+  const prefix = source.slice(0, anchorMatch.index).trimEnd();
+  const allocation = source.slice(allocationMatch.index).trim();
+  return [
+    prefix,
+    'SOURCE-DERIVED CONTENT ANCHOR: [EXCLUDED: topic mismatch with this exact question.]',
+    allocation,
+  ].filter(Boolean).join('\n\n').trim();
+}
+
 export interface QuestionReferenceEvaluationDisposition {
   canScoreProvisionally: boolean;
   requiresHumanReview: boolean;
@@ -579,15 +600,16 @@ export async function evaluateQuestionChunk(
   }
   const markingSchemeExcluded = topicAlignment.misalignedSources?.includes('MARKING_SCHEME') === true;
   if (markingSchemeExcluded) {
-    console.warn('[REFERENCE_SOURCE_MISMATCH] Excluded cross-wired Marking Scheme block for ' + fullCode + '; retained exact QP + Suggested Answer. ' + (topicAlignment.reason || ''));
-    snippets.msSnippet = '';
-    snippets.retrievedCharacterCount = [snippets.qpSnippet, snippets.saSnippet].join('\n').trim().length;
+    console.warn('[REFERENCE_SOURCE_MISMATCH] Excluded cross-wired Marking Scheme answer anchor for ' + fullCode + '; retained exact QP + Suggested Answer. ' + (topicAlignment.reason || ''));
+    snippets.msSnippet = removeMismatchedDerivedSourceAnchor(snippets.msSnippet);
+    snippets.retrievedCharacterCount = [snippets.qpSnippet, snippets.saSnippet, snippets.msSnippet].join('\n').trim().length;
     snippets.contentHash = crypto.createHash('sha256')
-      .update([snippets.qpSnippet, snippets.saSnippet].join('\n').trim())
+      .update([snippets.qpSnippet, snippets.saSnippet, snippets.msSnippet].join('\n').trim())
       .digest('hex');
   }
   const markingSchemePromptBlock = markingSchemeExcluded
-    ? 'EXCLUDED: The extracted Marking Scheme block failed an independent topic check and belongs to a different question. Do not use it. Evaluate only from the exact Question Paper and matched Suggested Answer above; do not import sibling-question provisions, facts, or mark criteria.'
+    ? 'SOURCE ANCHOR EXCLUDED: The original answer anchor in this Marking Scheme block failed an independent topic check and belongs to a different question. Do not use that anchor or any sibling-question law/facts. The remaining DERIVED EXAMINER-STYLE ALLOCATION, when present below, may be used only for its component mark weights and generic step categories. Use the exact Question Paper and matched Suggested Answer as the sole substantive authorities.'
+      + (snippets.msSnippet ? '\n\n' + snippets.msSnippet : '\nNo safe derived step allocation remained; use the matched Suggested Answer and authoritative maximum only.')
     : (snippets.msSnippet || 'No question-specific Marking Scheme extract was available. Use the matched Suggested Answer as the substantive source and the authoritative maximum only; do not invent section-number or presentation requirements.');
   const sourceInstructions = buildChunkReferenceSourceInstructions(snippets.referenceTrace);
   const referenceDisposition = assessQuestionReferenceForEvaluation({
