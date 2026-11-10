@@ -183,7 +183,7 @@ const consolidatedTaxationQ2a = taxationStructures.MTP.subQuestions.find(
   (question) => question.fullQuestionCode === 'Q2(a)',
 );
 assert.equal(consolidatedTaxationQ2a?.maximumMarks, 5,
-  'The evaluator must receive the combined authoritative parent maximum, not the first Roman child's 2 marks.');
+  'The evaluator must receive the combined authoritative parent maximum, not the first Roman child\'s 2 marks.');
 assert.match(consolidatedTaxationQ2a?.questionText || '', /First Roman clause QP requirement/);
 assert.match(consolidatedTaxationQ2a?.questionText || '', /Second Roman clause QP requirement/,
   'The consolidated QP source context must retain both Roman clauses.');
