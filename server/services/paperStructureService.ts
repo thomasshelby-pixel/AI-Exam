@@ -895,12 +895,11 @@ function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<strin
 }
 
 /**
- * Faculty-authored marking schemes often state a question total with a short
- * criterion description on the same line, e.g. "Question 1: 5 marks for
- * treatment and supporting working". Accept that format only when the line
- * contains exactly one numeric marks allocation. A line containing multiple
- * mark values is a component rubric, not a safe question maximum, and is
- * deliberately excluded so the pre-evaluation gate requests review.
+ * Source-backed marking references may state a question total with a short
+ * criterion description on the same line. Accept that format only when the
+ * line contains exactly one numeric marks allocation. A line containing
+ * multiple mark values is a component rubric, not a safe question maximum,
+ * and is deliberately excluded so the pre-evaluation gate requests review.
  */
 function extractUnambiguousDescriptiveQuestionMarkAllocations(sourceText: string): PaperStructureSubQuestion[] {
   const filteredSource = String(sourceText || '')
