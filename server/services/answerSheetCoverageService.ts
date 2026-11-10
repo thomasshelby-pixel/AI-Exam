@@ -1305,7 +1305,15 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
   report the material match and set labelMismatch=true; do not silently hide the conflict.
 - One page may contain multiple independent questions. Split and map each answer block separately.
 - Treat every separately labelled descriptive sub-part as its own answer block: (a), (b), (i), (ii),
-  (1), (2), and nested labels such as (a)(i) or (5)(ii). Never collapse siblings into their parent.
+  (1), (2), and nested labels such as (a)(i), (a(i)), (5)(ii) or (5(ii)). Never collapse siblings into their parent.
+- CANONICAL NESTED-LABEL CROSSWALK: the authoritative inventory serializes the path Q2(a(i)) and Q2(a(ii)).
+  A candidate may write the same leaf as Q2(a(i)), Q2(a)(i), 2(a(i)), 2(a)(i), or may write the parent
+  once and then use bare child headings (i)/(ii) or combined headings (a(i))/(a(ii)).
+  These are formatting variants of the SAME complete hierarchical path, not different questions.
+  When the visible label is Q2(a(i)), return questionNumber="2", subQuestion="a(i)",
+  parentQuestionNumberVisible=true, and authoritativeQuestionCode="Q2(a(i))" (the exact inventory ID).
+  Never return only Q2(a), only Q2(i), or Q2(a)(i) as two independent siblings; preserve both path levels.
+  For a bare (i)/(ii), attach it to Q2(a) only when the printed parent/answer context visibly establishes Q2(a).
 - When the nested sibling checklist shows a parent with multiple leaves, inspect the page for EACH listed
   leaf independently. If Q2(a)(i) and Q2(a)(ii) are both attempted, return two detectedQuestions objects
   with those exact full leaf identities; never return only Q2 or Q2(a), and never combine both answers
