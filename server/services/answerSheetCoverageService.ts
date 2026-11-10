@@ -1498,6 +1498,9 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
   one detectedQuestions object per visible block, but set authoritativeQuestionCode to the exact
   normalized parent ID for each block. The page/attempt aggregation will combine those snippets and
   pages into one scoreable parent evaluation; never create separate Roman-child score tasks.
+- A bare Roman heading such as (i) or (ii) may map to a parent only when the parent is visible on this
+  page or the answer is an unambiguous continuation of that same parent from the full earlier-page
+  context. Do not infer a parent from page adjacency alone; leave uncertain identity for review.
 - When the nested sibling checklist lists multiple numeric child IDs, inspect EACH listed ID independently.
   Return only visibly attempted children and map each to its exact authoritative inventory ID. Do not
   merge distinct Arabic-numbered siblings into their parent or into each other.
