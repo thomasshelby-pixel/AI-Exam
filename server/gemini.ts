@@ -1388,7 +1388,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                   lastErr = chunkErr;
                   const rawDiagnostic = chunkErr instanceof Error ? chunkErr.message : String(chunkErr);
                   const diagnostic = sanitizeSecretStrings(rawDiagnostic).replace(/\s+/g, ' ').slice(0, 220);
-                  console.error(`[EvaluationEngine] Fallback chain exhausted for ${canonId}; preserving attempted answer for review. Diagnostic: ${diagnostic}`);
+                  console.error(`[EvaluationEngine] Question-level evaluation could not be completed for ${canonId}; preserving attempted answer for review. Diagnostic: ${diagnostic}`);
                 }
 
                 if (evalResult) {
