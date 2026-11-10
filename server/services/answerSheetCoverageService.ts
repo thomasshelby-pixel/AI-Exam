@@ -1312,11 +1312,12 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
   These are formatting variants of the SAME complete hierarchical path, not different questions.
   When the visible label is Q2(a(i)), return questionNumber="2", subQuestion="a(i)",
   parentQuestionNumberVisible=true, and authoritativeQuestionCode="Q2(a(i))" (the exact inventory ID).
-  Never return only Q2(a), only Q2(i), or Q2(a)(i) as two independent siblings; preserve both path levels.
+  Never truncate the path to Q2(a) or Q2(i), and never split Q2(a(i)) into two records; preserve both levels.
   For a bare (i)/(ii), attach it to Q2(a) only when the printed parent/answer context visibly establishes Q2(a).
 - When the nested sibling checklist shows a parent with multiple leaves, inspect the page for EACH listed
-  leaf independently. If Q2(a)(i) and Q2(a)(ii) are both attempted, return two detectedQuestions objects
-  with those exact full leaf identities; never return only Q2 or Q2(a), and never combine both answers
+  leaf independently. If the leaves Q2(a(i)) and Q2(a(ii)) are both attempted (even if the script writes
+  Q2(a)(i) and Q2(a)(ii)), return two detectedQuestions objects using those exact canonical inventory IDs;
+  never return only Q2 or Q2(a), and never combine both answers
   into a single record merely because they share a parent or page.
 - Do not assume every listed sibling was attempted. Return only visibly attempted leaves; if a distinct
   attempted leaf is visible but its exact identity is uncertain, add it to unresolvedAnswerBlocks instead
