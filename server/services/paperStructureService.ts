@@ -62,6 +62,108 @@ export interface AuthoritativePaperStructure {
 }
 
 /**
+ * Consolidates source-numbered Roman child clauses into their parent
+ * scoreable question. The original QP/SA/MS labels and allocations are
+ * preserved in merged source context; component evidence remains distinct.
+ *
+ * Examples:
+ * - Q2(a)(i)=2 and Q2(a)(ii)=3 -> Q2(a)=5
+ * - An explicit Q2(a)=5 remains authoritative over duplicate child headers.
+ * - Q2(a)(1) and Q2(a)(2) remain separate Arabic-numbered scoreable parts.
+ * - Standalone Q2(iv) remains independently scoreable.
+ */
+export function consolidateRomanChildSubQuestions(
+  subQuestions: PaperStructureSubQuestion[],
+): PaperStructureSubQuestion[] {
+  const groups = new Map<string, {
+    first: PaperStructureSubQuestion;
+    seenSourcePaths: Set<string>;
+    directMaximumMarks?: number;
+    romanChildMaximums: Map<string, number>;
+    questionTexts: string[];
+    suggestedAnchors: string[];
+    topics: string[];
+  }>();
+
+  for (const sourceQuestion of subQuestions || []) {
+    const rawCode = String(sourceQuestion.fullQuestionCode ||
+      `Q${sourceQuestion.questionNumber}${sourceQuestion.subQuestionNumber ? `(${sourceQuestion.subQuestionNumber})` : ''}`);
+    const identityFromCode = parseCanonicalQuestionIdentity(rawCode);
+    const identityFromSubQuestion = sourceQuestion.subQuestionNumber
+      ? parseCanonicalQuestionIdentity(`Q${identityFromCode.questionNumber}(${sourceQuestion.subQuestionNumber})`)
+      : identityFromCode;
+    const rawIdentity = (identityFromSubQuestion.sourceSubQuestionPath?.length || 0) >
+      (identityFromCode.sourceSubQuestionPath?.length || 0)
+      ? identityFromSubQuestion
+      : identityFromCode;
+    const canonicalId = toCanonicalQuestionId(
+      sourceQuestion.fullQuestionCode || sourceQuestion.questionNumber,
+      sourceQuestion.subQuestionNumber,
+      subQuestions,
+    );
+    const normalizedIdentity = parseCanonicalQuestionIdentity(canonicalId);
+    const sourcePath = rawIdentity.sourceSubQuestionPath || rawIdentity.subQuestionPath || [];
+    const normalizedPath = normalizedIdentity.subQuestionPath || [];
+    const sourcePathKey = sourcePath.map((part) => part.toLowerCase()).join('/');
+    const hasRomanChild = sourcePath.length > normalizedPath.length &&
+      sourcePath.some((part, index) =>
+        index > 0 && /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx|xxi|xxii|xxiii|xxiv|xxv|xxx|xl|l|lx|lxx|xc|c)$/i.test(part)
+      );
+
+    let group = groups.get(normalizedIdentity.canonicalId);
+    if (!group) {
+      group = {
+        first: sourceQuestion,
+        seenSourcePaths: new Set<string>(),
+        romanChildMaximums: new Map<string, number>(),
+        questionTexts: [],
+        suggestedAnchors: [],
+        topics: [],
+      };
+      groups.set(normalizedIdentity.canonicalId, group);
+    }
+    if (group.seenSourcePaths.has(sourcePathKey)) continue;
+    group.seenSourcePaths.add(sourcePathKey);
+
+    const rawMaximum = Number(sourceQuestion.maximumMarks);
+    const maximum = Number.isFinite(rawMaximum) && rawMaximum > 0 ? rawMaximum : 0;
+    if (hasRomanChild) {
+      group.romanChildMaximums.set(sourcePathKey, maximum);
+    } else if (group.directMaximumMarks === undefined) {
+      group.directMaximumMarks = maximum;
+    }
+
+    for (const [target, value] of [
+      [group.questionTexts, sourceQuestion.questionText],
+      [group.suggestedAnchors, sourceQuestion.suggestedAnswerAnchor],
+      [group.topics, sourceQuestion.topic],
+    ] as Array<[string[], string | undefined]>) {
+      const normalized = String(value || '').trim();
+      if (normalized && !target.includes(normalized)) target.push(normalized);
+    }
+  }
+
+  return Array.from(groups.entries()).map(([canonicalId, group]) => {
+    const identity = parseCanonicalQuestionIdentity(canonicalId);
+    const romanChildrenMaximum = Array.from(group.romanChildMaximums.values())
+      .reduce((total, marks) => total + marks, 0);
+    const questionText = group.questionTexts.join('\\n\\n');
+    const suggestedAnswerAnchor = group.suggestedAnchors.join('\\n\\n');
+    const topic = group.topics.join(' / ');
+    return {
+      ...group.first,
+      fullQuestionCode: canonicalId,
+      questionNumber: identity.questionNumber,
+      subQuestionNumber: identity.subQuestion,
+      maximumMarks: group.directMaximumMarks ?? romanChildrenMaximum,
+      ...(questionText ? { questionText } : {}),
+      ...(suggestedAnswerAnchor ? { suggestedAnswerAnchor } : {}),
+      ...(topic ? { topic } : {}),
+    };
+  });
+}
+
+/**
  * Extracts and normalizes the immutable authoritative paper structure.
  * Pre-configured for known CA papers with verified marking schemes, and includes
  * generic algorithmic parsing for dynamically uploaded papers.
@@ -125,8 +227,29 @@ export function getAuthoritativePaperStructure(options: {
   // Preserve the exact selected materials alongside the canonical IDs. The
   // page mapper needs real QP wording and SA anchors to identify answers in
   // arbitrary order; IDs and maximum marks alone are not enough.
+  const enrichedStructure = attachQuestionSourceContext(
+    structure,
+    questionPaperText,
+    suggestedAnswersText,
+  );
+  const scoreableSubQuestions = consolidateRomanChildSubQuestions(enrichedStructure.subQuestions || []);
+  const scoreableQuestions = (enrichedStructure.questions || []).map((question) => {
+    const questionParts = scoreableSubQuestions.filter(
+      (part) => part.questionNumber === question.questionNumber,
+    );
+    return {
+      ...question,
+      maximumMarks: questionParts.length
+        ? questionParts.reduce((total, part) => total + Number(part.maximumMarks || 0), 0)
+        : question.maximumMarks,
+      subQuestions: questionParts,
+    };
+  });
+
   return {
-    ...attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText),
+    ...enrichedStructure,
+    questions: scoreableQuestions,
+    subQuestions: scoreableSubQuestions,
     optionalSelectionRuleError,
     markAllocationConflicts,
   };
