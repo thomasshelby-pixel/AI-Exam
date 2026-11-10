@@ -120,6 +120,16 @@ export function validatePreEvaluationGate(params: {
 
   const { paperStructure, coverageMap, questionPaperText, suggestedAnswersText, markingSchemeText } = params;
 
+  // Never score a paper when the selected Question Paper and Marking
+  // Scheme explicitly disagree on a question's total maximum marks.
+  // A source conflict is not an AI judgement call: the reference package must
+  // be corrected before marks can be certified.
+  for (const conflict of paperStructure?.markAllocationConflicts || []) {
+    failedInvariants.push(conflict);
+    criticalFailures.push(conflict);
+    sourceConflicts.push(conflict);
+  }
+
   // An explicit optional-attempt instruction without a safely resolved choice
   // set must not silently count every attempted alternative.
   if (paperStructure?.optionalSelectionRuleError) {

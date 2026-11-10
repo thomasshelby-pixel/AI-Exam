@@ -86,6 +86,29 @@ assert.equal(
   'When the QP does not state a maximum, the configured mock maximum remains authoritative.',
 );
 
+assert.equal(
+  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\nMaximum Marks: 80'),
+  80,
+  'An explicit custom 80-mark Faculty Mock maximum must override a stale configured 100-mark default.',
+);
+assert.equal(
+  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\nMaximum Marks: 60'),
+  60,
+  'An explicit custom 60-mark Faculty Mock maximum must be preserved.',
+);
+
+assert.equal(
+  resolveOfficialPaperMaximumMarks(100, 'Question 1: Marks: 5\nQuestion 2: 4 marks'),
+  100,
+  'A question-level marks entry must not be mistaken for the whole-paper maximum.',
+);
+assert.equal(
+  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\nMarks: 80'),
+  80,
+  'A legacy generic two- or three-digit paper Marks header remains supported.',
+);
+
+
 const legacyMockSourceIds = resolveFacultyMockComponentSourceIds({
   id: 'legacy-mock-no-component-file-ids',
   marking_scheme_text: 'Marking scheme evidence with sufficient detail.',

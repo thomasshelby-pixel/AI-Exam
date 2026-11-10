@@ -57,6 +57,8 @@ export interface AuthoritativePaperStructure {
   mcqs: PaperStructureSubQuestion[];
   /** Present when the official source states an optional-attempt rule that could not be parsed safely. */
   optionalSelectionRuleError?: string;
+  /** Exact Question Paper / Marking Scheme allocations that explicitly disagree. */
+  markAllocationConflicts?: string[];
 }
 
 /**
@@ -113,6 +115,12 @@ export function getAuthoritativePaperStructure(options: {
   const structure = isTaxationPaper && !useUniversalSourceParser
     ? buildTaxationPaperStructure(options)
     : buildGenericPaperStructure(options);
+  const markAllocationConflicts = auditSourceMarkAllocations({
+    questionPaperText,
+    markingSchemeText,
+    suggestedAnswersText,
+    materialType,
+  });
 
   // An explicit optional-question instruction must be resolved into a known
   // allowed set. Otherwise the ledger could count too many attempted choices.
@@ -129,6 +137,7 @@ export function getAuthoritativePaperStructure(options: {
   return {
     ...attachQuestionSourceContext(structure, questionPaperText, suggestedAnswersText),
     optionalSelectionRuleError,
+    markAllocationConflicts,
   };
 }
 
@@ -871,6 +880,123 @@ function getSourceBackedMcqMaximumMarks(
   return 0;
 }
 
+/**
+ * Read only standalone question-total lines for source-to-source mark checks.
+ * A rubric sentence such as "Question 1(a) - award 2 marks for the provision"
+ * is deliberately not treated as the question maximum. The selected QP remains
+ * the primary allocation source; an explicit standalone disagreement with the
+ * Marking Scheme blocks scoring rather than silently choosing either value.
+ */
+function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<string, number> {
+  const allocations = new Map<string, number>();
+  const linePattern = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?)\s*(\d{1,3})\s*(.*?)\s*(?:(?:[-–—:]|carries?|carrying|worth|allotted|is|for)\s*)?(?:[\[(]\s*)?(\d+(?:\.\d+)?)\s*(?:Marks?|M)\s*[\])]?\s*[\s.]*$/i;
+  for (const line of String(sourceText || '').replace(/\r/g, '').split('\n')) {
+    const match = line.match(linePattern);
+    if (!match) continue;
+    const questionNumber = match[1];
+    const suffix = String(match[2] || '').trim();
+    const canonicalId = parseCanonicalQuestionIdentity('Q' + questionNumber + suffix).canonicalId;
+    const marks = Number(match[3]);
+    if (!Number.isFinite(marks) || marks <= 0) continue;
+    allocations.set(canonicalId, marks);
+  }
+  return allocations;
+}
+
+/**
+ * Faculty-authored marking schemes often state a question total with a short
+ * criterion description on the same line, e.g. "Question 1: 5 marks for
+ * treatment and supporting working". Accept that format only when the line
+ * contains exactly one numeric marks allocation. A line containing multiple
+ * mark values is a component rubric, not a safe question maximum, and is
+ * deliberately excluded so the pre-evaluation gate requests review.
+ */
+function extractUnambiguousFacultyMockMarkAllocations(sourceText: string): PaperStructureSubQuestion[] {
+  const filteredSource = String(sourceText || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => {
+      const allocations = line.match(/\b\d+(?:\.\d+)?\s*(?:Marks?|M)\b/gi) || [];
+      return allocations.length > 1 ? '' : line;
+    })
+    .join('\n');
+  return extractSubQuestionsFromText(filteredSource);
+}
+
+function auditSourceMarkAllocations(options: {
+  questionPaperText?: string;
+  markingSchemeText?: string;
+  suggestedAnswersText?: string;
+  materialType?: string;
+}): string[] {
+  const questionPaperAllocations = extractStandaloneQuestionMarkAllocations(options.questionPaperText || '');
+  const markingSchemeAllocations = extractStandaloneQuestionMarkAllocations(options.markingSchemeText || '');
+  const suggestedAnswerAllocations = extractStandaloneQuestionMarkAllocations(options.suggestedAnswersText || '');
+  const isFacultyMock = String(options.materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
+
+  if (isFacultyMock) {
+    for (const [source, allocations] of [
+      [options.questionPaperText, questionPaperAllocations],
+      [options.markingSchemeText, markingSchemeAllocations],
+      [options.suggestedAnswersText, suggestedAnswerAllocations],
+    ] as Array<[string | undefined, Map<string, number>]>) {
+      for (const question of extractUnambiguousFacultyMockMarkAllocations(String(source || ''))) {
+        const canonicalId = toCanonicalQuestionId(
+          question.fullQuestionCode || question.questionNumber,
+          question.subQuestionNumber,
+        );
+        if (!allocations.has(canonicalId)) allocations.set(canonicalId, question.maximumMarks);
+      }
+    }
+  }
+
+  const conflicts: string[] = [];
+
+  const compareAllocations = (
+    left: Map<string, number>,
+    right: Map<string, number>,
+    leftLabel: string,
+    rightLabel: string,
+  ) => {
+    for (const [questionId, leftMarks] of left) {
+      const rightMarks = right.get(questionId);
+      if (rightMarks !== undefined && Math.abs(leftMarks - rightMarks) > 0.01) {
+        conflicts.push(
+          'MARK_ALLOCATION_SOURCE_CONFLICT: ' + questionId + ' is ' + leftMarks +
+          ' marks in the selected ' + leftLabel + ' but ' + rightMarks +
+          ' marks in the selected ' + rightLabel + '.'
+        );
+      }
+    }
+  };
+
+  compareAllocations(questionPaperAllocations, markingSchemeAllocations, 'Question Paper', 'Marking Scheme');
+  compareAllocations(questionPaperAllocations, suggestedAnswerAllocations, 'Question Paper', 'Suggested Answers');
+  compareAllocations(markingSchemeAllocations, suggestedAnswerAllocations, 'Marking Scheme', 'Suggested Answers');
+
+  const mcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  for (const questionNumber of mcqKeys.keys()) {
+    const questionPaperMarks = getSourceBackedMcqMaximumMarks(questionNumber, {
+      questionPaperText: options.questionPaperText,
+    });
+    const markingSchemeMarks = getSourceBackedMcqMaximumMarks(questionNumber, {
+      markingSchemeText: options.markingSchemeText,
+    });
+    if (
+      questionPaperMarks > 0 &&
+      markingSchemeMarks > 0 &&
+      Math.abs(questionPaperMarks - markingSchemeMarks) > 0.01
+    ) {
+      conflicts.push(
+        'MCQ_MARK_ALLOCATION_SOURCE_CONFLICT: MCQ' + questionNumber + ' is ' + questionPaperMarks +
+        ' marks in the selected Question Paper but ' + markingSchemeMarks + ' marks in the selected Marking Scheme.'
+      );
+    }
+  }
+
+  return Array.from(new Set(conflicts));
+}
+
 function buildGenericPaperStructure(options: {
   markingSchemeText?: string;
   questionPaperText?: string;
@@ -878,16 +1004,68 @@ function buildGenericPaperStructure(options: {
   officialPaperMaxMarks?: number;
   materialType?: string;
 }): AuthoritativePaperStructure {
-  const combined = `${options.markingSchemeText || ''}\n${options.questionPaperText || ''}\n${options.suggestedAnswersText || ''}`;
-  let subQuestions = extractSubQuestionsFromText(combined);
+  // Question Paper allocations take precedence over any repeated mark amounts
+  // inside a marking-scheme explanation. The Marking Scheme and Suggested
+  // Answers may fill identities/maxima that the QP omits, but they must never
+  // silently overwrite a maximum already stated by the selected QP.
+  const subQuestions: PaperStructureSubQuestion[] = [];
+  const seenSourceQuestionIds = new Set<string>();
+  const addQuestionOnce = (question: PaperStructureSubQuestion) => {
+    const canonicalId = toCanonicalQuestionId(
+      question.fullQuestionCode || question.questionNumber,
+      question.subQuestionNumber,
+    );
+    if (seenSourceQuestionIds.has(canonicalId)) return;
+    seenSourceQuestionIds.add(canonicalId);
+    subQuestions.push(question);
+  };
+
+  // The Question Paper is the primary inventory and maximum-mark source.
+  // Do not run the generic "first marks number on the line" extractor over an
+  // entire Marking Scheme: component awards (e.g. 2 + 3 marks) are not the
+  // question's maximum. MS / SA may fill a missing maximum only when they
+  // contain an explicit standalone question-total line.
+  for (const question of extractSubQuestionsFromText(String(options.questionPaperText || ''))) {
+    addQuestionOnce(question);
+  }
+
+  for (const sourceText of [options.markingSchemeText, options.suggestedAnswersText]) {
+    for (const [canonicalId, maximumMarks] of extractStandaloneQuestionMarkAllocations(String(sourceText || ''))) {
+      if (seenSourceQuestionIds.has(canonicalId)) continue;
+      const parsed = parseCanonicalQuestionIdentity(canonicalId);
+      addQuestionOnce({
+        fullQuestionCode: canonicalId,
+        questionNumber: parsed.questionNumber,
+        subQuestionNumber: parsed.subQuestion,
+        maximumMarks,
+        compulsory: true,
+        isMcq: false,
+        section: Number(parsed.questionNumber) > 4 ? 'B' : 'A',
+        division: 'B',
+      });
+    }
+  }
+
+  // Faculty Mock TXT files are authored independently by faculties. Their
+  // marking scheme may put one question maximum and its short criterion
+  // description on the same line, unlike ICAI's standardized total-only
+  // headings. Accept only one numeric marks value per line; ambiguous
+  // multi-component mark prose stays unallocated and fails closed.
+  if (String(options.materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST') {
+    for (const sourceText of [options.markingSchemeText, options.suggestedAnswersText]) {
+      for (const question of extractUnambiguousFacultyMockMarkAllocations(String(sourceText || ''))) {
+        addQuestionOnce(question);
+      }
+    }
+  }
 
   // Never fabricate question identities or maximum marks for PYQ, MTP,
   // Model Test, or Faculty Mock papers. If the selected source cannot be
   // parsed, the deterministic pre-evaluation gate must stop scoring.
-  subQuestions = deduplicateQuestionList(subQuestions);
+  const normalizedSubQuestions = deduplicateQuestionList(subQuestions);
 
   const questionsMap = new Map<string, PaperStructureQuestion>();
-  for (const sq of subQuestions) {
+  for (const sq of normalizedSubQuestions) {
     const key = `Q${sq.questionNumber}`;
     if (!questionsMap.has(key)) {
       questionsMap.set(key, {
@@ -933,7 +1111,7 @@ function buildGenericPaperStructure(options: {
     baseQuestions.map((question) => question.questionNumber),
   );
   const optionalQuestionNumbers = new Set(attemptRule?.questionNumbers || []);
-  const finalSubQuestions = subQuestions.map((subQuestion) => ({
+  const finalSubQuestions = normalizedSubQuestions.map((subQuestion) => ({
     ...subQuestion,
     compulsory: !optionalQuestionNumbers.has(String(Number(subQuestion.questionNumber))),
   }));
