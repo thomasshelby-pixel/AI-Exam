@@ -145,14 +145,14 @@ const explanationOnlyMarkingScheme = [
   'Marking Scheme',
   'Question 1(a) - Award 2 marks for the correct principle and 3 marks for application.',
   'Question 2(a) - 4 Marks',
-].join('\\n');
+].join('\n');
 const explanationOnlyStructure = structureFor('PYQ', {
   questionPaperText: [
     'Question Paper',
     'Question 1(a)',
     'Prepare the required treatment.',
     'Question 2(a) - 4 Marks',
-  ].join('\\n'),
+  ].join('\n'),
   markingSchemeText: explanationOnlyMarkingScheme,
 });
 assert.equal(
