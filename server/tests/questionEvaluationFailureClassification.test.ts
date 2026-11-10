@@ -3,6 +3,10 @@ import {
   classifyQuestionEvaluationFailure,
   createQuestionEvaluationFailure,
 } from '../services/questionEvaluationFailureService.js';
+import {
+  isProviderOutputIncompleteFailure,
+  isTaskSpecificOutputValidationFailure,
+} from '../services/modelFailurePolicy.js';
 
 const referenceFailure = createQuestionEvaluationFailure({
   questionNumber: '2',
@@ -38,5 +42,31 @@ assert.equal(technicalFailure.marksLost, 0);
 assert.ok(technicalFailure.flags?.includes('FAILED_TO_EVALUATE'));
 assert.ok(technicalFailure.flags?.includes('TECHNICAL_FAILURE'));
 assert.match(technicalFailure.detailedFeedback, /No academic marks have been assigned/);
+
+assert.equal(
+  isTaskSpecificOutputValidationFailure('MODEL_OUTPUT_VALIDATION_FAILED: QUESTION_CHUNK_SCORE_MISMATCH'),
+  true,
+  'A question-specific schema/rubric rejection is scoped to that request, not model health.'
+);
+assert.equal(
+  isProviderOutputIncompleteFailure('MODEL_OUTPUT_VALIDATION_FAILED: QUESTION_CHUNK_SCORE_MISMATCH'),
+  false,
+  'A score reconciliation rejection must not trigger a provider cooldown.'
+);
+assert.equal(
+  isTaskSpecificOutputValidationFailure('OPENAI_OUTPUT_TRUNCATED: response ended before JSON completed'),
+  false,
+  'A genuinely truncated provider response is not classified as a task-only validation failure.'
+);
+assert.equal(
+  isProviderOutputIncompleteFailure('OPENAI_OUTPUT_TRUNCATED: response ended before JSON completed'),
+  true,
+  'A genuinely truncated provider response may still trigger a short model cooldown.'
+);
+assert.equal(
+  isTaskSpecificOutputValidationFailure('HTTP 429 quota exceeded'),
+  false,
+  'Provider rate limits remain provider-health failures rather than question-schema failures.'
+);
 
 console.log('Question evaluation failure classification tests passed.');
