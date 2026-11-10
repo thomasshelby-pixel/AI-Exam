@@ -7,6 +7,7 @@ import {
   parseAndValidatePageCoverageOutput,
   resolveContextualQuestionIdentity,
   resolveDetectedAnswerReadabilityStatus,
+  reconcileDetectedAnswerReadability,
   resolveMcqSelectionNumber,
   type PageCoverageRecord,
 } from '../services/answerSheetCoverageService.js';
@@ -187,6 +188,22 @@ async function run() {
     resolveDetectedAnswerReadabilityStatus('ATTEMPTED_UNCLEAR', undefined, 1, true),
     'ATTEMPTED_UNCLEAR',
     'A single unclear answer remains unclear when no per-answer clarity evidence is available.'
+  );
+
+  assert.equal(
+    reconcileDetectedAnswerReadability('ATTEMPTED_PARTIALLY_READABLE', 'ATTEMPTED_READABLE', false, true),
+    'ATTEMPTED_READABLE',
+    'An explicit targeted recovery read can resolve an earlier aggregate page-level fallback.'
+  );
+  assert.equal(
+    reconcileDetectedAnswerReadability('ATTEMPTED_UNCLEAR', 'ATTEMPTED_READABLE', true, true),
+    'ATTEMPTED_PARTIALLY_READABLE',
+    'Conflicting explicit readability assessments remain partial and are not falsely certified.'
+  );
+  assert.equal(
+    reconcileDetectedAnswerReadability('ATTEMPTED_READABLE', 'ATTEMPTED_UNCLEAR', true, false),
+    'ATTEMPTED_READABLE',
+    'A later aggregate page label cannot downgrade an explicit answer-level readable assessment.'
   );
 
   const mixedReadability = parseAndValidatePageCoverageOutput(JSON.stringify({
