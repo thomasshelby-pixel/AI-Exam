@@ -87,7 +87,6 @@ export function getAuthoritativePaperStructure(options: {
     materialType = '',
   } = options;
 
-  const isFacultyMock = String(materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
   const normalizedLevel = String(level || '').trim().toUpperCase();
   const normalizedPaperIdentity = `${subjectName} ${paper}`.trim().toLowerCase();
   // This preconfigured template is specifically CA Intermediate Paper 3:
@@ -102,15 +101,7 @@ export function getAuthoritativePaperStructure(options: {
   // A configured legacy Taxation template is retained only for older callers
   // that do not identify a source-backed material type; it must never override
   // the selected paper's own question/sub-question identities or mark maxima.
-  const sourceDrivenMaterialTypes = new Set([
-    'PYQ',
-    'MTP',
-    'MODEL_TEST_PAPER',
-    'FACULTY_MOCK_TEST',
-  ]);
-  const normalizedMaterialType = String(materialType || '').trim().toUpperCase();
-  const useUniversalSourceParser =
-    sourceDrivenMaterialTypes.has(normalizedMaterialType) || isFacultyMock;
+  const useUniversalSourceParser = isSourceDrivenMaterialType(materialType);
 
   const structure = isTaxationPaper && !useUniversalSourceParser
     ? buildTaxationPaperStructure(options)
@@ -911,16 +902,23 @@ function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<strin
  * mark values is a component rubric, not a safe question maximum, and is
  * deliberately excluded so the pre-evaluation gate requests review.
  */
-function extractUnambiguousFacultyMockMarkAllocations(sourceText: string): PaperStructureSubQuestion[] {
+function extractUnambiguousDescriptiveQuestionMarkAllocations(sourceText: string): PaperStructureSubQuestion[] {
   const filteredSource = String(sourceText || '')
     .replace(/\r/g, '')
     .split('\n')
     .map((line) => {
       const allocations = line.match(/\b\d+(?:\.\d+)?\s*(?:Marks?|M)\b/gi) || [];
+      // A line with multiple mark values is a component rubric, not a safe
+      // question maximum. Keep it out of the shared source parser.
       return allocations.length > 1 ? '' : line;
     })
     .join('\n');
   return extractSubQuestionsFromText(filteredSource);
+}
+
+function isSourceDrivenMaterialType(materialType: unknown): boolean {
+  return new Set(['PYQ', 'MTP', 'MODEL_TEST_PAPER', 'FACULTY_MOCK_TEST'])
+    .has(String(materialType || '').trim().toUpperCase());
 }
 
 function auditSourceMarkAllocations(options: {
@@ -932,15 +930,13 @@ function auditSourceMarkAllocations(options: {
   const questionPaperAllocations = extractStandaloneQuestionMarkAllocations(options.questionPaperText || '');
   const markingSchemeAllocations = extractStandaloneQuestionMarkAllocations(options.markingSchemeText || '');
   const suggestedAnswerAllocations = extractStandaloneQuestionMarkAllocations(options.suggestedAnswersText || '');
-  const isFacultyMock = String(options.materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST';
-
-  if (isFacultyMock) {
+  if (isSourceDrivenMaterialType(options.materialType)) {
     for (const [source, allocations] of [
       [options.questionPaperText, questionPaperAllocations],
       [options.markingSchemeText, markingSchemeAllocations],
       [options.suggestedAnswersText, suggestedAnswerAllocations],
     ] as Array<[string | undefined, Map<string, number>]>) {
-      for (const question of extractUnambiguousFacultyMockMarkAllocations(String(source || ''))) {
+      for (const question of extractUnambiguousDescriptiveQuestionMarkAllocations(String(source || ''))) {
         const canonicalId = toCanonicalQuestionId(
           question.fullQuestionCode || question.questionNumber,
           question.subQuestionNumber,
@@ -1046,14 +1042,13 @@ function buildGenericPaperStructure(options: {
     }
   }
 
-  // Faculty Mock TXT files are authored independently by faculties. Their
-  // marking scheme may put one question maximum and its short criterion
-  // description on the same line, unlike ICAI's standardized total-only
-  // headings. Accept only one numeric marks value per line; ambiguous
-  // multi-component mark prose stays unallocated and fails closed.
-  if (String(options.materialType || '').trim().toUpperCase() === 'FACULTY_MOCK_TEST') {
+  // All source-backed materials use the same fallback for an omitted QP
+  // maximum: a single unambiguous question-total line in the selected MS/SA
+  // may fill it. Multiple mark values on one line are treated as component
+  // rubrics and never promoted to a question maximum.
+  if (isSourceDrivenMaterialType(options.materialType)) {
     for (const sourceText of [options.markingSchemeText, options.suggestedAnswersText]) {
-      for (const question of extractUnambiguousFacultyMockMarkAllocations(String(sourceText || ''))) {
+      for (const question of extractUnambiguousDescriptiveQuestionMarkAllocations(String(sourceText || ''))) {
         addQuestionOnce(question);
       }
     }
