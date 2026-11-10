@@ -193,6 +193,84 @@ assert.ok(
   'A parenthesized standalone total is compared with the QP allocation.',
 );
 
+// Faculty Mock reference TXT is independently authored and commonly uses a
+// single explicit mark total followed by a short criterion description.
+const facultyMockStructure = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'FACULTY_MOCK_TEST',
+  officialPaperMaxMarks: 100,
+  questionPaperText: [
+    'CA Intermediate Advanced Accounting — Faculty Mock Question Paper',
+    'Maximum Marks: 100',
+    'Question 1. Prepare the relevant journal entries and explain the accounting treatment with supporting working notes.',
+    'Question 2. Calculate the required amount and show each step of your calculation.',
+  ].join('\n\n'),
+  suggestedAnswersText: [
+    'Suggested Answer — Faculty Mock',
+    'Question 1. The correct accounting treatment is explained below with the relevant standard and journal entries.',
+    'Question 2. The calculation and reasoning are set out step by step below.',
+  ].join('\n\n'),
+  markingSchemeText: [
+    'Question 1: 5 marks for correct treatment, supporting standard and journal entries.',
+    'Question 2: 5 marks for correct formula, workings, calculation and conclusion.',
+  ].join('\n\n'),
+});
+assert.deepEqual(
+  facultyMockStructure.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1', 5], ['Q2', 5]],
+  'Faculty Mock single-total rubric lines must create independent question nodes and preserve each maximum.',
+);
+assert.equal(
+  validatePreEvaluationGate({
+    paperStructure: facultyMockStructure,
+    questionPaperText: 'Question 1. Treatment and journal entries. Question 2. Calculation and working.',
+    suggestedAnswersText: 'Suggested Answers for Question 1 and Question 2 with detailed solutions.',
+    markingSchemeText: 'Question 1: 5 marks for treatment. Question 2: 5 marks for calculation.',
+    officialPaperMaxMarks: 100,
+  }).passed,
+  true,
+  'A complete Faculty Mock with unambiguous question-total rubric lines must pass the structural gate.',
+);
+
+// A line with multiple component allocations is ambiguous as a question
+// maximum. Do not promote the first criterion to the full sub-question score.
+const ambiguousFacultyRubric = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'FACULTY_MOCK_TEST',
+  officialPaperMaxMarks: 100,
+  questionPaperText: [
+    'Faculty Mock Question Paper',
+    'Question 1(a). Explain the treatment and calculate the amount.',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Question 1(a). Full solution and calculation are provided.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Question 1(a): Award 2 marks for the correct principle and 3 marks for application.',
+  ].join('\n'),
+});
+assert.equal(
+  ambiguousFacultyRubric.subQuestions.length,
+  0,
+  'Ambiguous multi-component prose must not be guessed as a 2-mark question maximum.',
+);
+assert.equal(
+  validatePreEvaluationGate({
+    paperStructure: ambiguousFacultyRubric,
+    questionPaperText: 'Question 1(a). Explain the treatment and calculate the amount.',
+    suggestedAnswersText: 'Question 1(a). Full solution and calculation are provided.',
+    markingSchemeText: 'Question 1(a): Award 2 marks for the principle and 3 for application.',
+    officialPaperMaxMarks: 100,
+  }).passed,
+  false,
+  'An ambiguous Faculty Mock allocation must stop certification and require source correction/review.',
+);
+
 // A QP sub-part with no total allocation must not be assigned the first
 // component award found in an explanatory Marking Scheme paragraph.
 const explanationOnlyMarkingScheme = [
