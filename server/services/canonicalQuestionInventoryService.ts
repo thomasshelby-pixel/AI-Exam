@@ -622,7 +622,9 @@ export function buildCanonicalEvaluationLedger(options: {
       pageLoadMap.set(annotationPage, (pageLoadMap.get(annotationPage) || 0) + 1);
     }
     const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
-    const annotationRequired = isAttempted && isSelectedAlternative && Boolean(annotationPage) &&
+    // Every attempted answer gets a checked-copy disposition, including a
+    // second OR/alternative branch that is intentionally excluded from the total.
+    const annotationRequired = isAttempted && Boolean(annotationPage) &&
       (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE' || status === 'NEEDS_REVIEW');
 
     records.push({
