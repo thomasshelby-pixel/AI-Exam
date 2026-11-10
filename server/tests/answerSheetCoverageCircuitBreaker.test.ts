@@ -473,6 +473,64 @@ async function run() {
     'A sibling Roman child must resolve under the authoritative parent Q2(a).');
   assert.equal(nestedRomanSibling.requiresReview, false);
 
+  const wrappedNestedLeafStructure: any = {
+    ...arbitraryOrderStructure,
+    subQuestions: [
+      { fullQuestionCode: 'Q2(a)', questionNumber: '2', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false },
+      { fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false },
+      { fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 3, isMcq: false },
+    ],
+  };
+  const nestedWrittenLabels = [
+    { questionNumber: 'Q2(a(i))' },
+    { questionNumber: 'Q2(a)(i)' },
+    { questionNumber: '2(a(i))' },
+    { questionNumber: '2(a)(i)' },
+    { questionNumber: '2', subQuestion: 'a(i)' },
+  ];
+  for (const writtenLabel of nestedWrittenLabels) {
+    const parsedNestedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      hasHandwriting: true,
+      answerBlocksObserved: 1,
+      detectedQuestions: [{
+        ...writtenLabel,
+        parentQuestionNumberVisible: true,
+        mappingBasis: 'VISIBLE_LABEL',
+        readabilityStatus: 'ATTEMPTED_READABLE',
+        snippet: 'The nested Roman sub-part answer is visibly labelled and readable.',
+      }],
+      unresolvedAnswerBlocks: [],
+      mcqNeedsReview: [],
+      mcqSelections: {},
+    }));
+    assert.equal(parsedNestedPage.detectedQuestions.length, 1,
+      'Every compact/flat nested label variant must be retained as one answer block.');
+    assert.equal(parsedNestedPage.detectedQuestions[0].questionNumber, '2');
+    assert.equal(parsedNestedPage.detectedQuestions[0].subQuestion, 'a(i)',
+      'The full hierarchical path must survive page-output normalization.');
+    const mappedNestedLeaf = resolveContextualQuestionIdentity({
+      questionNumber: parsedNestedPage.detectedQuestions[0].questionNumber,
+      subQuestion: parsedNestedPage.detectedQuestions[0].subQuestion,
+      parentQuestionNumberVisible: true,
+      mappingBasis: 'VISIBLE_LABEL',
+      paperSubQuestions: wrappedNestedLeafStructure.subQuestions,
+    });
+    assert.equal(mappedNestedLeaf.canonicalId, 'Q2(a(i))',
+      'Q2(a(i)) formatting variants must map to the exact authoritative canonical leaf.');
+    assert.equal(mappedNestedLeaf.requiresReview, false,
+      'A clearly visible nested leaf must not enter NEEDS_REVIEW solely because of bracket formatting.');
+  }
+  const compactBareNestedContinuation = resolveContextualQuestionIdentity({
+    subQuestion: 'i',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q2(a)',
+    isContinuation: true,
+    paperSubQuestions: wrappedNestedLeafStructure.subQuestions,
+  });
+  assert.equal(compactBareNestedContinuation.canonicalId, 'Q2(a(i))',
+    'A bare Roman label after a verified Q2(a) parent must map to Q2(a(i)).');
+
   const inventory = buildCanonicalQuestionInventory({ paperStructure: arbitraryOrderStructure });
   const independentAttempts = detectIndependentAttempts({
     inventory,
