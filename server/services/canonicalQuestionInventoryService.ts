@@ -874,9 +874,19 @@ export function buildStudentAttemptManifest(options: {
     mcqSelectionNeedsReview?: boolean;
     mappingReviewReason?: string;
   }>;
+  pageCoverageRecords?: Array<{
+    pageNumber: number;
+    status?: string;
+    hasHandwriting?: boolean;
+    mappingReviewReason?: string;
+    answerBlocksObserved?: number;
+    detectedQuestions?: Array<{ fullQuestionCode?: string; questionNumber?: string; isMcq?: boolean }>;
+    unresolvedAnswerBlocks?: string[];
+    analysisFailure?: { code?: string };
+  }>;
   mcqSelections?: Record<string, string>;
 }): StudentAttemptManifest {
-  const { runId, totalPages, inventory, rawPageOccurrences, mcqSelections } = options;
+  const { runId, totalPages, inventory, rawPageOccurrences, pageCoverageRecords = [], mcqSelections } = options;
   const attemptsMap = detectIndependentAttempts({
     inventory,
     rawPageOccurrences,
@@ -903,26 +913,65 @@ export function buildStudentAttemptManifest(options: {
     });
   }
 
-  // Construct Page Coverage Audit from the normalized attempt manifest, not raw
-  // page-heading detections. Raw OCR can emit both a parent heading (Q7) and its
-  // actual child answer (Q7(b)); detectIndependentAttempts has already resolved
-  // that parent/child relationship and transferred the source pages to the leaf.
+  // Construct Page Coverage Audit from BOTH the normalized attempts and the
+  // per-page analyzer records. A page with handwriting but no resolvable question
+  // must not be mislabeled as blank merely because it has no canonical ID.
   const pageCoverageAudit: PageCoverageAuditItem[] = [];
   for (let p = 1; p <= totalPages; p++) {
     const pageOccs = rawPageOccurrences.filter((occ) => occ.pageNumber === p);
-    const hasStudentContent = pageOccs.length > 0;
+    const pageRecord = pageCoverageRecords.find((record) => record.pageNumber === p);
+    const unresolvedAnswerBlocks = Array.isArray(pageRecord?.unresolvedAnswerBlocks)
+      ? pageRecord!.unresolvedAnswerBlocks!
+      : [];
     const detectedQuestionIds = attempts
       .filter((attempt) => attempt.attempted && attempt.sourcePages.includes(p))
       .map((attempt) => attempt.questionId)
       .filter((questionId, index, all) => all.indexOf(questionId) === index)
       .sort();
+    const accountedAnswerBlocks = pageRecord
+      ? (pageRecord.detectedQuestions || []).length + unresolvedAnswerBlocks.length
+      : pageOccs.length;
+    const answerBlockCountMismatch = Boolean(
+      pageRecord?.answerBlocksObserved !== undefined &&
+      pageRecord.answerBlocksObserved !== accountedAnswerBlocks
+    );
+    const hasUnresolvedContent = Boolean(
+      pageRecord?.analysisFailure ||
+      pageRecord?.mappingReviewReason ||
+      unresolvedAnswerBlocks.length > 0 ||
+      answerBlockCountMismatch ||
+      pageRecord?.status === 'QUESTION_NOT_IDENTIFIED' ||
+      pageRecord?.status === 'PAGE_UNREADABLE'
+    );
+    const hasStudentContent = pageRecord
+      ? pageRecord.hasHandwriting !== false || pageRecord.status !== 'CLEARLY_UNATTEMPTED'
+      : pageOccs.length > 0;
 
     pageCoverageAudit.push({
       pageNumber: p,
       hasStudentContent,
       detectedQuestionIds,
       evaluatedQuestionIds: [],
+      // Physical rendering is only marked after the checked-copy writer verifies it.
       renderedQuestionIds: [],
+      ...(pageRecord ? {
+        analysisStatus: pageRecord.status,
+        analysisCompleted: !pageRecord.analysisFailure,
+        ...(pageRecord.analysisFailure?.code ? { analysisFailureCode: pageRecord.analysisFailure.code } : {}),
+        answerBlocksObserved: pageRecord.answerBlocksObserved,
+        accountedAnswerBlocks,
+        unresolvedAnswerBlocks,
+        hasUnresolvedContent,
+        mappingReviewReason: pageRecord.mappingReviewReason,
+        pageRendered: false,
+        renderedAnnotationCount: 0,
+      } : {
+        analysisCompleted: false,
+        hasUnresolvedContent: true,
+        mappingReviewReason: 'No per-page coverage analysis record was supplied for this original PDF page.',
+        pageRendered: false,
+        renderedAnnotationCount: 0,
+      }),
     });
   }
 
@@ -1100,7 +1149,10 @@ export function createEvaluationRunPackage(options: {
     return {
       ...p,
       evaluatedQuestionIds: pageEvaluated,
-      renderedQuestionIds: pageEvaluated,
+      // Never infer physical rendering from evaluation.
+      renderedQuestionIds: [],
+      pageRendered: false,
+      renderedAnnotationCount: 0,
     };
   });
 
