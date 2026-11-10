@@ -119,6 +119,7 @@ export function normalizeDetectedAttemptHierarchy<T extends {
       existingDetails.readabilityStatusExplicit === true || incomingDetails.readabilityStatusExplicit === true;
     mergedDetails.mcqSelectionNeedsReview =
       existingDetails.mcqSelectionNeedsReview === true || incomingDetails.mcqSelectionNeedsReview === true;
+    mergedDetails.isMcq = existingDetails.isMcq === true || incomingDetails.isMcq === true;
 
     const statuses = [existingDetails.status, incomingDetails.status]
       .map((value) => String(value || '').trim())
@@ -139,7 +140,10 @@ export function normalizeDetectedAttemptHierarchy<T extends {
     const selectedOptions = [existingDetails.studentSelectedOption, incomingDetails.studentSelectedOption]
       .map((value) => String(value || '').trim().toUpperCase())
       .filter(Boolean);
-    if (new Set(selectedOptions).size > 1) {
+    const uniqueSelectedOptions = [...new Set(selectedOptions)];
+    if (uniqueSelectedOptions.length === 1) {
+      mergedDetails.studentSelectedOption = uniqueSelectedOptions[0];
+    } else if (uniqueSelectedOptions.length > 1) {
       mergedDetails.studentSelectedOption = undefined;
       mergedDetails.mcqSelectionNeedsReview = true;
       mergedDetails.mappingReviewReason = [
