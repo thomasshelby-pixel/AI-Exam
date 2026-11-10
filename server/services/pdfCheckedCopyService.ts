@@ -202,6 +202,9 @@ export interface PageAnnotation {
   canonicalId?: string;
   marksAwarded: number;
   maxMarks: number;
+  /** A technical/reference/step-evidence hold; zero is not an academic award. */
+  reviewRequired?: boolean;
+  reviewReason?: string;
   studentSelectedOption?: string;
   officialAnswer?: string;
   steps: Array<{
@@ -564,26 +567,20 @@ export function buildStructuredAnnotations(
           comment: isCorrect ? 'Option verified with official answer' : 'Option does not match official key',
         },
       ];
-    } else {
-      steps = [
-        {
-          componentType: 'PROVISION',
-          stepName: 'Statutory / Conceptual Principle',
-          marksAwarded: Math.min(2, rec.awardedMarks),
-          maxMarks: Math.min(2, rec.maxMarks),
-          status: rec.awardedMarks > 0 ? 'CORRECT' : 'INCORRECT',
-          comment: rec.awardedMarks > 0 ? 'Relevant principle identified' : 'Principle missing or omitted',
-        },
-        {
-          componentType: 'APPLICATION',
-          stepName: 'Application & Working Notes',
-          marksAwarded: Math.max(0, rec.awardedMarks - 2),
-          maxMarks: Math.max(1, rec.maxMarks - 2),
-          status: rec.awardedMarks >= rec.maxMarks ? 'CORRECT' : rec.awardedMarks > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT',
-          comment: rec.awardedMarks >= rec.maxMarks ? 'Calculations verified' : 'Partial working verified',
-        },
-      ];
     }
+
+    const reviewRequired = Boolean(
+      rec.reviewRequired ||
+      ['NEEDS_REVIEW', 'FAILED_TO_EVALUATE', 'NEEDS_MAPPING_REVIEW'].includes(String(rec.evaluationStatus || ''))
+    );
+    const reviewReason = reviewRequired
+      ? String(rec.reviewReason || rec.technicalFailureReason || 'The answer was detected, but a verified step-wise score was not produced. No academic zero has been assigned.')
+      : undefined;
+
+    // Never fabricate a generic 2+1 mark split for a descriptive answer.
+    // Without persisted step evidence, the canonical ledger places the question
+    // in review and the checked copy must say that the score is withheld.
+    if (reviewRequired) steps = [];
 
     const pageAnn: PageAnnotation = {
       pageNumber: safeTargetPage,
@@ -591,6 +588,8 @@ export function buildStructuredAnnotations(
       canonicalId: rec.questionId,
       marksAwarded: rec.awardedMarks,
       maxMarks: rec.maxMarks,
+      reviewRequired,
+      reviewReason,
       studentSelectedOption: rec.studentSelectedOption,
       officialAnswer: rec.officialAnswer,
       steps: steps.map((s: any) => {
