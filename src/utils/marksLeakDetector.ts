@@ -130,6 +130,24 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
       components.map((component) => component.pageNumber),
       ledgerById.get(questionKey)?.studentPages || []
     );
+    const requiresQuestionReview = question.status === 'unclear' ||
+      question.flags?.some((flag) => /TECHNICAL|MAPPING|OCR|UNREADABLE|REVIEW_REQUIRED/i.test(flag));
+    if (requiresQuestionReview) {
+      add({
+        id: `review:${questionKey}`,
+        questionId,
+        category: 'TECHNICAL_REVIEW',
+        title: 'Answer needs a manual mapping / readability review',
+        detail: question.reasonForDeduction || question.detailedFeedback || 'The stored evaluation flags this answer for review; marks should not be assumed lost until it is checked.',
+        marksAtStake: 0,
+        pages,
+        evidence: question.flags || [],
+        priority: 'HIGH',
+      });
+      // Provisional component deductions are not confirmed losses until an
+      // unclear or technically blocked question has been independently reviewed.
+      continue;
+    }
 
     for (const component of components) {
       const available = safeNumber(component.marksAvailable);
@@ -224,19 +242,6 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
       }, questionKey, questionMaximum);
     }
 
-    if (question.status === 'unclear' || question.flags?.some((flag) => /TECHNICAL|MAPPING|OCR|UNREADABLE/i.test(flag))) {
-      add({
-        id: `review:${questionKey}`,
-        questionId,
-        category: 'TECHNICAL_REVIEW',
-        title: 'Answer needs a manual mapping / readability review',
-        detail: question.reasonForDeduction || question.detailedFeedback || 'The stored evaluation flags this answer for review; marks should not be assumed lost until it is checked.',
-        marksAtStake: 0,
-        pages,
-        evidence: question.flags || [],
-        priority: 'HIGH',
-      });
-    }
   }
 
   const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
