@@ -87,13 +87,16 @@ export interface QuestionReferenceTopicAlignment {
   aligned: boolean;
   reason?: string;
   sharedTopicTerms: string[];
+  /** A derived Marking Scheme block may be excluded without rejecting a valid QP/SA pair. */
+  misalignedSources?: Array<'SUGGESTED_ANSWER' | 'MARKING_SCHEME'>;
 }
 
 /**
- * Catch a dangerous reference-lock false positive: the text extractor can find
- * a syntactically matching Q-number heading in a document even when that block
- * belongs to a different topic. Only fail closed on a strong, zero-overlap
- * conflict; short/generic question text is not enough to trigger this check.
+ * Detects cross-wired question references using each source independently.
+ * The Suggested Answer is the substantive authority. A mismatched Suggested
+ * Answer blocks scoring; a mismatched supplemental Marking Scheme is excluded
+ * and the evaluator proceeds from the verified QP + SA instead of importing
+ * unrelated sibling-question law or criteria.
  */
 export function assessQuestionReferenceTopicAlignment(
   question: Pick<PaperStructureSubQuestion, 'topic' | 'provision' | 'questionText'>,
@@ -105,9 +108,7 @@ export function assessQuestionReferenceTopicAlignment(
     question.provision || '',
     question.questionText || '',
   ].filter(Boolean).join(' ').slice(0, 6000);
-  const referenceSource = String(suggestedAnswerSnippet || '') + '\n' +
-    String(markingSchemeSnippet || '');
-  if (!questionSource.trim() || !referenceSource.trim()) {
+  if (!questionSource.trim()) {
     return { aligned: true, sharedTopicTerms: [] };
   }
 
@@ -126,6 +127,8 @@ export function assessQuestionReferenceTopicAlignment(
     'limited', 'private', 'public', 'reference', 'suggested', 'director',
     'directors', 'thereof', 'therein', 'provide', 'provided', 'required',
     'requirement', 'requirements', 'according', 'accordance', 'candidate',
+    'step', 'award', 'awarded', 'deduct', 'deduction', 'marksavailable',
+    'marksawarded', 'accurately', 'correctly', 'relevant', 'applicable',
   ]);
   const terms = (value: string) => new Set(
     String(value || '')
@@ -137,21 +140,47 @@ export function assessQuestionReferenceTopicAlignment(
   );
 
   const questionTerms = terms(questionSource);
-  const referenceTerms = terms(referenceSource);
-  // A small or generic topic is not reliable enough to block an evaluation.
-  if (questionTerms.size < 5 || referenceTerms.size < 5) {
+  if (questionTerms.size < 5) {
     return { aligned: true, sharedTopicTerms: [] };
   }
 
-  const sharedTopicTerms = [...questionTerms].filter((word) => referenceTerms.has(word));
-  if (sharedTopicTerms.length > 0) {
-    return { aligned: true, sharedTopicTerms };
+  const compare = (snippet: string) => {
+    const referenceTerms = terms(snippet);
+    if (referenceTerms.size < 5) {
+      return { sufficientlySpecific: false, shared: [] as string[] };
+    }
+    const shared = [...questionTerms].filter((word) => referenceTerms.has(word));
+    const minimumShared = Math.max(2, Math.ceil(Math.min(questionTerms.size, referenceTerms.size) * 0.12));
+    return {
+      sufficientlySpecific: true,
+      aligned: shared.length >= minimumShared,
+      shared,
+    };
+  };
+
+  const suggested = compare(suggestedAnswerSnippet);
+  if (suggested.sufficientlySpecific && !suggested.aligned) {
+    return {
+      aligned: false,
+      sharedTopicTerms: [],
+      misalignedSources: ['SUGGESTED_ANSWER'],
+      reason: 'The selected Suggested Answer block has too little distinctive topic overlap with this exact Question Paper question. The answer reference may be cross-wired to another question; no academic zero may be assigned.',
+    };
+  }
+
+  const markingScheme = compare(markingSchemeSnippet);
+  if (markingScheme.sufficientlySpecific && !markingScheme.aligned) {
+    return {
+      aligned: true,
+      sharedTopicTerms: suggested.shared,
+      misalignedSources: ['MARKING_SCHEME'],
+      reason: 'The extracted Marking Scheme block has too little distinctive topic overlap with the exact question and Suggested Answer. Exclude this block; score only from the verified Question Paper and Suggested Answer, using the authoritative question maximum.',
+    };
   }
 
   return {
-    aligned: false,
-    sharedTopicTerms: [],
-    reason: 'The selected Suggested Answer / Marking Scheme block has no distinctive topic terms in common with the exact Question Paper extract. This may be a duplicate-question-number or wrong-reference match; no academic zero has been assigned.',
+    aligned: true,
+    sharedTopicTerms: [...new Set([...suggested.shared, ...markingScheme.shared])],
   };
 }
 
@@ -546,8 +575,20 @@ export async function evaluateQuestionChunk(
     snippets.msSnippet,
   );
   if (!topicAlignment.aligned) {
-    throw new Error(`QUESTION_REFERENCE_NOT_LOCKED: ${topicAlignment.reason || 'Question and Suggested Answer topics do not align.'} Question: ${fullCode}; human review required.`);
+    throw new Error('QUESTION_REFERENCE_NOT_LOCKED: ' + (topicAlignment.reason || 'Question and Suggested Answer topics do not align.') + ' Question: ' + fullCode + '; human review required.');
   }
+  const markingSchemeExcluded = topicAlignment.misalignedSources?.includes('MARKING_SCHEME') === true;
+  if (markingSchemeExcluded) {
+    console.warn('[REFERENCE_SOURCE_MISMATCH] Excluded cross-wired Marking Scheme block for ' + fullCode + '; retained exact QP + Suggested Answer. ' + (topicAlignment.reason || ''));
+    snippets.msSnippet = '';
+    snippets.retrievedCharacterCount = [snippets.qpSnippet, snippets.saSnippet].join('\n').trim().length;
+    snippets.contentHash = crypto.createHash('sha256')
+      .update([snippets.qpSnippet, snippets.saSnippet].join('\n').trim())
+      .digest('hex');
+  }
+  const markingSchemePromptBlock = markingSchemeExcluded
+    ? 'EXCLUDED: The extracted Marking Scheme block failed an independent topic check and belongs to a different question. Do not use it. Evaluate only from the exact Question Paper and matched Suggested Answer above; do not import sibling-question provisions, facts, or mark criteria.'
+    : (snippets.msSnippet || 'No question-specific Marking Scheme extract was available. Use the matched Suggested Answer as the substantive source and the authoritative maximum only; do not invent section-number or presentation requirements.');
   const sourceInstructions = buildChunkReferenceSourceInstructions(snippets.referenceTrace);
   const referenceDisposition = assessQuestionReferenceForEvaluation({
     ...snippets,
@@ -667,7 +708,7 @@ ${snippets.qpSnippet || 'Question Extract'}
 ${snippets.saSnippet || 'Suggested Answer Extract'}
 
 --- ${sourceInstructions.markingSchemeHeading} ---
-${snippets.msSnippet || 'Step-Marking Scheme Extract'}
+${markingSchemePromptBlock}
 ${transformationContextText}
 
 The candidate's solution for ${fullCode} is on Page(s) ${mapping.pages.join(', ')} of the attached PDF document.
@@ -708,22 +749,28 @@ CRITICAL ICAI EVALUATION RULES:
    - marksAwarded: awarded marks (0 to marksAvailable)
    - marksDeducted: deducted marks
    - deductionReason: specific reason if deducted
-4. ZERO-MARK SAFETY GATE: A student's answer must NOT receive 0 marks merely because wording differs, order differs, presentation differs, or the final total differs while intermediate steps are attempted. If student work contains relevant legal provisions, calculations, or analysis, award appropriate partial credit.
-5. TAXABILITY & EXEMPTION CITATION ACCURACY:
+4. SOURCE AUTHORITY AND CROSS-WIRED MARKING-SCHEME SAFETY:
+    - The exact Question Paper defines the task and facts. The exactly matched Suggested Answer is the primary source of substantive legal/accounting/tax treatment.
+    - Use a question-specific Marking Scheme block only when it independently matches this question's topic. A mismatched/excluded block is untrusted and MUST NOT influence the answer, statutory provision, required step, allocation, deduction or score.
+    - Never borrow a provision, rule, exception, company name, figure, threshold, or criterion from a sibling sub-question merely because its question number is similar.
+    - Do not require an exact section/rule number unless the matched source explicitly makes that identification a separately mark-bearing requirement. If the number is omitted or wrong but the substantive rule and application are correct, deduct only the independently allocated citation/provision component; retain principle, condition, application and conclusion marks.
+    - A whole-question zero is permissible only when every independently mark-bearing requirement is actually omitted or substantively incorrect against the matched source. One incorrect citation cannot erase correct legal principles, facts, application, calculations or conclusions.
+5. ZERO-MARK SAFETY GATE: A student's answer must NOT receive 0 marks merely because wording differs, order differs, presentation differs, a non-mandatory section number is omitted, or the final total differs while intermediate steps are attempted. If student work contains relevant legal provisions, calculations, or analysis, award the independently supported partial credit. Do not convert uncertain reference matching into an academic zero; return an evaluation/reference failure without confirmed marks instead.
+6. TAXABILITY & EXEMPTION CITATION ACCURACY:
    - For classification questions (such as Indian Railways services, cloak room, platform tickets, etc.), determine taxability or exemption STRICTLY according to the verified ICAI Suggested Answer provided above.
    - For example: if the verified suggested solution states that "services provided by Ministry of Railways (Indian Railways) to individuals by way of cloak room services are exempt", and the student concludes that cloak room services are exempt, you MUST evaluate this as CORRECT and award full credit. Do NOT penalize based on general training memory.
-6. NO PRESENTATION DEDUCTIONS: Formatting, tabular vs paragraph, handwriting neatness, or presentation style must NOT be penalized unless explicitly mandated in the marking scheme.
-7. DETAILED EXAMINER REASONING (NO TRUNCATION):
+7. NO PRESENTATION DEDUCTIONS: Formatting, tabular vs paragraph, handwriting neatness, or presentation style must NOT be penalized unless explicitly mandated in the marking scheme.
+8. DETAILED EXAMINER REASONING (NO TRUNCATION):
    - "detailedFeedback" must be thorough, constructive, and detailed (at least 2-3 substantive sentences explaining candidate's performance against the model answer).
    - If marks are deducted, "reasonForDeduction" must clearly state what candidate wrote, what the authoritative solution requires, and the exact step-wise basis for deduction.
-8. TWO-STAGE INTERPRETATION & SOURCE-GROUNDED TRANSFORMATION:
+9. TWO-STAGE INTERPRETATION & SOURCE-GROUNDED TRANSFORMATION:
    - Raw figure stated in Question Paper != final figure to be evaluated.
    - Stage A: Determine what authoritative source says raw fact represents (net vs gross, tax-inclusive vs exclusive, cost vs NRV, WDV depreciation, margin vs markup, etc.).
    - Stage B: Evaluate student's treatment. Accept mathematically/algebraically equivalent forms (e.g. X / 70% == X / 0.70 == X * 100 / 70).
    - Recognize and credit alternative valid methods and valid working orders.
    - Enforce Own-Figure Rule / Consequential credit: Never double-penalize downstream steps for an earlier arithmetic slip.
-9. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
-10. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
+10. The sum of all marksAvailable MUST EQUAL EXACTLY ${maxMarks}.
+11. The sum of all marksAwarded CANNOT EXCEED ${maxMarks}.
 
 Return strictly valid JSON with this schema:
 {
