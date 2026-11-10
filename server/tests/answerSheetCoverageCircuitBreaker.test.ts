@@ -526,7 +526,7 @@ async function run() {
       'A visible Roman child label must normalize to its parent scoreable sub-question.');
     assert.equal(parsedNestedPage.detectedQuestions[0].snippet,
       'The nested Roman sub-part answer is visibly labelled and readable.',
-      'Normalizing the scoreable ID must not discard the student's actual answer evidence.');
+      'Normalizing the scoreable ID must not discard the candidate answer evidence.');
     const mappedNestedLeaf = resolveContextualQuestionIdentity({
       questionNumber: parsedNestedPage.detectedQuestions[0].questionNumber,
       subQuestion: parsedNestedPage.detectedQuestions[0].subQuestion,
