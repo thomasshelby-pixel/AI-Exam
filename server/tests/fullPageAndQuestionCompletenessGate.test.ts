@@ -6,6 +6,7 @@ import {
   buildFourSetReconciliation,
 } from '../services/canonicalQuestionInventoryService.js';
 import {
+  buildStructuredAnnotations,
   validatePreRenderGate,
   validatePostRenderGate,
 } from '../services/pdfCheckedCopyService.js';
@@ -160,6 +161,51 @@ const duplicatePhysicalPage = validatePostRenderGate({
 });
 assert.equal(duplicatePhysicalPage.isValid, false);
 assert.match(duplicatePhysicalPage.errors.join(' '), /Original page 2 was rendered more than once/);
+
+// Missing per-page analysis data must be visible on the affected original page.
+// It must not be converted to an invisible blank page or an invented question.
+const pageReviewCopy = buildStructuredAnnotations(
+  { id: 'page-review-copy', level: 'INTERMEDIATE', subjectName: 'Corporate Law' } as any,
+  {
+    validationStatus: 'NEEDS_REVIEW',
+    certificationStatus: 'REVIEW_REQUIRED',
+    evaluationRunPackage: {
+      runId: 'page-review-copy',
+      evaluationRecords: [],
+      pageCoverageAudit: [
+        {
+          pageNumber: 1,
+          hasStudentContent: false,
+          detectedQuestionIds: [],
+          evaluatedQuestionIds: [],
+          renderedQuestionIds: [],
+          analysisStatus: 'CLEARLY_UNATTEMPTED',
+          analysisCompleted: true,
+          hasUnresolvedContent: false,
+        },
+        {
+          pageNumber: 2,
+          hasStudentContent: true,
+          detectedQuestionIds: [],
+          evaluatedQuestionIds: [],
+          renderedQuestionIds: [],
+          pageRendered: false,
+        },
+      ],
+    },
+  } as any,
+  2,
+);
+assert.equal(pageReviewCopy.totalPages, 2);
+assert.equal(pageReviewCopy.pages[0].annotations.length, 0,
+  'A successfully analysed blank source page should not get an invented question or unnecessary review label.');
+assert.equal(pageReviewCopy.pages[1].annotations.length, 1,
+  'A missing page-analysis record must create a visible page-level review note.');
+assert.equal(pageReviewCopy.pages[1].annotations[0].pageReviewOnly, true);
+assert.equal(pageReviewCopy.pages[1].annotations[0].reviewRequired, true);
+assert.equal(pageReviewCopy.pages[1].annotations[0].maxMarks, 0,
+  'Page-level review notes carry no invented question maximum or academic score.');
+assert.equal(pageReviewCopy.pages[1].annotations[0].marksAwarded, 0);
 
 // An attempted but unselected OR branch must still receive examiner feedback.
 // Its marks remain excluded from the canonical grand total.
