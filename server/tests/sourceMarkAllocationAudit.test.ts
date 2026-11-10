@@ -139,6 +139,43 @@ assert.equal(
   'A Marking Scheme leaf allocation can fill a maximum omitted by the QP.',
 );
 
+// Standalone totals in Suggested Answers are cross-checked too; a matching
+// QP/MS pair must not hide a conflicting SA allocation.
+const suggestedAnswerTotalConflict = getAuthoritativePaperStructure({
+  ...base,
+  materialType: 'PYQ',
+  questionPaperText: [
+    'Question Paper',
+    'Question 5(a) - 5 Marks',
+    'Prepare the required statement.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Marking Scheme',
+    'Question 5(a) - 5 Marks',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Question 5(a) - 3 Marks',
+  ].join('\n'),
+});
+assert.ok(
+  suggestedAnswerTotalConflict.markAllocationConflicts?.some((message) =>
+    message.includes('Suggested Answers') && message.includes('Q5(a)')
+  ),
+  'A conflicting standalone Suggested Answer total cannot be ignored.',
+);
+assert.equal(
+  validatePreEvaluationGate({
+    paperStructure: suggestedAnswerTotalConflict,
+    questionPaperText: 'Question Paper Question 5(a) - 5 Marks',
+    suggestedAnswersText: 'Suggested Answers Question 5(a) - 3 Marks',
+    markingSchemeText: 'Marking Scheme Question 5(a) - 5 Marks',
+    officialPaperMaxMarks: 40,
+  }).passed,
+  false,
+  'A QP/MS pair cannot certify a result when the selected Suggested Answer total conflicts.',
+);
+
 // Standalone totals written in parentheses without a dash are also explicit.
 const parenthesizedTotalConflict = structureFor('MTP', {
   questionPaperText: [
