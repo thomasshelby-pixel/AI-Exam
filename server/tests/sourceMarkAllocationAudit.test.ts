@@ -14,7 +14,7 @@ const base = {
   ].join('\n'),
 };
 
-function structureFor(materialType: 'PYQ' | 'MTP' | 'MODEL_TEST_PAPER', overrides: {
+function structureFor(materialType: 'PYQ' | 'MTP' | 'MODEL_TEST_PAPER' | 'FACULTY_MOCK_TEST', overrides: {
   questionPaperText: string;
   markingSchemeText: string;
 }) {
@@ -392,5 +392,72 @@ assert.equal(
   4,
   'A genuine standalone total remains available as a fallback allocation.',
 );
+
+// All source-backed materials use one shared rule for descriptive mark totals:
+// a single explicit total plus a short criterion description can fill a QP gap,
+// while multi-value component rubrics remain ambiguous and fail closed.
+const sourceDrivenTypes = ['PYQ', 'MTP', 'MODEL_TEST_PAPER', 'FACULTY_MOCK_TEST'] as const;
+for (const materialType of sourceDrivenTypes) {
+  const describedTotal = structureFor(materialType, {
+    questionPaperText: [
+      'Selected Question Paper',
+      'Question 7(a). Explain the required accounting treatment and supporting reasoning.',
+    ].join('\\n'),
+    markingSchemeText: [
+      'Selected Marking Scheme',
+      'Question 7(a): 5 marks for correct treatment, supporting standard and conclusion.',
+    ].join('\\n'),
+  });
+  assert.deepEqual(
+    describedTotal.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+    [['Q7(a)', 5]],
+    materialType + ': a single unambiguous described question total fills the missing QP maximum.',
+  );
+  assert.deepEqual(
+    describedTotal.markAllocationConflicts,
+    [],
+    materialType + ': matching selected-source allocations remain conflict-free.',
+  );
+
+  const nestedDescribedTotals = getAuthoritativePaperStructure({
+    ...base,
+    materialType,
+    questionPaperText: [
+      'Selected Question Paper',
+      'Question 8. Prepare the required statement.',
+    ].join('\\n'),
+    suggestedAnswersText: [
+      'Selected Suggested Answers',
+      'Question 8(a). First answer section and working.',
+      'Question 8(b). Second answer section and working.',
+    ].join('\\n'),
+    markingSchemeText: [
+      'Question 8',
+      '(a) 2 marks for the required principle and explanation.',
+      '(b) 3 marks for application, workings and conclusion.',
+    ].join('\\n'),
+  });
+  assert.deepEqual(
+    nestedDescribedTotals.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+    [['Q8(a)', 2], ['Q8(b)', 3]],
+    materialType + ': contextual nested parts use the same independent scoreable leaves.',
+  );
+
+  const ambiguous = structureFor(materialType, {
+    questionPaperText: [
+      'Selected Question Paper',
+      'Question 9(a). Explain the treatment and calculate the amount.',
+    ].join('\\n'),
+    markingSchemeText: [
+      'Selected Marking Scheme',
+      'Question 9(a): Award 2 marks for the principle and 3 marks for application.',
+    ].join('\\n'),
+  });
+  assert.equal(
+    ambiguous.subQuestions.some((question) => question.fullQuestionCode === 'Q9(a)' && question.maximumMarks > 0),
+    false,
+    materialType + ': multiple component awards must never be mistaken for a question maximum.',
+  );
+}
 
 console.log('Source-backed PYQ/MTP question maxima and source-conflict regressions passed.');
