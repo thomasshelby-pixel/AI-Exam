@@ -234,6 +234,75 @@ assert.equal(
   'A complete Faculty Mock with unambiguous question-total rubric lines must pass the structural gate.',
 );
 
+// Parent-scoped bare sub-parts in a faculty-authored rubric must retain
+// independent maxima, just like the canonical PYQ/MTP hierarchical parser.
+const facultyNestedMock = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'FACULTY_MOCK_TEST',
+  officialPaperMaxMarks: 100,
+  questionPaperText: [
+    'Faculty Mock Question Paper',
+    'Question 1. Prepare the required accounting statement.',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Question 1(a). First part solution and working.',
+    'Question 1(b). Second part solution and working.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Question 1',
+    '(a) 2 marks for the relevant principle and explanation.',
+    '(b) 3 marks for application, working and conclusion.',
+  ].join('\n'),
+});
+assert.deepEqual(
+  facultyNestedMock.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q1(a)', 2], ['Q1(b)', 3]],
+  'Faculty-authored parent headings and bare child labels must map to separate canonical scoreable leaves.',
+);
+
+// A Faculty Mock QP/MS mismatch using descriptive prose still blocks scoring.
+const facultyProseConflict = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'FACULTY_MOCK_TEST',
+  officialPaperMaxMarks: 100,
+  questionPaperText: [
+    'Faculty Mock Question Paper',
+    'Question 1: 7 marks for the required accounting treatment and workings.',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Question 1. Full solution and supporting workings.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Question 1: 5 marks for the required accounting treatment and workings.',
+  ].join('\n'),
+});
+assert.equal(
+  facultyProseConflict.subQuestions.find((question) => question.fullQuestionCode === 'Q1')?.maximumMarks,
+  7,
+  'The Faculty Mock QP total remains the primary maximum when the MS disagrees.',
+);
+assert.ok(
+  facultyProseConflict.markAllocationConflicts?.some((message) => message.includes('Q1')),
+  'Faculty Mock QP/MS prose totals are cross-checked, not silently ignored.',
+);
+assert.equal(
+  validatePreEvaluationGate({
+    paperStructure: facultyProseConflict,
+    questionPaperText: 'Question 1: 7 marks for the required accounting treatment and workings.',
+    suggestedAnswersText: 'Question 1. Full solution and supporting workings.',
+    markingSchemeText: 'Question 1: 5 marks for the required accounting treatment and workings.',
+    officialPaperMaxMarks: 100,
+  }).passed,
+  false,
+  'A conflicting Faculty Mock total cannot be certified.',
+);
+
 // A line with multiple component allocations is ambiguous as a question
 // maximum. Do not promote the first criterion to the full sub-question score.
 const ambiguousFacultyRubric = getAuthoritativePaperStructure({
