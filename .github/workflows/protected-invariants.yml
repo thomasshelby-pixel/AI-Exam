@@ -217,6 +217,9 @@ jobs:
       - name: Model Test source identity and inventory regression
         run: node_modules/.bin/tsx server/tests/modelTestPaperStructure.test.ts
 
+      - name: PYQ / MTP source-backed question maximum and conflict regression
+        run: node_modules/.bin/tsx server/tests/sourceMarkAllocationAudit.test.ts
+
       - name: Model Test component source-ID binding regression
         run: node_modules/.bin/tsx server/tests/modelTestComponentSourceBinding.test.ts
 
