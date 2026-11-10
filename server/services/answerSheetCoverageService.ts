@@ -22,6 +22,44 @@ export function clearCoverageMapCache(): void {
  * If no descendant is present, keep the parent so the pre-evaluation gate can
  * request an explicit mapping rather than guessing which leaf was attempted.
  */
+/**
+ * A page read that identifies one nested leaf while the authoritative paper
+ * defines sibling leaves gets a bounded independent verification read. This
+ * catches a confident-but-incomplete first pass that would otherwise never
+ * enter the existing targeted-recovery path.
+ */
+function hasNestedSiblingVerificationTarget(
+  analysis: PageCoverageRecord,
+  paperStructure: AuthoritativePaperStructure,
+): boolean {
+  const authoritativeLeaves = (paperStructure.subQuestions || []).filter((question) => !question.isMcq);
+  for (const detected of analysis.detectedQuestions || []) {
+    if (detected.isMcq) continue;
+    const canonicalId = toCanonicalQuestionId(
+      detected.fullQuestionCode || detected.questionNumber,
+      detected.subQuestionNumber,
+      authoritativeLeaves,
+    );
+    const parsed = parseCanonicalQuestionIdentity(canonicalId);
+    const path = parsed.subQuestionPath || [];
+    if (path.length < 2) continue;
+
+    const parentPath = path.slice(0, -1);
+    const siblingLeaves = authoritativeLeaves.filter((question) => {
+      const candidate = parseCanonicalQuestionIdentity(
+        question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
+      );
+      const candidatePath = candidate.subQuestionPath || [];
+      return !candidate.isMcq &&
+        candidate.questionNumber === parsed.questionNumber &&
+        candidatePath.length === path.length &&
+        parentPath.every((part, index) => candidatePath[index]?.toLowerCase() === part.toLowerCase());
+    });
+    if (siblingLeaves.length > 1) return true;
+  }
+  return false;
+}
+
 export function normalizeDetectedAttemptHierarchy<T extends {
   fullQuestionCode: string;
   pages: number[];
@@ -840,6 +878,7 @@ export async function buildAnswerSheetCoverageMap(
     // inconclusive on the first pass. Re-read only those ambiguous handwritten
     // pages once with an explicit recovery instruction; do not retry provider
     // failures (which would multiply cost) and never guess an unresolved identity.
+    const needsNestedSiblingVerification = hasNestedSiblingVerificationTarget(analysis, paperStructure);
     const needsTargetedRecovery =
       enableTargetedRecovery &&
       !analysis.analysisFailure &&
@@ -852,7 +891,8 @@ export async function buildAnswerSheetCoverageMap(
         Boolean(analysis.mappingReviewReason) ||
         Boolean(analysis.unresolvedAnswerBlocks?.length) ||
         Boolean(analysis.mcqNeedsReview?.length) ||
-        analysis.detectedQuestions.length === 0
+        analysis.detectedQuestions.length === 0 ||
+        needsNestedSiblingVerification
       );
 
     if (needsTargetedRecovery) {
@@ -1177,6 +1217,24 @@ export function buildPageCoveragePrompt(params: {
       ].filter(Boolean).join('\n');
     })
     .join('\n');
+  const nestedLeafGroups = new Map<string, string[]>();
+  for (const question of (paperStructure.subQuestions || []).filter((item) => !item.isMcq)) {
+    const parsed = parseCanonicalQuestionIdentity(
+      question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
+    );
+    const path = parsed.subQuestionPath || [];
+    if (path.length < 2) continue;
+    const parentRaw = `Q${parsed.questionNumber}(${path.slice(0, -1).join(')(')})`;
+    const parentCode = parseCanonicalQuestionIdentity(parentRaw).canonicalId;
+    const leaves = nestedLeafGroups.get(parentCode) || [];
+    if (!leaves.includes(parsed.canonicalId)) leaves.push(parsed.canonicalId);
+    nestedLeafGroups.set(parentCode, leaves);
+  }
+  const nestedLeafChecklist = Array.from(nestedLeafGroups.entries())
+    .filter(([, leaves]) => leaves.length > 1)
+    .map(([parent, leaves]) => `${parent}: ${leaves.sort().join(', ')}`)
+    .join('\\n');
+
   const validMcqList = (paperStructure.mcqs || [])
     .map((m) => {
       const questionText = compactSourceText(m.questionText, 180);
@@ -1214,6 +1272,8 @@ Read the visual scan of Page ${pageNumber}/${totalPages}, not extracted PDF text
 SELECTED PAPER: ${paperStructure.paperTitle || 'CA examination paper'}
 AUTHORITATIVE DESCRIPTIVE IDS:
 ${validDescriptiveList || 'None parsed'}
+AUTHORITATIVE NESTED SIBLING LEAF CHECKLIST (each listed leaf is a separate scoreable identity):
+${nestedLeafChecklist || 'No multi-leaf nested groups in this paper.'}
 AUTHORITATIVE MCQ IDS:
 ${validMcqList || 'None parsed'}
 PREVIOUS PAGE ACTIVE QUESTION (weak clue only; not a question-order assumption): ${previousActiveQuestion || 'None / first page'}
@@ -1232,6 +1292,17 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
 - One page may contain multiple independent questions. Split and map each answer block separately.
 - Treat every separately labelled descriptive sub-part as its own answer block: (a), (b), (i), (ii),
   (1), (2), and nested labels such as (a)(i) or (5)(ii). Never collapse siblings into their parent.
+- When the nested sibling checklist shows a parent with multiple leaves, inspect the page for EACH listed
+  leaf independently. If Q2(a)(i) and Q2(a)(ii) are both attempted, return two detectedQuestions objects
+  with those exact full leaf identities; never return only Q2 or Q2(a), and never combine both answers
+  into a single record merely because they share a parent or page.
+- Do not assume every listed sibling was attempted. Return only visibly attempted leaves; if a distinct
+  attempted leaf is visible but its exact identity is uncertain, add it to unresolvedAnswerBlocks instead
+  of merging it into a neighbouring leaf.
+- Before returning, perform a final inventory cross-check: compare every visible answer heading/label and
+  every distinct answer block against detectedQuestions. Each attempted leaf must appear exactly once.
+  If the visible blocks outnumber safely mapped IDs, record the remainder as unresolved and ensure
+  answerBlocksObserved reflects the full visible count.
 - Count every distinct attempted answer block in answerBlocksObserved. Count each descriptive sub-part
   and each attempted MCQ once. Do not count printed question stems, blank space or unattempted parts.
 - If an answer block is visibly attempted but its question identity cannot be safely mapped, add a concise
@@ -1322,6 +1393,7 @@ TASK:
 7. Return every visible MCQ attempt with an unreadable/ambiguous option in mcqNeedsReview.
 8. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
    CLEARLY_UNATTEMPTED or QUESTION_NOT_IDENTIFIED.
+9. Verify that every visibly attempted nested leaf is represented as its own exact authoritative ID.
 
 Return valid JSON only:
 {
