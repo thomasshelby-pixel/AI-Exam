@@ -82,6 +82,78 @@ export function extractRelevantReferenceSnippets(
 }
 
 
+export interface QuestionReferenceTopicAlignment {
+  aligned: boolean;
+  reason?: string;
+  sharedTopicTerms: string[];
+}
+
+/**
+ * Catch a dangerous reference-lock false positive: the text extractor can find
+ * a syntactically matching Q-number heading in a document even when that block
+ * belongs to a different topic. Only fail closed on a strong, zero-overlap
+ * conflict; short/generic question text is not enough to trigger this check.
+ */
+export function assessQuestionReferenceTopicAlignment(
+  question: Pick<PaperStructureSubQuestion, 'topic' | 'provision' | 'questionText'>,
+  suggestedAnswerSnippet: string,
+  markingSchemeSnippet = '',
+): QuestionReferenceTopicAlignment {
+  const questionSource = [
+    question.topic || '',
+    question.provision || '',
+    question.questionText || '',
+  ].filter(Boolean).join(' ').slice(0, 6000);
+  const referenceSource = String(suggestedAnswerSnippet || '') + '\n' +
+    String(markingSchemeSnippet || '');
+  if (!questionSource.trim() || !referenceSource.trim()) {
+    return { aligned: true, sharedTopicTerms: [] };
+  }
+
+  const stopWords = new Set([
+    'about', 'above', 'after', 'against', 'also', 'among', 'another', 'answer',
+    'apply', 'application', 'appropriate', 'asked', 'based', 'before', 'being',
+    'below', 'between', 'both', 'case', 'cases', 'certain', 'company', 'companies',
+    'conclusion', 'consider', 'considered', 'correct', 'determine', 'discuss',
+    'given', 'here', 'however', 'including', 'india', 'indian', 'whether',
+    'explain', 'following', 'from', 'having', 'under', 'using', 'where', 'which',
+    'while', 'within', 'would', 'should', 'could', 'shall', 'must', 'may',
+    'section', 'sections', 'subsection', 'subsections', 'rule', 'rules', 'act',
+    'clause', 'clauses', 'chapter', 'schedule', 'article', 'articles',
+    'provision', 'provisions', 'statutory', 'liable', 'liability', 'person',
+    'persons', 'part', 'parts', 'question', 'questions', 'marks', 'mark',
+    'limited', 'private', 'public', 'reference', 'suggested', 'director',
+    'directors', 'thereof', 'therein', 'provide', 'provided', 'required',
+    'requirement', 'requirements', 'according', 'accordance', 'candidate',
+  ]);
+  const terms = (value: string) => new Set(
+    String(value || '')
+      .toLowerCase()
+      .replace(/\b(?:section|sec\.?|rule|schedule|article)\s+[0-9ivx]+[a-z]?(?:\s*\([0-9a-z]+\))*/gi, ' ')
+      .replace(/\b\d+(?:[.,]\d+)*(?:%|crore|lakh|rupees?|rs\.?|₹|usd|\$)?\b/gi, ' ')
+      .match(/[a-z]{4,}/g)
+      ?.filter((word) => !stopWords.has(word)) || [],
+  );
+
+  const questionTerms = terms(questionSource);
+  const referenceTerms = terms(referenceSource);
+  // A small or generic topic is not reliable enough to block an evaluation.
+  if (questionTerms.size < 5 || referenceTerms.size < 5) {
+    return { aligned: true, sharedTopicTerms: [] };
+  }
+
+  const sharedTopicTerms = [...questionTerms].filter((word) => referenceTerms.has(word));
+  if (sharedTopicTerms.length > 0) {
+    return { aligned: true, sharedTopicTerms };
+  }
+
+  return {
+    aligned: false,
+    sharedTopicTerms: [],
+    reason: 'The selected Suggested Answer / Marking Scheme block has no distinctive topic terms in common with the exact Question Paper extract. This may be a duplicate-question-number or wrong-reference match; no academic zero has been assigned.',
+  };
+}
+
 export interface QuestionReferenceEvaluationDisposition {
   canScoreProvisionally: boolean;
   requiresHumanReview: boolean;
@@ -229,13 +301,33 @@ export function parseAndValidateQuestionChunkOutput(
     const reportedAssessment = typeof component.assessment === 'string'
       ? component.assessment.trim().toUpperCase()
       : '';
-    component.assessment = reportedAssessment === 'OMITTED' && normalizedAwarded <= 0
-      ? 'OMITTED'
-      : available > 0 && normalizedAwarded >= available - 0.01
-        ? 'CORRECT'
-        : normalizedAwarded > 0.01
-          ? 'PARTIALLY_CORRECT'
-          : 'INCORRECT';
+    const allowedAssessments = new Set(['CORRECT', 'PARTIALLY_CORRECT', 'INCORRECT', 'OMITTED']);
+    if (reportedAssessment && !allowedAssessments.has(reportedAssessment)) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has an unsupported assessment.`);
+    }
+
+    // Preserve the evaluator's substantive assessment for the deterministic
+    // Strict-mode pass. Previously, a full numeric award overwrote
+    // PARTIALLY_CORRECT / INCORRECT with CORRECT, so Strict mode had no defect
+    // signal left to scrutinize and could return full marks for every step.
+    const normalizedAssessment = reportedAssessment || (
+      normalizedAwarded <= 0
+        ? 'INCORRECT'
+        : normalizedAwarded >= available - 0.01
+          ? 'CORRECT'
+          : 'PARTIALLY_CORRECT'
+    );
+    if (
+      (normalizedAssessment === 'CORRECT' && normalizedAwarded < available - 0.01) ||
+      (normalizedAssessment === 'PARTIALLY_CORRECT' &&
+        (normalizedAwarded <= 0.01 || normalizedAwarded >= available - 0.01)) ||
+      ((normalizedAssessment === 'INCORRECT' || normalizedAssessment === 'OMITTED') && normalizedAwarded > 0.01)
+    ) {
+      throw new Error(
+        `QUESTION_CHUNK_CONTRADICTORY_ASSESSMENT: ${prefix} reports ${normalizedAssessment} with ${normalizedAwarded}/${available} marks. Assessment and numeric award must agree.`
+      );
+    }
+    component.assessment = normalizedAssessment;
 
     component.marksDeducted = Math.round(Math.max(0, available - normalizedAwarded) * 100) / 100;
     availableTotal += available;
@@ -446,6 +538,14 @@ export async function evaluateQuestionChunk(
     ctx.markingSchemeText,
     ctx.referenceMetadata
   );
+  const topicAlignment = assessQuestionReferenceTopicAlignment(
+    subQuestion,
+    snippets.saSnippet,
+    snippets.msSnippet,
+  );
+  if (!topicAlignment.aligned) {
+    throw new Error(`QUESTION_REFERENCE_NOT_LOCKED: ${topicAlignment.reason || 'Question and Suggested Answer topics do not align.'} Question: ${fullCode}; human review required.`);
+  }
   const sourceInstructions = buildChunkReferenceSourceInstructions(snippets.referenceTrace);
   const referenceDisposition = assessQuestionReferenceForEvaluation({
     ...snippets,
@@ -551,8 +651,8 @@ ${checkedCopyScoreIndependenceInstruction}
 TARGET EVALUATION DETAILS:
 Question: ${fullCode} (Question ${qNum}${subQ ? `, Sub-part (${subQ})` : ''})
 Subject: ${subjectName} (${level})
-Requested Display Mode: ${checkingMode}
-Base scoring instruction: Use the same balanced, source-grounded Standard ICAI step-marking for this question regardless of the requested display mode. Do not apply extra Strict deductions or Moderate bonuses here. The deterministic multi-mode marking engine applies Strict/Moderate adjustments exactly once after all base question marks have been reconciled.
+BASE EVALUATION MODE: STANDARD ICAI STEP MARKING ONLY.
+Evaluate all components using the same balanced, source-grounded Standard rubric for every run. Do not try to simulate Strict or Moderate mode here. The deterministic multi-mode marking engine applies those adjustments exactly once after base question marks and original CORRECT / PARTIALLY_CORRECT / INCORRECT / OMITTED assessments have been validated.
 MAXIMUM MARKS FOR THIS QUESTION: EXACTLY ${maxMarks} MARKS (Do NOT alter or exceed this limit!).
 
 SOURCE TYPE ISOLATION:
@@ -662,7 +762,7 @@ Return strictly valid JSON with this schema:
       // especially for nested workings and multiple independently marked steps.
       // Keep a consistent response budget across the configured providers.
       maxTokens: 8192,
-      thinkingLevel: checkingMode === 'strict' ? 'HIGH' : 'MEDIUM',
+      thinkingLevel: 'MEDIUM',
       validateOutput: (rawText) => {
         parseAndValidateQuestionChunkOutput(rawText, maxMarks, { materialType: ctx.referenceMetadata?.materialType });
       },
