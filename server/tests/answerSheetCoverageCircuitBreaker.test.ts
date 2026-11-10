@@ -6,6 +6,7 @@ import {
   clearCoverageMapCache,
   parseAndValidatePageCoverageOutput,
   resolveContextualQuestionIdentity,
+  resolveDetectedAnswerReadabilityStatus,
   resolveMcqSelectionNumber,
   type PageCoverageRecord,
 } from '../services/answerSheetCoverageService.js';
@@ -67,6 +68,9 @@ async function run() {
   assert.match(pagePrompt, /NO handwriting style is illegal or invalid/i);
   assert.match(pagePrompt, /cursive \/ joined-up writing/i);
   assert.match(pagePrompt, /localize the uncertainty to that fragment/i);
+  assert.match(pagePrompt, /top-level status describes the PAGE only/i);
+  assert.match(pagePrompt, /each detectedQuestions item MUST also include/i);
+  assert.match(pagePrompt, /readabilityStatus: ATTEMPTED_READABLE/i);
   assert.match(pagePrompt, /ATTEMPTED_PARTIALLY_READABLE/i);
   assert.match(pagePrompt, /left margin/i);
   assert.match(pagePrompt, /circled\/margin-written numbers/i);
@@ -168,6 +172,55 @@ async function run() {
   }));
   assert.deepEqual(mcqReadReviewPage.mcqNeedsReview, ['1(iv)'],
     'An unreadable nested MCQ selection must be preserved as a separate review item, not treated as blank.');
+
+  assert.equal(
+    resolveDetectedAnswerReadabilityStatus('ATTEMPTED_UNCLEAR', 'ATTEMPTED_READABLE', 2, true),
+    'ATTEMPTED_READABLE',
+    'Explicit per-answer readable evidence overrides a page-level unclear label.'
+  );
+  assert.equal(
+    resolveDetectedAnswerReadabilityStatus('ATTEMPTED_UNCLEAR', undefined, 2, true),
+    'ATTEMPTED_PARTIALLY_READABLE',
+    'A mapped answer block with evidence on a multi-answer unclear page is retained as partially readable, not blanket-unclear.'
+  );
+  assert.equal(
+    resolveDetectedAnswerReadabilityStatus('ATTEMPTED_UNCLEAR', undefined, 1, true),
+    'ATTEMPTED_UNCLEAR',
+    'A single unclear answer remains unclear when no per-answer clarity evidence is available.'
+  );
+
+  const mixedReadability = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_UNCLEAR',
+    hasHandwriting: true,
+    answerBlocksObserved: 2,
+    unresolvedAnswerBlocks: [],
+    mcqNeedsReview: [],
+    detectedQuestions: [
+      {
+        questionNumber: '1',
+        subQuestion: 'a',
+        parentQuestionNumberVisible: true,
+        authoritativeQuestionCode: 'Q1(a)',
+        mappingBasis: 'VISIBLE_LABEL',
+        readabilityStatus: 'ATTEMPTED_READABLE',
+        snippet: 'The accounting treatment and journal entries are legible.',
+      },
+      {
+        questionNumber: '2',
+        subQuestion: 'b',
+        parentQuestionNumberVisible: true,
+        authoritativeQuestionCode: 'Q2(b)',
+        mappingBasis: 'VISIBLE_LABEL',
+        readabilityStatus: 'ATTEMPTED_UNCLEAR',
+        snippet: 'The final handwritten line cannot be distinguished.',
+      },
+    ],
+    mcqSelections: {},
+  }));
+  assert.equal(mixedReadability.detectedQuestions[0].readabilityStatus, 'ATTEMPTED_READABLE',
+    'The parser retains a clearly readable answer status separately from the page status.');
+  assert.equal(mixedReadability.detectedQuestions[1].readabilityStatus, 'ATTEMPTED_UNCLEAR',
+    'The parser localizes genuine unreadability to the affected answer block.');
 
   assert.equal(
     resolveMcqSelectionNumber('Question 1(a)(i)', [{
