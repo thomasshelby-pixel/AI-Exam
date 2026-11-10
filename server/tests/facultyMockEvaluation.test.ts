@@ -87,12 +87,12 @@ assert.equal(
 );
 
 assert.equal(
-  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\\nMaximum Marks: 80'),
+  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\nMaximum Marks: 80'),
   80,
   'An explicit custom 80-mark Faculty Mock maximum must override a stale configured 100-mark default.',
 );
 assert.equal(
-  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\\nMaximum Marks: 60'),
+  resolveOfficialPaperMaximumMarks(100, 'CA Faculty Mock Question Paper\nMaximum Marks: 60'),
   60,
   'An explicit custom 60-mark Faculty Mock maximum must be preserved.',
 );
