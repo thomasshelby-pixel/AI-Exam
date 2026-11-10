@@ -2,6 +2,7 @@ import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
 import { executeModelWithFallback } from '../models/modelRegistry.js';
 import { QuestionEvaluation, MarkingComponent } from '../../src/types/index.js';
+import { parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 import { PaperStructureSubQuestion } from './paperStructureService.js';
 import { AttemptedQuestionMapping } from './answerSheetCoverageService.js';
 import { lockQuestionReference, QuestionReferenceLockMetadata, LockedQuestionReference } from './questionReferenceLock.js';
