@@ -80,11 +80,77 @@ export function normalizeDetectedAttemptHierarchy<T extends {
   fullQuestionCode: string;
   pages: number[];
 }>(detectedAttempts: T[]): { attemptedQuestions: T[]; removedParentCodes: string[] } {
-  const normalized = (Array.isArray(detectedAttempts) ? detectedAttempts : []).map((attempt) => ({
-    ...attempt,
-    fullQuestionCode: toCanonicalQuestionId(attempt.fullQuestionCode),
-    pages: [...new Set((attempt.pages || []).filter((page) => Number.isInteger(page) && page > 0))].sort((a, b) => a - b),
-  }));
+  // Roman children normalize to the same scoreable parent ID. Group those
+  // detections immediately or the same question is emitted multiple times
+  // (e.g. Q1(a), Q1(a)(i), Q1(a)(ii) all become Q1(a)).
+  const grouped = new Map<string, T>();
+  for (const attempt of Array.isArray(detectedAttempts) ? detectedAttempts : []) {
+    const fullQuestionCode = toCanonicalQuestionId(attempt.fullQuestionCode);
+    const pages = [...new Set((attempt.pages || []).filter((page) => Number.isInteger(page) && page > 0))]
+      .sort((a, b) => a - b);
+    const existing = grouped.get(fullQuestionCode);
+    if (!existing) {
+      grouped.set(fullQuestionCode, { ...attempt, fullQuestionCode, pages } as T);
+      continue;
+    }
+
+    const merged = { ...existing, pages: [...new Set([...existing.pages, ...pages])].sort((a, b) => a - b) } as T;
+    const existingDetails = existing as T & Record<string, any>;
+    const incomingDetails = attempt as T & Record<string, any>;
+    const mergedDetails = merged as T & Record<string, any>;
+
+    // Keep text evidence from every Roman/parent occurrence. This must not
+    // silently replace an earlier readable block with the last child block.
+    const snippets = [existingDetails.studentSnippet, incomingDetails.studentSnippet]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    if (snippets.length) {
+      mergedDetails.studentSnippet = [...new Set(snippets)].join('\n\n');
+    }
+
+    const reasons = [existingDetails.mappingReviewReason, incomingDetails.mappingReviewReason]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    if (reasons.length) {
+      mergedDetails.mappingReviewReason = [...new Set(reasons)].join(' | ');
+    }
+
+    mergedDetails.readabilityStatusExplicit =
+      existingDetails.readabilityStatusExplicit === true || incomingDetails.readabilityStatusExplicit === true;
+    mergedDetails.mcqSelectionNeedsReview =
+      existingDetails.mcqSelectionNeedsReview === true || incomingDetails.mcqSelectionNeedsReview === true;
+
+    const statuses = [existingDetails.status, incomingDetails.status]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    const statusPriority: Record<string, number> = {
+      ATTEMPTED_UNCLEAR: 5,
+      ATTEMPTED_PARTIALLY_READABLE: 4,
+      PAGE_UNREADABLE: 4,
+      QUESTION_NOT_IDENTIFIED: 4,
+      ATTEMPTED_READABLE: 3,
+      CLEARLY_UNATTEMPTED: 2,
+    };
+    const mostConservativeStatus = statuses.sort(
+      (left, right) => (statusPriority[right] || 0) - (statusPriority[left] || 0),
+    )[0];
+    if (mostConservativeStatus) mergedDetails.status = mostConservativeStatus;
+
+    const selectedOptions = [existingDetails.studentSelectedOption, incomingDetails.studentSelectedOption]
+      .map((value) => String(value || '').trim().toUpperCase())
+      .filter(Boolean);
+    if (new Set(selectedOptions).size > 1) {
+      mergedDetails.studentSelectedOption = undefined;
+      mergedDetails.mcqSelectionNeedsReview = true;
+      mergedDetails.mappingReviewReason = [
+        String(mergedDetails.mappingReviewReason || '').trim(),
+        'Conflicting selections were detected for the same normalized MCQ identity.',
+      ].filter(Boolean).join(' | ');
+    }
+
+    grouped.set(fullQuestionCode, merged);
+  }
+  const normalized = Array.from(grouped.values());
   const removedParentCodes = new Set<string>();
 
   for (const parent of normalized) {
