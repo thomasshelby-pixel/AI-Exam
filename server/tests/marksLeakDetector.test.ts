@@ -155,6 +155,38 @@ assert(staleDeductionReport.totalMarksAtStake === 2,
 assert(staleDeductionReport.totalMarksAtStake <= staleDeduction.maximumMarks,
   'Question findings cannot exceed the authoritative question maximum.');
 
+const unresolvedWithProvisionalDeduction = {
+  ...base,
+  questions: [{
+    questionNumber: '1',
+    fullQuestionCode: 'Q1(a)',
+    maximumMarks: 10,
+    marksAwarded: 2,
+    marksLost: 8,
+    status: 'unclear',
+    detailedFeedback: 'This result is provisional pending handwriting review.',
+    flags: ['HANDWRITING_UNCLEAR', 'REVIEW_REQUIRED'],
+    markingComponents: [{
+      componentId: 'provisional-component',
+      componentType: 'WORKING',
+      expectedRequirement: 'Show working',
+      studentEvidence: 'Part of the calculation is hard to read.',
+      assessment: 'PARTIALLY_CORRECT',
+      marksAvailable: 10,
+      marksAwarded: 2,
+      marksDeducted: 8,
+      deductionReason: 'Provisional until the unclear answer is reviewed.',
+      confidence: 35,
+    }],
+  }],
+  canonicalLedger: { records: [] },
+} as unknown as EvaluationResult;
+const unresolvedReport = buildMarksLeakReport(unresolvedWithProvisionalDeduction);
+assert(unresolvedReport.totalMarksAtStake === 0,
+  'Unresolved provisional deductions are not presented as confirmed marks at stake.');
+assert(unresolvedReport.technicalReviewCount === 1,
+  'Unresolved answers remain visible as a manual-review finding.');
+
 const oversizedPaperLedger = Array.from({ length: 25 }, (_, index) => ({
   questionId: `Q${index + 1}`,
   attempted: false,
