@@ -955,22 +955,41 @@ function buildGenericPaperStructure(options: {
   // inside a marking-scheme explanation. The Marking Scheme and Suggested
   // Answers may fill identities/maxima that the QP omits, but they must never
   // silently overwrite a maximum already stated by the selected QP.
-  const sourceTexts = [
-    options.questionPaperText,
-    options.markingSchemeText,
-    options.suggestedAnswersText,
-  ];
   const subQuestions: PaperStructureSubQuestion[] = [];
   const seenSourceQuestionIds = new Set<string>();
-  for (const sourceText of sourceTexts) {
-    for (const question of extractSubQuestionsFromText(String(sourceText || ''))) {
-      const canonicalId = toCanonicalQuestionId(
-        question.fullQuestionCode || question.questionNumber,
-        question.subQuestionNumber,
-      );
+  const addQuestionOnce = (question: PaperStructureSubQuestion) => {
+    const canonicalId = toCanonicalQuestionId(
+      question.fullQuestionCode || question.questionNumber,
+      question.subQuestionNumber,
+    );
+    if (seenSourceQuestionIds.has(canonicalId)) return;
+    seenSourceQuestionIds.add(canonicalId);
+    subQuestions.push(question);
+  };
+
+  // The Question Paper is the primary inventory and maximum-mark source.
+  // Do not run the generic "first marks number on the line" extractor over an
+  // entire Marking Scheme: component awards (e.g. 2 + 3 marks) are not the
+  // question's maximum. MS / SA may fill a missing maximum only when they
+  // contain an explicit standalone question-total line.
+  for (const question of extractSubQuestionsFromText(String(options.questionPaperText || ''))) {
+    addQuestionOnce(question);
+  }
+
+  for (const sourceText of [options.markingSchemeText, options.suggestedAnswersText]) {
+    for (const [canonicalId, maximumMarks] of extractStandaloneQuestionMarkAllocations(String(sourceText || ''))) {
       if (seenSourceQuestionIds.has(canonicalId)) continue;
-      seenSourceQuestionIds.add(canonicalId);
-      subQuestions.push(question);
+      const parsed = parseCanonicalQuestionIdentity(canonicalId);
+      addQuestionOnce({
+        fullQuestionCode: canonicalId,
+        questionNumber: parsed.questionNumber,
+        subQuestionNumber: parsed.subQuestion,
+        maximumMarks,
+        compulsory: true,
+        isMcq: false,
+        section: Number(parsed.questionNumber) > 4 ? 'B' : 'A',
+        division: 'B',
+      });
     }
   }
 
