@@ -38,9 +38,17 @@ const uniquePages = (...groups: unknown[][]): number[] =>
   Array.from(new Set(groups.flat().map(Number).filter((page) => Number.isInteger(page) && page > 0))).sort((a, b) => a - b);
 
 function getQuestionId(question: QuestionEvaluation): string {
-  return question.fullQuestionCode || (question.subQuestion
+  return question.canonicalId || question.fullQuestionCode || (question.subQuestion
     ? `Q${question.questionNumber}(${question.subQuestion})`
     : `Q${question.questionNumber}`);
+}
+
+function normalizeQuestionKey(value: unknown): string {
+  return String(value || '')
+    .trim()
+    .replace(/^(?:QUESTION|Q)\\.?\\s*/i, '')
+    .replace(/\\s+/g, '')
+    .toUpperCase();
 }
 
 function getComponents(question: QuestionEvaluation): MarkingComponent[] {
@@ -55,51 +63,83 @@ function getComponents(question: QuestionEvaluation): MarkingComponent[] {
 export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport {
   const findings: MarksLeakFinding[] = [];
   const seen = new Set<string>();
-  const add = (finding: MarksLeakFinding) => {
-    if (finding.marksAtStake <= 0 && finding.category !== 'TECHNICAL_REVIEW') return;
-    if (seen.has(finding.id)) return;
-    seen.add(finding.id);
-    findings.push({ ...finding, marksAtStake: roundMarks(finding.marksAtStake) });
-  };
+  const questionMarksUsed = new Map<string, number>();
 
   const runPackage = result.evaluationRunPackage;
   const ledgerRecords = runPackage?.scoreLedger?.records || runPackage?.evaluationRecords || result.canonicalLedger?.records || [];
   const inventoryItems = runPackage?.questionInventory?.items || [];
-  const inventoryById = new Map(inventoryItems.map((item) => [item.questionId, item]));
-  const ledgerById = new Map(ledgerRecords.map((record) => [record.questionId, record]));
+  const inventoryById = new Map(inventoryItems.map((item) => [normalizeQuestionKey(item.questionId), item]));
+  const ledgerById = new Map(ledgerRecords.map((record) => [normalizeQuestionKey(record.questionId), record]));
+
+  const add = (finding: MarksLeakFinding, budgetKey?: string, questionMaximum?: number) => {
+    if (finding.marksAtStake <= 0 && finding.category !== 'TECHNICAL_REVIEW') return;
+    if (seen.has(finding.id)) return;
+    seen.add(finding.id);
+
+    let marksAtStake = roundMarks(finding.marksAtStake);
+    const normalizedBudgetKey = normalizeQuestionKey(budgetKey || '');
+    const maximum = safeNumber(questionMaximum);
+    if (finding.category !== 'TECHNICAL_REVIEW' && normalizedBudgetKey && maximum > 0) {
+      const alreadyUsed = questionMarksUsed.get(normalizedBudgetKey) || 0;
+      marksAtStake = roundMarks(Math.min(marksAtStake, Math.max(0, maximum - alreadyUsed)));
+      questionMarksUsed.set(normalizedBudgetKey, roundMarks(alreadyUsed + marksAtStake));
+    }
+    if (marksAtStake <= 0 && finding.category !== 'TECHNICAL_REVIEW') return;
+    findings.push({ ...finding, marksAtStake });
+  };
 
   for (const record of ledgerRecords) {
-    if (!record.attempted && record.evaluationStatus === 'UNATTEMPTED' && !record.isAlternative) {
-      const inventoryItem = inventoryById.get(record.questionId);
+    const questionKey = normalizeQuestionKey(record.questionId);
+    const inventoryItem = inventoryById.get(questionKey);
+    const isOptionalQuestion = inventoryItem?.isRequiredOrOptional === 'OPTIONAL';
+    const isAlternative = Boolean(record.isAlternative || inventoryItem?.isAlternative);
+
+    // An unattempted OPTIONAL question is not automatically lost marks: it may
+    // be an intentionally unselected choice. Counting every unused choice is a
+    // common source of impossible diagnostics on 100-mark papers.
+    if (
+      !record.attempted &&
+      record.evaluationStatus === 'UNATTEMPTED' &&
+      !isAlternative &&
+      !isOptionalQuestion
+    ) {
+      const maximum = safeNumber(inventoryItem?.maxMarks) || safeNumber(record.maxMarks);
       add({
-        id: `unattempted:${record.questionId}`,
+        id: `unattempted:${questionKey}`,
         questionId: record.questionId,
         category: 'UNATTEMPTED',
         title: `${record.questionId} was left unattempted`,
-        detail: 'The answer-sheet attempt manifest and canonical paper inventory both mark this question as unattempted.',
-        marksAtStake: inventoryItem?.maxMarks ?? record.maxMarks,
+        detail: 'The canonical paper inventory marks this as required and the student attempt manifest marks it as unattempted.',
+        marksAtStake: maximum,
         pages: uniquePages(record.studentPages || [], record.sourcePages || []),
         evidence: ['Canonical paper inventory', 'Student attempt manifest'],
-        priority: record.maxMarks >= 5 ? 'HIGH' : 'MEDIUM',
-      });
+        priority: maximum >= 5 ? 'HIGH' : 'MEDIUM',
+      }, questionKey, maximum);
     }
   }
 
   for (const question of result.questions || []) {
     const questionId = getQuestionId(question);
+    const questionKey = normalizeQuestionKey(questionId);
+    const inventoryItem = inventoryById.get(questionKey);
+    const questionMaximum = safeNumber(inventoryItem?.maxMarks) || safeNumber(question.maximumMarks);
     const components = getComponents(question);
     const pages = uniquePages(
       question.sourcePages || [],
       question.pageNumber ? [question.pageNumber] : [],
       components.map((component) => component.pageNumber),
-      ledgerById.get(question.canonicalId || questionId)?.studentPages || []
+      ledgerById.get(questionKey)?.studentPages || []
     );
 
     for (const component of components) {
-      const lost = roundMarks(Math.max(
-        safeNumber(component.marksDeducted),
-        safeNumber(component.marksAvailable) - safeNumber(component.marksAwarded)
-      ));
+      const available = safeNumber(component.marksAvailable);
+      const awarded = safeNumber(component.marksAwarded);
+      const recordedDeduction = safeNumber(component.marksDeducted);
+      // Stored marksDeducted can be stale in older evaluations. A component can
+      // never expose more at-stake marks than its own authoritative allocation.
+      const lost = roundMarks(available > 0
+        ? Math.min(available, Math.max(recordedDeduction, available - awarded))
+        : 0);
       if (lost <= 0) continue;
 
       const type = String(component.componentType || '').toUpperCase();
@@ -118,12 +158,12 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
         : 'Marks lost in a marking component';
 
       add({
-        id: `component:${questionId}:${component.componentId}`,
+        id: `component:${questionKey}:${component.componentId}`,
         questionId,
         category,
         title,
         detail: component.deductionReason || component.whatWasMissing || component.reason ||
-          `The component received ${safeNumber(component.marksAwarded)} of ${safeNumber(component.marksAvailable)} marks.`,
+          `The component received ${awarded} of ${available} marks.`,
         marksAtStake: lost,
         pages: uniquePages(pages, component.pageNumber ? [component.pageNumber] : []),
         evidence: [
@@ -132,21 +172,21 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
           component.deductionReason || component.whatWasMissing || '',
         ].filter(Boolean),
         priority: lost >= 2 ? 'HIGH' : 'MEDIUM',
-      });
+      }, questionKey, questionMaximum);
     }
 
-    if (question.status === 'not_attempted' && !ledgerById.has(question.canonicalId || questionId)) {
+    if (question.status === 'not_attempted' && !ledgerById.has(questionKey)) {
       add({
-        id: `unattempted:${questionId}`,
+        id: `unattempted:${questionKey}`,
         questionId,
         category: 'UNATTEMPTED',
         title: `${questionId} was marked not attempted`,
         detail: question.reasonForDeduction || question.detailedFeedback || 'The saved question evaluation marks this answer as not attempted.',
-        marksAtStake: question.maximumMarks,
+        marksAtStake: questionMaximum,
         pages,
         evidence: [question.reasonForDeduction || question.detailedFeedback || 'Evaluation status: not_attempted'].filter(Boolean),
-        priority: safeNumber(question.maximumMarks) >= 5 ? 'HIGH' : 'MEDIUM',
-      });
+        priority: questionMaximum >= 5 ? 'HIGH' : 'MEDIUM',
+      }, questionKey, questionMaximum);
     }
 
     if (
@@ -156,7 +196,7 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
       (question.missingRequirements || []).length === 0
     ) {
       add({
-        id: `question-loss:${questionId}`,
+        id: `question-loss:${questionKey}`,
         questionId,
         category: 'STEP_MARKS_LOST',
         title: 'Question-level marks were deducted',
@@ -165,14 +205,14 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
         pages,
         evidence: [question.reasonForDeduction || question.detailedFeedback || 'Question-level marksLost field'].filter(Boolean),
         priority: safeNumber(question.marksLost) >= 2 ? 'HIGH' : 'MEDIUM',
-      });
+      }, questionKey, questionMaximum);
     }
 
     const explicitlyMissing = (question.missingRequirements || []).filter(Boolean);
     if (explicitlyMissing.length > 0 && components.length === 0) {
-      const lost = roundMarks(Math.max(0, safeNumber(question.maximumMarks) - safeNumber(question.marksAwarded)));
+      const lost = roundMarks(Math.max(0, questionMaximum - safeNumber(question.marksAwarded)));
       add({
-        id: `missing:${questionId}`,
+        id: `missing:${questionKey}`,
         questionId,
         category: 'INCOMPLETE_EXPLANATION',
         title: 'Required answer elements were missing',
@@ -181,12 +221,12 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
         pages,
         evidence: explicitlyMissing,
         priority: lost >= 2 ? 'HIGH' : 'MEDIUM',
-      });
+      }, questionKey, questionMaximum);
     }
 
     if (question.status === 'unclear' || question.flags?.some((flag) => /TECHNICAL|MAPPING|OCR|UNREADABLE/i.test(flag))) {
       add({
-        id: `review:${questionId}`,
+        id: `review:${questionKey}`,
         questionId,
         category: 'TECHNICAL_REVIEW',
         title: 'Answer needs a manual mapping / readability review',
@@ -199,24 +239,53 @@ export function buildMarksLeakReport(result: EvaluationResult): MarksLeakReport 
     }
   }
 
-  const unattemptedMarks = roundMarks(findings.filter((f) => f.category === 'UNATTEMPTED').reduce((sum, f) => sum + f.marksAtStake, 0));
-  const incompleteAnswerMarks = roundMarks(findings.filter((f) => f.category === 'MISSING_WORKING' || f.category === 'INCOMPLETE_EXPLANATION').reduce((sum, f) => sum + f.marksAtStake, 0));
-  const stepMarksLost = roundMarks(findings.filter((f) => f.category === 'STEP_MARKS_LOST').reduce((sum, f) => sum + f.marksAtStake, 0));
+  const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+  const sortedFindings = findings.sort((a, b) =>
+    rank[a.priority] - rank[b.priority] || b.marksAtStake - a.marksAtStake
+  );
+  const paperMaximum = safeNumber(runPackage?.questionInventory?.totalPaperMaxMarks) ||
+    safeNumber(result.officialPaperMaxMarks) ||
+    safeNumber(result.maximumMarks);
+  let remainingPaperMarks = paperMaximum > 0 ? paperMaximum : Number.POSITIVE_INFINITY;
+  let paperLimitApplied = false;
+  const boundedFindings = sortedFindings
+    .map((finding) => {
+      if (finding.category === 'TECHNICAL_REVIEW') return finding;
+      const boundedMarks = roundMarks(Math.min(finding.marksAtStake, remainingPaperMarks));
+      if (boundedMarks + 0.001 < finding.marksAtStake) paperLimitApplied = true;
+      remainingPaperMarks = Math.max(0, roundMarks(remainingPaperMarks - boundedMarks));
+      return { ...finding, marksAtStake: boundedMarks };
+    })
+    .filter((finding) => finding.category === 'TECHNICAL_REVIEW' || finding.marksAtStake > 0);
+
+  if (paperLimitApplied) {
+    boundedFindings.push({
+      id: 'review:paper-maximum',
+      questionId: 'PAPER',
+      category: 'TECHNICAL_REVIEW',
+      title: 'Marks-at-stake total exceeded the paper maximum',
+      detail: `The raw findings exceeded the authoritative paper maximum of ${paperMaximum} marks. The displayed total has been conservatively capped; the underlying question allocations need review.`,
+      marksAtStake: 0,
+      pages: [],
+      evidence: ['Authoritative paper maximum', 'Canonical question findings'],
+      priority: 'HIGH',
+    });
+  }
+
+  const unattemptedMarks = roundMarks(boundedFindings.filter((f) => f.category === 'UNATTEMPTED').reduce((sum, f) => sum + f.marksAtStake, 0));
+  const incompleteAnswerMarks = roundMarks(boundedFindings.filter((f) => f.category === 'MISSING_WORKING' || f.category === 'INCOMPLETE_EXPLANATION').reduce((sum, f) => sum + f.marksAtStake, 0));
+  const stepMarksLost = roundMarks(boundedFindings.filter((f) => f.category === 'STEP_MARKS_LOST').reduce((sum, f) => sum + f.marksAtStake, 0));
 
   return {
-    findings: findings.sort((a, b) => {
-      const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
-      return rank[a.priority] - rank[b.priority] || b.marksAtStake - a.marksAtStake;
-    }),
+    findings: boundedFindings,
     totalMarksAtStake: roundMarks(unattemptedMarks + incompleteAnswerMarks + stepMarksLost),
     unattemptedMarks,
     stepMarksLost,
     incompleteAnswerMarks,
-    technicalReviewCount: findings.filter((f) => f.category === 'TECHNICAL_REVIEW').length,
+    technicalReviewCount: boundedFindings.filter((f) => f.category === 'TECHNICAL_REVIEW').length,
     isEvidenceLimited: ledgerRecords.length === 0 && componentsCount(result.questions || []) === 0 && !(result.questions || []).some((question) => (question.missingRequirements || []).length > 0 || safeNumber(question.marksLost) > 0),
   };
 }
-
 function componentsCount(questions: QuestionEvaluation[]): number {
   return questions.reduce((sum, question) => sum + getComponents(question).length, 0);
 }
