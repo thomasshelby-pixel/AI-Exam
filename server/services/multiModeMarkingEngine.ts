@@ -179,8 +179,18 @@ export function applyMultiModeMarkingPhilosophy(
         strictAward = Math.min(stdAward, Math.round(stdAward * 0.8 * 2) / 2);
       }
 
-      // Hard clamp: strict award CAN NEVER EXCEED standard award
-      strictAward = Math.min(stdAward, Math.max(0, Math.round(strictAward * 2) / 2));
+      // Strict mode may scrutinize a partially correct step more closely, but it
+      // must never erase credit already awarded by the source-grounded Standard
+      // evaluation solely because the strict-mode percentage/half-mark rounding
+      // rounded a small positive amount down to zero. Preserve at least the
+      // smallest supported quarter-mark when Standard awarded positive credit.
+      if (stdAward > 0 && strictAward <= 0) {
+        strictAward = Math.min(stdAward, 0.25);
+      }
+
+      // Hard clamp: strict award CAN NEVER EXCEED standard award. Keep quarter-mark
+      // precision: CA marking schemes commonly allocate 0.25 / 0.75 marks.
+      strictAward = Math.min(stdAward, Math.max(0, Math.round(strictAward * 4) / 4));
       const strictDeducted = Math.max(0, avail - strictAward);
 
       return {
