@@ -886,9 +886,9 @@ function isExplicitQuestionPartSuffix(value: string): boolean {
   const suffix = String(value || '').trim();
   if (!suffix) return true;
 
-  const namedPath = /^(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\\s+[a-zA-Z0-9]+)(?:\\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\\s+[a-zA-Z0-9]+)*$/i;
-  const bracketPath = /^(?:\\(\\s*[a-zA-Z0-9]+(?:\\s*\\(\\s*[a-zA-Z0-9]+\\s*\\))*\\s*\\)|\\[\\s*[a-zA-Z0-9]+(?:\\s*\\[\\s*[a-zA-Z0-9]+\\s*\\])*\\s*\\])+$/i;
-  const dottedPath = /^(?:\\.[a-zA-Z0-9]+){1,4}$/;
+  const namedPath = /^(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+)(?:\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+)*$/i;
+  const bracketPath = /^(?:\(\s*[a-zA-Z0-9]+(?:\s*\(\s*[a-zA-Z0-9]+\s*\))*\s*\)|\[\s*[a-zA-Z0-9]+(?:\s*\[\s*[a-zA-Z0-9]+\s*\])*\s*\])+$/i;
+  const dottedPath = /^(?:\.[a-zA-Z0-9]+){1,4}$/;
   const punctuatedLabel = /^[a-zA-Z0-9]+[.)]$/;
   return namedPath.test(suffix) || bracketPath.test(suffix) || dottedPath.test(suffix) || punctuatedLabel.test(suffix);
 }
