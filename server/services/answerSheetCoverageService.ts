@@ -486,6 +486,8 @@ export interface DetectedQuestionOccurrence {
   mappingReviewReason?: string;
   mappingBasis?: 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION';
   labelMismatch?: boolean;
+  /** True only when the page model supplied an explicit status for this answer block. */
+  readabilityStatusExplicit?: boolean;
 }
 
 export interface ContextualQuestionResolution {
@@ -909,11 +911,18 @@ export async function buildAnswerSheetCoverageMap(
                 'ATTEMPTED_UNCLEAR',
               ]);
               if (readableStates.has(existing.status) && readableStates.has(detected.status)) {
-                // Two passes must agree before declaring fully readable or fully
-                // unclear. A disagreement localizes to partial readability.
-                existing.status = existing.status === detected.status
-                  ? existing.status
-                  : 'ATTEMPTED_PARTIALLY_READABLE';
+                // Explicit per-answer output overrides an aggregate page fallback.
+                // Conflicting explicit reads, or conflicting fallback-only reads,
+                // remain partially readable rather than being forced to either extreme.
+                existing.status = reconcileDetectedAnswerReadability(
+                  existing.status,
+                  detected.status,
+                  Boolean(existing.readabilityStatusExplicit),
+                  Boolean(detected.readabilityStatusExplicit)
+                );
+                existing.readabilityStatusExplicit = Boolean(
+                  existing.readabilityStatusExplicit || detected.readabilityStatusExplicit
+                );
               }
             }
 
@@ -1365,6 +1374,27 @@ export function resolveDetectedAnswerReadabilityStatus(
   return pageStatus;
 }
 
+export function reconcileDetectedAnswerReadability(
+  existingStatus: PageAttemptStatus,
+  incomingStatus: PageAttemptStatus,
+  existingIsExplicit: boolean,
+  incomingIsExplicit: boolean
+): PageAttemptStatus {
+  const readableStates = new Set<PageAttemptStatus>([
+    'ATTEMPTED_READABLE',
+    'ATTEMPTED_PARTIALLY_READABLE',
+    'ATTEMPTED_UNCLEAR',
+  ]);
+  if (!readableStates.has(existingStatus)) return incomingIsExplicit ? incomingStatus : existingStatus;
+  if (!readableStates.has(incomingStatus)) return existingIsExplicit ? existingStatus : incomingStatus;
+
+  // An explicit answer-level signal overrides a previous aggregate page fallback.
+  if (incomingIsExplicit && !existingIsExplicit) return incomingStatus;
+  if (existingIsExplicit && !incomingIsExplicit) return existingStatus;
+  if (existingStatus === incomingStatus) return existingStatus;
+  return 'ATTEMPTED_PARTIALLY_READABLE';
+}
+
 /** Resolves an answer's readability independently of the aggregate page label. */
 /**
  * Analyzes a single page of the answer sheet using a subject-neutral handwriting
@@ -1482,6 +1512,7 @@ async function analyzeSinglePageCoverage(
             detectedAnswerBlockCount,
             Boolean(dq.snippet)
           ),
+          readabilityStatusExplicit: Boolean(dq.readabilityStatus),
           isContinuation: Boolean(dq.isContinuation),
           pageNumber,
           snippet: dq.snippet || summary,
