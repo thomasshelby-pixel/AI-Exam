@@ -200,4 +200,28 @@ const nestedBracketTwo = extractLockedQuestionSlice(nestedBracketAnswers, '6', '
 assert.equal(nestedBracketTwo.found, true, 'Sibling nested-bracket headings must remain independently retrievable.');
 assert.match(nestedBracketTwo.snippet, /Only nested-bracket sibling evidence/);
 assert.doesNotMatch(nestedBracketTwo.snippet, /Only nested-bracket evidence/);
+// A paper may show only the parent question heading, then use compact
+// nested-parenthesis labels as bare child headings: (a(i)), (a(ii)).
+// Each leaf must be found independently and the first slice must stop at its sibling.
+const bareNestedParentAnswers = [
+  'SUGGESTED ANSWERS',
+  'Question 8 Parent question with nested Roman sub-parts.',
+  '(a(i)) First nested leaf with its own working and conclusion.',
+  'Only bare nested leaf one evidence.',
+  '(a(ii)) Second nested leaf with separate working and conclusion.',
+  'Only bare nested leaf two evidence.',
+  '(b) Sibling top-level alphabetic answer.',
+  'Top-level sibling evidence must not leak into nested leaves.',
+].join('\n');
+const bareNestedOne = extractLockedQuestionSlice(bareNestedParentAnswers, '8', 'a(i)', 'SA');
+assert.equal(bareNestedOne.found, true,
+  'A bare compact nested heading (a(i)) below Question 8 must resolve to Q8(a(i)).');
+assert.match(bareNestedOne.snippet, /Only bare nested leaf one evidence/);
+assert.doesNotMatch(bareNestedOne.snippet, /Only bare nested leaf two evidence|Top-level sibling evidence/);
+const bareNestedTwo = extractLockedQuestionSlice(bareNestedParentAnswers, '8', 'a(ii)', 'SA');
+assert.equal(bareNestedTwo.found, true,
+  'A bare compact sibling heading (a(ii)) below Question 8 must resolve to Q8(a(ii)).');
+assert.match(bareNestedTwo.snippet, /Only bare nested leaf two evidence/);
+assert.doesNotMatch(bareNestedTwo.snippet, /Only bare nested leaf one evidence|Top-level sibling evidence/);
+
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');
