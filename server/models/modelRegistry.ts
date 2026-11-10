@@ -5,6 +5,10 @@ import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { getFirestoreDoc } from '../services/firestoreDbService.js';
 import { validateModelRoutingConfiguration } from '../services/modelRoutingConfig.js';
+import {
+  isProviderOutputIncompleteFailure,
+  isTaskSpecificOutputValidationFailure,
+} from '../services/modelFailurePolicy.js';
 
 import {
   getSupportedThinkingLevel,
@@ -1558,6 +1562,7 @@ export async function executeModelWithFallback(
   let originalModel = routing.primaryModel;
   let fallbackModel: string | undefined;
   let retriesCount = 0;
+  const candidateFailureSummaries: string[] = [];
 
   for (let i = 0; i < candidateSequence.length; i++) {
     const candidateModel = candidateSequence[i];
@@ -1703,10 +1708,25 @@ export async function executeModelWithFallback(
       const isRateLimit = errMsgLower.includes('429') || errMsgLower.includes('quota') || errMsgLower.includes('resource_exhausted') || errMsgLower.includes('rate_limit');
       const isTemp = errMsgLower.includes('503') || errMsgLower.includes('502') || errMsgLower.includes('unavailable') || errMsgLower.includes('high demand') || errMsgLower.includes('overloaded');
       const isTimeout = errMsgLower.includes('timed out') || errMsgLower.includes('timeout') || errMsgLower.includes('etimedout');
-      const isOutputRejected = errMsgLower.includes('model_output_validation_failed') ||
-        errMsgLower.includes('openai_output_truncated') ||
-        errMsgLower.includes('openai_output_incomplete') ||
-        errMsgLower.includes('openai_empty_output');
+      const isTaskSpecificValidationFailure = isTaskSpecificOutputValidationFailure(errMsg);
+      const isOutputRejected = isProviderOutputIncompleteFailure(errMsg);
+      const structuredFailureCode = errMsg.match(
+        /QUESTION_CHUNK_[A-Z_]+|QUESTION_REFERENCE_[A-Z_]+|MODEL_OUTPUT_VALIDATION_FAILED|OPENAI_OUTPUT_[A-Z_]+|OPENAI_EMPTY_OUTPUT/i
+      )?.[0];
+      const failureCategory = isCreditIssue
+        ? 'CREDIT_EXHAUSTED'
+        : isRateLimit
+          ? 'RATE_LIMITED'
+          : isTimeout
+            ? 'TIMEOUT'
+            : isTemp
+              ? 'TEMPORARILY_UNAVAILABLE'
+              : (isOutputRejected || isTaskSpecificValidationFailure)
+                ? 'INVALID_STRUCTURED_OUTPUT'
+                : 'PROVIDER_ERROR';
+      candidateFailureSummaries.push(
+        `${candidateModel}:${structuredFailureCode || failureCategory}`
+      );
       if (isOutputRejected) {
         markModelTemporarilyUnavailable(candidateModel, 30000, 'Invalid or incomplete structured evaluation output');
       }
@@ -1718,17 +1738,31 @@ export async function executeModelWithFallback(
       }
 
       try {
-        const status = isCreditIssue ? 'INSUFFICIENT_CREDITS' : isRateLimit ? 'RATE_LIMITED' : isTimeout ? 'TEMPORARILY_UNAVAILABLE' : isTemp || isOutputRejected ? 'TEMPORARILY_UNAVAILABLE' : 'FAILED';
-        db.prepare(
-          "UPDATE model_configs SET status = ?, last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
-        ).run(status, latencyMs, candidateModel);
+        if (isTaskSpecificValidationFailure && !isRateLimit && !isTemp && !isTimeout && !isCreditIssue) {
+          // The model answered, but its response failed this question's rubric
+          // validator. Keep the model eligible for other questions; only the
+          // current candidate is rejected and the active question tries fallback.
+          db.prepare(
+            "UPDATE model_configs SET status = 'AVAILABLE', last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(latencyMs, candidateModel);
+        } else {
+          const status = isCreditIssue ? 'INSUFFICIENT_CREDITS' : isRateLimit ? 'RATE_LIMITED' : isTimeout ? 'TEMPORARILY_UNAVAILABLE' : isTemp || isOutputRejected ? 'TEMPORARILY_UNAVAILABLE' : 'FAILED';
+          db.prepare(
+            "UPDATE model_configs SET status = ?, last_latency_ms = ?, last_tested_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(status, latencyMs, candidateModel);
+        }
       } catch {}
     }
   }
 
-  // All configured candidates exhausted
+  // All configured candidates exhausted. Keep a compact, non-secret failure
+  // summary so question-level technical failures can be diagnosed without
+  // logging prompts, answer-sheet text, or raw provider payloads.
+  const failureSummary = candidateFailureSummaries.length > 0
+    ? candidateFailureSummaries.slice(0, 8).join(', ')
+    : 'No configured model candidate was available to run';
   throw new Error(
-    'AI Evaluation service is currently unavailable across all configured models. Please retry in a few moments. No credits have been deducted.'
+    `AI_EVALUATION_MODELS_EXHAUSTED: ${failureSummary}. No academic marks were assigned for this question.`
   );
 }
 

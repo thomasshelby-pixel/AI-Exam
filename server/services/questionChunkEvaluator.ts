@@ -161,14 +161,14 @@ export function parseAndValidateQuestionChunkOutput(
     throw new Error('QUESTION_CHUNK_INVALID_MAX_MARKS: authoritative maximum marks are missing.');
   }
 
+  const normalizedStatus = typeof raw.status === 'string' ? raw.status.trim().toLowerCase() : '';
   const allowedStatuses = new Set(['correct', 'partially_correct', 'incorrect', 'unclear']);
-  if (typeof raw.status !== 'string' || !allowedStatuses.has(raw.status)) {
+  if (!allowedStatuses.has(normalizedStatus)) {
     throw new Error('QUESTION_CHUNK_INVALID_STATUS: expected correct, partially_correct, incorrect, or unclear.');
   }
-  if (typeof raw.marksAwarded !== 'number' || !Number.isFinite(raw.marksAwarded) ||
-      raw.marksAwarded < 0 || raw.marksAwarded > maxMarks + 0.05) {
-    throw new Error('QUESTION_CHUNK_INVALID_TOTAL: awarded marks are missing or outside the authoritative range.');
-  }
+  raw.status = normalizedStatus;
+
+  const modelReportedQuestionTotal = raw.marksAwarded;
 
   const components = raw.markingComponents;
   if (!Array.isArray(components) || components.length === 0) {
@@ -179,7 +179,6 @@ export function parseAndValidateQuestionChunkOutput(
     'PROVISION', 'PRINCIPLE', 'CONDITION', 'APPLICATION', 'CALCULATION',
     'WORKING', 'TREATMENT', 'REASONING', 'CONCLUSION', 'PRESENTATION',
   ]);
-  const allowedAssessments = new Set(['CORRECT', 'PARTIALLY_CORRECT', 'INCORRECT', 'OMITTED']);
   let availableTotal = 0;
   let awardedTotal = 0;
 
@@ -192,12 +191,15 @@ export function parseAndValidateQuestionChunkOutput(
     if (typeof component.componentId !== 'string' || !component.componentId.trim()) {
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing componentId.`);
     }
-    if (typeof component.componentType !== 'string' || !allowedTypes.has(component.componentType)) {
+
+    const componentType = typeof component.componentType === 'string'
+      ? component.componentType.trim().toUpperCase()
+      : '';
+    if (!allowedTypes.has(componentType)) {
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has an unsupported componentType.`);
     }
-    if (typeof component.assessment !== 'string' || !allowedAssessments.has(component.assessment)) {
-      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has an unsupported assessment.`);
-    }
+    component.componentType = componentType;
+
     if (typeof component.expectedRequirement !== 'string' || !component.expectedRequirement.trim()) {
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing the authoritative requirement.`);
     }
@@ -205,33 +207,63 @@ export function parseAndValidateQuestionChunkOutput(
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing candidate evidence or an explicit omission statement.`);
     }
 
-    const numbers = [component.marksAvailable, component.marksAwarded, component.marksDeducted];
-    if (numbers.some((value) => typeof value !== 'number' || !Number.isFinite(value))) {
-      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has missing or non-numeric marks.`);
+    // marksDeducted and assessment are redundant labels. The allocation and
+    // awarded marks remain the scoring source; derive these labels so a casing
+    // or stale duplicate field cannot reject an otherwise valid answer.
+    const available = component.marksAvailable;
+    const awarded = component.marksAwarded;
+    if (
+      typeof available !== 'number' || !Number.isFinite(available) ||
+      typeof awarded !== 'number' || !Number.isFinite(awarded)
+    ) {
+      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has missing or non-numeric allocation/award marks.`);
     }
-    const available = component.marksAvailable as number;
-    const awarded = component.marksAwarded as number;
-    const deducted = component.marksDeducted as number;
-    if (available < 0 || awarded < 0 || awarded > available + 0.01 || deducted < 0 || deducted > available + 0.01) {
+    if (available < 0 || awarded < 0 || awarded > available + 0.01) {
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has marks outside its component limit.`);
     }
-    if (Math.abs((available - awarded) - deducted) > 0.26) {
-      throw new Error(`QUESTION_CHUNK_COMPONENT_ARITHMETIC_MISMATCH: ${prefix} awarded and deducted marks do not reconcile.`);
-    }
+    // Clamp only a tiny floating-point overrun (<= 0.01); never repair a
+    // substantive over-award beyond the official component maximum.
+    component.marksAwarded = Math.min(available, awarded);
+    const normalizedAwarded = component.marksAwarded as number;
+
+    const reportedAssessment = typeof component.assessment === 'string'
+      ? component.assessment.trim().toUpperCase()
+      : '';
+    component.assessment = reportedAssessment === 'OMITTED' && normalizedAwarded <= 0
+      ? 'OMITTED'
+      : available > 0 && normalizedAwarded >= available - 0.01
+        ? 'CORRECT'
+        : normalizedAwarded > 0.01
+          ? 'PARTIALLY_CORRECT'
+          : 'INCORRECT';
+
+    component.marksDeducted = Math.round(Math.max(0, available - normalizedAwarded) * 100) / 100;
     availableTotal += available;
-    awardedTotal += awarded;
+    awardedTotal += normalizedAwarded;
   }
 
   if (Math.abs(availableTotal - maxMarks) > 0.05) {
     throw new Error(`QUESTION_CHUNK_ALLOCATION_MISMATCH: component allocations total ${availableTotal}, but the authoritative maximum is ${maxMarks}.`);
   }
-  if (Math.abs(awardedTotal - raw.marksAwarded) > 0.26) {
-    throw new Error(`QUESTION_CHUNK_SCORE_MISMATCH: component awards total ${awardedTotal}, but the model reported ${raw.marksAwarded}.`);
-  }
 
-  // The validated component marks are authoritative. Reconcile the question
-  // score to their quarter-mark sum so displayed totals cannot drift from steps.
-  raw.marksAwarded = Math.min(maxMarks, Math.round(awardedTotal * 4) / 4);
+  // Component awards are the auditable score source. A separately generated
+  // question total is redundant and can drift even when every component is
+  // individually valid. Reconcile to the components instead of discarding the
+  // entire answer and burning the configured model fallback chain.
+  const reconciledAwarded = Math.round(awardedTotal * 4) / 4;
+  if (
+    typeof modelReportedQuestionTotal !== 'number' ||
+    !Number.isFinite(modelReportedQuestionTotal) ||
+    modelReportedQuestionTotal < 0 ||
+    modelReportedQuestionTotal > maxMarks + 0.05 ||
+    Math.abs(awardedTotal - modelReportedQuestionTotal) > 0.26
+  ) {
+    raw.modelReportedMarksAwarded = modelReportedQuestionTotal ?? null;
+    raw.scoreReconciliationNote =
+      `Question total reconciled from ${String(modelReportedQuestionTotal ?? 'missing')} to ${reconciledAwarded} using the validated component awards.`;
+  }
+  raw.marksAwarded = Math.min(maxMarks, reconciledAwarded);
+  raw.markingComponents = components;
 
   // The status label is not an independent scoring signal. Some models label
   // a response "incorrect" while still awarding valid step marks. Keep the
@@ -582,6 +614,10 @@ Return strictly valid JSON with this schema:
       pdfBase64: chunkBase64,
       mimeType: 'application/pdf',
       responseMimeType: 'application/json',
+      // Question-level examiner JSON can be larger than a simple chat answer,
+      // especially for nested workings and multiple independently marked steps.
+      // Keep a consistent response budget across the configured providers.
+      maxTokens: 8192,
       thinkingLevel: checkingMode === 'strict' ? 'HIGH' : 'MEDIUM',
       validateOutput: (rawText) => {
         parseAndValidateQuestionChunkOutput(rawText, maxMarks, { materialType: ctx.referenceMetadata?.materialType });
@@ -640,7 +676,10 @@ Return strictly valid JSON with this schema:
         referenceDisposition.reason,
       ].filter(Boolean).join('\n\n'),
       confidence: modelConfidence,
-      technicalEvaluation: raw.technicalEvaluation || `Candidate response for ${fullCode} mapped against ICAI suggested solution.`,
+      technicalEvaluation: [
+        raw.technicalEvaluation || `Candidate response for ${fullCode} mapped against ICAI suggested solution.`,
+        raw.scoreReconciliationNote,
+      ].filter(Boolean).join(' '),
       markingComponents: components,
       pageNumber: mapping.pages[0] || 1,
       flags: questionFlags,

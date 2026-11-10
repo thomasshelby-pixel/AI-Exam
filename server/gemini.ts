@@ -32,6 +32,7 @@ import { getAuthoritativePaperStructure } from './services/paperStructureService
 import { buildAnswerSheetCoverageMap } from './services/answerSheetCoverageService.js';
 import { evaluateAllAuthoritativeMcqs } from './services/deterministicMcqScorer.js';
 import { evaluateQuestionChunk } from './services/questionChunkEvaluator.js';
+import { createQuestionEvaluationFailure } from './services/questionEvaluationFailureService.js';
 import { deriveEvaluationModelAttribution } from './services/evaluationModelAttribution.js';
 import { applyMultiModeMarkingPhilosophy } from './services/multiModeMarkingEngine.js';
 import { deduplicateQuestionList, toCanonicalQuestionId } from './services/canonicalQuestionService.js';
@@ -1354,7 +1355,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                     status: 'unclear',
                     reasonForDeduction: 'Authoritative question mapping unresolved: Question detected on answer sheet could not be mapped to official question paper inventory.',
                     detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. No matching canonical question found in authoritative inventory. Preserved for review.`,
-                    flags: ['NEEDS_MAPPING_REVIEW', 'FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
+                    flags: ['NEEDS_MAPPING_REVIEW', 'REVIEW_REQUIRED', 'RECHECK_RECOMMENDED'],
                     pageNumber: mapping.pages[0] || 1,
                   } as QuestionEvaluation;
                 }
@@ -1387,7 +1388,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                   lastErr = chunkErr;
                   const rawDiagnostic = chunkErr instanceof Error ? chunkErr.message : String(chunkErr);
                   const diagnostic = sanitizeSecretStrings(rawDiagnostic).replace(/\s+/g, ' ').slice(0, 220);
-                  console.error(`[EvaluationEngine] Fallback chain exhausted for ${canonId}; preserving attempted answer for review. Diagnostic: ${diagnostic}`);
+                  console.error(`[EvaluationEngine] Question-level evaluation could not be completed for ${canonId}; preserving attempted answer for review. Diagnostic: ${diagnostic}`);
                 }
 
                 if (evalResult) {
@@ -1396,19 +1397,14 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 
                 const rawFailureReason = lastErr instanceof Error ? lastErr.message : String(lastErr || 'Unknown technical failure');
                 const safeFailureReason = sanitizeSecretStrings(rawFailureReason).replace(/\s+/g, ' ').slice(0, 220);
-                return {
+                return createQuestionEvaluationFailure({
                   questionNumber: subQ.questionNumber,
                   subQuestion: subQ.subQuestionNumber,
                   canonicalId: canonId,
                   maximumMarks: subQ.maximumMarks,
-                  marksAwarded: 0,
-                  marksLost: 0,
-                  status: 'unclear',
-                  reasonForDeduction: `Technical evaluation failure (not an academic deduction). Manual review required. Diagnostic: ${safeFailureReason}`,
-                  detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. The configured AI fallback chain could not produce a valid question-level evaluation. No academic marks have been assigned to this question. Diagnostic: ${safeFailureReason}`,
-                  flags: ['FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED', 'TECHNICAL_FAILURE'],
-                  pageNumber: mapping.pages[0] || 1,
-                } as QuestionEvaluation;
+                  pages: mapping.pages,
+                  diagnostic: safeFailureReason,
+                });
               })
             );
             for (const r of batchResults) {
@@ -1459,7 +1455,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
                 status: 'unclear',
                 reasonForDeduction: 'Evaluation integrity safety: Attempted question preserved for reviewer verification.',
                 detailedFeedback: `Candidate attempted question ${canonId} on page(s) ${mapping.pages.join(', ')}. Preserved for examiner review.`,
-                flags: ['NEEDS_MAPPING_REVIEW', 'FAILED_TO_EVALUATE', 'RECHECK_RECOMMENDED'],
+                flags: ['NEEDS_MAPPING_REVIEW', 'REVIEW_REQUIRED', 'RECHECK_RECOMMENDED'],
                 pageNumber: mapping.pages[0] || 1,
               });
               evaluatedCanonSet.add(canonId);
