@@ -46,7 +46,7 @@ function getQuestionId(question: QuestionEvaluation): string {
 function normalizeQuestionKey(value: unknown): string {
   return String(value || '')
     .trim()
-    .replace(/^(?:QUESTION|Q)\\.?\\s*/i, '')
+    .replace(/^(?:QUESTION|Q)\.?\s*/i, '')
     .replace(/\s+/g, '')
     .toUpperCase();
 }
