@@ -582,6 +582,12 @@ export interface EvaluationResult {
   };
   recommendations: string[];
   questions: QuestionEvaluation[];
+  /** Question rows for each selectable mode; the selected mode's rows must match its displayed score. */
+  modeQuestions?: {
+    standard: QuestionEvaluation[];
+    strict: QuestionEvaluation[];
+    moderate: QuestionEvaluation[];
+  };
   structuredMarkingEvidence?: StructuredMarkingEvidence[];
   scoreCalculationAudit?: ScoreCalculationAuditItem[];
   evaluationStandardDisclaimer?: string;
