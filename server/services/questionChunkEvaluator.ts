@@ -676,7 +676,10 @@ Return strictly valid JSON with this schema:
         referenceDisposition.reason,
       ].filter(Boolean).join('\n\n'),
       confidence: modelConfidence,
-      technicalEvaluation: raw.technicalEvaluation || `Candidate response for ${fullCode} mapped against ICAI suggested solution.`,
+      technicalEvaluation: [
+        raw.technicalEvaluation || `Candidate response for ${fullCode} mapped against ICAI suggested solution.`,
+        raw.scoreReconciliationNote,
+      ].filter(Boolean).join(' '),
       markingComponents: components,
       pageNumber: mapping.pages[0] || 1,
       flags: questionFlags,
