@@ -542,7 +542,12 @@ export function buildCanonicalEvaluationLedger(options: {
     let status: CanonicalEvaluationStatus = 'UNATTEMPTED';
     let awardedMarks = 0;
     let counted = false;
-    let rendered = true;
+    // Physical checked-copy rendering is verified after the PDF is actually drawn.
+    let rendered = false;
+    const studentPages = attempt && Array.isArray(attempt.sourcePages)
+      ? attempt.sourcePages.filter((page) => Number.isInteger(page) && page >= 1)
+      : [];
+    const missingStudentPageMapping = isAttempted && studentPages.length === 0;
     let missingStepEvidence = false;
 
     if (isAttempted) {
@@ -560,8 +565,11 @@ export function buildCanonicalEvaluationLedger(options: {
       );
       const requiresHumanReview = Boolean(
         attempt?.mcqSelectionNeedsReview ||
+        missingStudentPageMapping ||
         evaluation?.status === 'unclear' ||
         evaluation?.flags?.includes('REVIEW_REQUIRED') ||
+        evaluation?.flags?.includes('NEEDS_MAPPING_REVIEW') ||
+        evaluation?.flags?.includes('QUESTION_REFERENCE_REVIEW_REQUIRED') ||
         evaluation?.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED') ||
         missingStepEvidence
       );
@@ -595,8 +603,7 @@ export function buildCanonicalEvaluationLedger(options: {
       counted = false;
     }
 
-    const studentPages = attempt && Array.isArray(attempt.sourcePages) ? attempt.sourcePages : [];
-    let annotationPage = studentPages.length > 0 ? studentPages[0] : (item.sourcePage || 1);
+    let annotationPage: number | undefined = studentPages.length > 0 ? studentPages[0] : undefined;
     if (studentPages.length > 1) {
       // For questions spanning multiple student pages, distribute to the least-loaded student page
       // so annotations are balanced across valid student answer sheets.
@@ -615,7 +622,7 @@ export function buildCanonicalEvaluationLedger(options: {
       pageLoadMap.set(annotationPage, (pageLoadMap.get(annotationPage) || 0) + 1);
     }
     const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
-    const annotationRequired = isAttempted && isSelectedAlternative &&
+    const annotationRequired = isAttempted && isSelectedAlternative && Boolean(annotationPage) &&
       (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE' || status === 'NEEDS_REVIEW');
 
     records.push({
@@ -631,14 +638,16 @@ export function buildCanonicalEvaluationLedger(options: {
       awardedMarks,
       evaluationStatus: status,
       annotationRequired,
-      annotationPage,
-      annotationAnchor: {
-        pageNumber: annotationPage,
-        region: 'RIGHT_MARGIN',
-        annotationType: status === 'NEEDS_REVIEW'
-          ? 'EVALUATION_NOTE'
-          : isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
-      },
+      ...(annotationPage ? { annotationPage } : {}),
+      ...(annotationPage ? {
+        annotationAnchor: {
+          pageNumber: annotationPage,
+          region: 'RIGHT_MARGIN' as const,
+          annotationType: status === 'NEEDS_REVIEW'
+            ? 'EVALUATION_NOTE' as const
+            : isMcq ? 'MCQ_BADGE' as const : 'SCORE_BOX' as const,
+        },
+      } : {}),
       renderOrder: item.sourceOrder ?? 1,
       rendered,
       counted,
@@ -674,8 +683,9 @@ export function buildCanonicalEvaluationLedger(options: {
       const counted = false;
       errors.push(`ATTEMPTED_QUESTION_UNMAPPED: Attempted question ${canonId} is not in the authoritative inventory and cannot be scored.`);
 
-      const extraStudentPages = attempt.sourcePages || [];
-      const extraAnnPage = extraStudentPages.length > 0 ? extraStudentPages[0] : 1;
+      const extraStudentPages = (attempt.sourcePages || [])
+        .filter((page) => Number.isInteger(page) && page >= 1);
+      const extraAnnPage = extraStudentPages.length > 0 ? extraStudentPages[0] : undefined;
       const isExtraMcq = canonId.toUpperCase().startsWith('MCQ') || attempt.isMcq;
 
       records.push({
@@ -690,13 +700,17 @@ export function buildCanonicalEvaluationLedger(options: {
         maxMarks: 0,
         awardedMarks,
         evaluationStatus: status,
-        annotationRequired: false,
-        annotationPage: extraAnnPage,
-        annotationAnchor: {
-          pageNumber: extraAnnPage,
-          region: 'RIGHT_MARGIN',
-          annotationType: isExtraMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
-        },
+        // A visibly attempted but unmapped question remains on the checked copy
+        // as a review annotation. It is never given marks or included in totals.
+        annotationRequired: isAttempted && Boolean(extraAnnPage),
+        ...(extraAnnPage ? { annotationPage: extraAnnPage } : {}),
+        ...(extraAnnPage ? {
+          annotationAnchor: {
+            pageNumber: extraAnnPage,
+            region: 'RIGHT_MARGIN' as const,
+            annotationType: 'EVALUATION_NOTE' as const,
+          },
+        } : {}),
         renderOrder: 1000,
         rendered: false,
         counted,
