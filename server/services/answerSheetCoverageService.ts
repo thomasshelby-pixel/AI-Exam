@@ -24,39 +24,54 @@ export function clearCoverageMapCache(): void {
  * request an explicit mapping rather than guessing which leaf was attempted.
  */
 /**
- * A page read that identifies one nested leaf while the authoritative paper
- * defines sibling leaves gets a bounded independent verification read. This
- * catches a confident-but-incomplete first pass that would otherwise never
- * enter the existing targeted-recovery path.
+ * A page read that identifies one source-labelled nested block while the
+ * authoritative paper defines sibling blocks gets a bounded independent
+ * verification read. The source path is used here, not the scoreable path:
+ * Roman clauses such as Q2(a)(i)/(ii) share one scoreable Q2(a), but both
+ * visible answer blocks still need coverage verification before that parent
+ * can be considered fully attempted.
  */
 function hasNestedSiblingVerificationTarget(
   analysis: PageCoverageRecord,
   paperStructure: AuthoritativePaperStructure,
 ): boolean {
   const authoritativeLeaves = (paperStructure.subQuestions || []).filter((question) => !question.isMcq);
+  const romanTokens = new Set([
+    'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+    'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx',
+    'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxx', 'xl', 'l', 'lx', 'lxx', 'xc', 'c',
+  ]);
+  const family = (token: string): 'ROMAN' | 'ARABIC' | 'ALPHA' | 'OTHER' => {
+    const value = String(token || '').toLowerCase();
+    if (romanTokens.has(value)) return 'ROMAN';
+    if (/^\d+$/.test(value)) return 'ARABIC';
+    if (/^[a-z]$/.test(value)) return 'ALPHA';
+    return 'OTHER';
+  };
+
   for (const detected of analysis.detectedQuestions || []) {
     if (detected.isMcq) continue;
-    const canonicalId = toCanonicalQuestionId(
-      detected.fullQuestionCode || detected.questionNumber,
-      detected.subQuestionNumber,
-      authoritativeLeaves,
-    );
-    const parsed = parseCanonicalQuestionIdentity(canonicalId);
-    const path = parsed.subQuestionPath || [];
-    if (path.length < 2) continue;
+    const sourceCode = detected.fullQuestionCode || detected.questionNumber;
+    const sourceIdentity = parseCanonicalQuestionIdentity(sourceCode);
+    const sourcePath = sourceIdentity.sourceSubQuestionPath || sourceIdentity.subQuestionPath || [];
+    if (sourcePath.length < 2) continue;
 
-    const parentPath = path.slice(0, -1);
-    const siblingLeaves = authoritativeLeaves.filter((question) => {
+    const sourceParentPath = sourcePath.slice(0, -1);
+    const sourceLeafFamily = family(sourcePath[sourcePath.length - 1]);
+    const siblingSourceBlocks = authoritativeLeaves.filter((question) => {
       const candidate = parseCanonicalQuestionIdentity(
-        question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
+        question.fullQuestionCode || `Q${question.questionNumber}${question.subQuestionNumber ? `(${question.subQuestionNumber})` : ''}`,
       );
-      const candidatePath = candidate.subQuestionPath || [];
+      const candidatePath = candidate.sourceSubQuestionPath || candidate.subQuestionPath || [];
       return !candidate.isMcq &&
-        candidate.questionNumber === parsed.questionNumber &&
-        candidatePath.length === path.length &&
-        parentPath.every((part, index) => candidatePath[index]?.toLowerCase() === part.toLowerCase());
+        candidate.questionNumber === sourceIdentity.questionNumber &&
+        candidatePath.length === sourcePath.length &&
+        family(candidatePath[candidatePath.length - 1]) === sourceLeafFamily &&
+        sourceParentPath.every((part, index) =>
+          candidatePath[index]?.toLowerCase() === part.toLowerCase()
+        );
     });
-    if (siblingLeaves.length > 1) return true;
+    if (siblingSourceBlocks.length > 1) return true;
   }
   return false;
 }
