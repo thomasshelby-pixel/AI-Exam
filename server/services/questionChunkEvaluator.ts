@@ -474,8 +474,8 @@ export function buildQuestionChunkSubPartCompletenessDirective(
   fullQuestionCode: string,
   maximumMarks: number,
 ): string {
-  const canonicalCode = String(fullQuestionCode || '').trim();
-  return `SINGLE-LEAF IDENTITY AND MARKING-RUBRIC COMPLETENESS:
+  const canonicalCode = parseCanonicalQuestionIdentity(String(fullQuestionCode || '').trim()).canonicalId;
+  return `SINGLE-SCOREABLE-PART IDENTITY AND MARKING-RUBRIC COMPLETENESS:
 - This call evaluates exactly the authoritative scoreable part ${canonicalCode} for ${maximumMarks} marks.
 - Roman-numbered children under this lettered part (for example ${canonicalCode}(i), ${canonicalCode}(ii), etc.) are sections of this SAME question. Read and assess every such child together; do not create separate question tasks or separate maximum-mark allocations for them.
 - Keep other lettered sibling parts (for example Q2(b) when this is Q2(a)) separate. Do not merge this question with its parent container or a different canonical question.
