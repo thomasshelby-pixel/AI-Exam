@@ -234,6 +234,32 @@ assert.equal(
   'A complete Faculty Mock with unambiguous question-total rubric lines must pass the structural gate.',
 );
 
+// A Faculty Mock Suggested Answers TXT may hold the only unambiguous total
+// allocation when the marking TXT is a general rubric. It may safely fill
+// the missing QP maximum only when a single described total is present.
+const facultySuggestedAnswerFallback = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  materialType: 'FACULTY_MOCK_TEST',
+  officialPaperMaxMarks: 100,
+  questionPaperText: [
+    'Faculty Mock Question Paper',
+    'Question 4(a). Prepare the required reconciliation.',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Faculty Mock Suggested Answers',
+    'Question 4(a): 5 marks for correct reconciliation and supporting workings.',
+  ].join('\n'),
+  markingSchemeText: 'Award credit for valid approach, workings and conclusion.',
+});
+assert.equal(
+  facultySuggestedAnswerFallback.subQuestions.find((question) => question.fullQuestionCode === 'Q4(a)')?.maximumMarks,
+  5,
+  'An unambiguous Faculty Mock total in Suggested Answers can fill a missing QP total.',
+);
+
+
 // Parent-scoped bare sub-parts in a faculty-authored rubric must retain
 // independent maxima, just like the canonical PYQ/MTP hierarchical parser.
 const facultyNestedMock = getAuthoritativePaperStructure({
