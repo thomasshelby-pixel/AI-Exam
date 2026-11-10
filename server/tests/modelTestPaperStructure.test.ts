@@ -174,8 +174,8 @@ assert.deepEqual(taxationStructures.MODEL_TEST_PAPER, taxationStructures.MTP);
 assert.deepEqual(taxationStructures.PYQ, taxationStructures.MTP);
 assert.deepEqual(
   taxationStructures.MTP.subQuestions.map((question) => [question.fullQuestionCode, question.maximumMarks]),
-  [['Q1(a)', 4], ['Q1(b)', 6], ['Q2(a(i))', 2], ['Q2(a(ii))', 3]],
-  'Taxation descriptive sub-question IDs and marks must be extracted from the supplied paper, including nested leaves.',
+  [['Q1(a)', 4], ['Q1(b)', 6], ['Q2(a)', 5]],
+  'Taxation Roman child allocations must aggregate under the lettered scoreable question using source-backed marks.',
 );
 assert.deepEqual(
   taxationStructures.MTP.mcqs.map((question) => [question.fullQuestionCode, question.maximumMarks]),
@@ -317,8 +317,8 @@ assert.deepEqual(
   'The MTP inventory must expose only lettered scoreable parts, sum Roman-only allocations, and respect explicit parent maxima.',
 );
 const groupedQuestionText = sourceDrivenRomanParts.subQuestions.find((part) => part.fullQuestionCode === 'Q11(a)')?.questionText || '';
-assert.match(groupedQuestionText, /Question 11\\(a\\)\\(i\\)/i);
-assert.match(groupedQuestionText, /Question 11\\(a\\)\\(ii\\)/i,
+assert.match(groupedQuestionText, /Question 11\(a\)\(i\)/i);
+assert.match(groupedQuestionText, /Question 11\(a\)\(ii\)/i,
   'The parent question reference slice must retain all Roman child source content.');
 assert.equal(
   toCanonicalQuestionId('Q1(a)(iii)', undefined, universalParts),
