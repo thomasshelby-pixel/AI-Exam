@@ -249,7 +249,7 @@ const universalPartSource = [
   'Question 3.1.2 - 2 Marks',
   'Question 4.iv.1 - 2 Marks',
   'Question 4.iv.2 - 3 Marks',
-].join('\\n');
+].join('\n');
 const universalParts = extractSubQuestionsFromText(universalPartSource);
 const universalMaxima = new Map(universalParts.map((part) => [part.fullQuestionCode, part.maximumMarks]));
 for (const [code, marks] of [
@@ -284,7 +284,7 @@ const explicitParentTotal = extractSubQuestionsFromText([
   'Question 5(a) - 10 Marks',
   'Question 5(a)(i) - 2 Marks',
   'Question 5(a)(ii) - 3 Marks',
-].join('\\n'));
+].join('\n'));
 assert.deepEqual(
   explicitParentTotal.map((part) => [part.fullQuestionCode, part.maximumMarks]),
   [['Q5(a)', 10]],
@@ -305,7 +305,7 @@ const sourceDrivenRomanParts = getAuthoritativePaperStructure({
     'Question 12(a) - 10 Marks',
     'Question 12(a)(i) - 2 Marks',
     'Question 12(a)(ii) - 3 Marks',
-  ].join('\\n'),
+  ].join('\n'),
 });
 const sourceDrivenRomanMaxima = new Map(sourceDrivenRomanParts.subQuestions.map((part) => [
   part.fullQuestionCode,
@@ -450,7 +450,7 @@ const contextualParts = extractSubQuestionsFromText([
   '(i) First roman clause - 2 Marks',
   '(ii) Second roman clause - 3 Marks',
   '(b) Sibling lettered part - 4 Marks',
-].join('\\n'));
+].join('\n'));
 assert.deepEqual(
   contextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
   [['Q9(a)', 5], ['Q9(b)', 4]],
@@ -460,7 +460,7 @@ const namedContextualParts = extractSubQuestionsFromText([
   'Question 10 Part IV',
   'Clause 1 - 2 Marks',
   'Clause 2 - 3 Marks',
-].join('\\n'));
+].join('\n'));
 assert.deepEqual(
   namedContextualParts.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
   [['Q10(iv(1))', 2], ['Q10(iv(2))', 3]],
@@ -479,7 +479,7 @@ const romanWithNumericDetails = extractSubQuestionsFromText([
   '(2) Second detail inside Roman clause - 1 Mark',
   '(ii) Second Roman clause - 2 Marks',
   '(b) Separate lettered sibling - 3 Marks',
-].join('\\n'));
+].join('\n'));
 assert.deepEqual(
   romanWithNumericDetails.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
   [['Q13(a)', 6], ['Q13(b)', 3]],
@@ -492,7 +492,7 @@ const directArabicChildren = extractSubQuestionsFromText([
   '(1) First independently numbered Arabic part - 2 Marks',
   '(2) Second independently numbered Arabic part - 3 Marks',
   '(b) Separate lettered sibling - 1 Mark',
-].join('\\n'));
+].join('\n'));
 assert.deepEqual(
   directArabicChildren.map((part) => [part.fullQuestionCode, part.maximumMarks]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
   [['Q14(a(1))', 2], ['Q14(a(2))', 3], ['Q14(b)', 1]],

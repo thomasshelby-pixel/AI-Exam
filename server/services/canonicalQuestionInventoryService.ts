@@ -119,8 +119,8 @@ function consolidateRomanChildSubQuestions(
     const parsed = parseCanonicalQuestionIdentity(canonicalId);
     const childMaximum = Array.from(group.romanChildMaximums.values())
       .reduce((total, marks) => total + marks, 0);
-    const mergedQuestionText = group.questionTexts.join('\\n\\n');
-    const mergedSuggestedAnchor = group.suggestedAnchors.join('\\n\\n');
+    const mergedQuestionText = group.questionTexts.join('\n\n');
+    const mergedSuggestedAnchor = group.suggestedAnchors.join('\n\n');
     const mergedTopic = group.topics.join(' / ');
     return {
       ...group.first,
