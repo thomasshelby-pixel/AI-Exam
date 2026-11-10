@@ -31,7 +31,7 @@ import {
   EvaluationRunPackage,
   EvaluationFinalizationStatus,
 } from '../../src/types/index.js';
-import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
+import { AuthoritativePaperStructure, consolidateRomanChildSubQuestions } from './paperStructureService.js';
 import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
@@ -39,101 +39,6 @@ import {
   isCanonicalQuestionDescendant,
 } from './canonicalQuestionService.js';
 import { db, persistEvaluationRunPackageAtomic, loadEvaluationRunPackage } from '../db.js';
-
-/**
- * Consolidates old/raw paper structures that still contain separate Roman
- * child rows. The canonical scoreable unit is the lettered parent (Q2(a));
- * distinct Roman allocations are summed once unless the source also supplies
- * an explicit parent total, which takes precedence.
- */
-function consolidateRomanChildSubQuestions(
-  subQuestions: PaperStructureSubQuestion[],
-): PaperStructureSubQuestion[] {
-  const groups = new Map<string, {
-    first: PaperStructureSubQuestion;
-    seenSourcePaths: Set<string>;
-    directMaximumMarks?: number;
-    romanChildMaximums: Map<string, number>;
-    questionTexts: string[];
-    suggestedAnchors: string[];
-    topics: string[];
-  }>();
-
-  for (const sq of subQuestions) {
-    const rawCode = String(sq.fullQuestionCode || `Q${sq.questionNumber}${sq.subQuestionNumber ? `(${sq.subQuestionNumber})` : ''}`);
-    const identityFromCode = parseCanonicalQuestionIdentity(rawCode);
-    const identityFromSubQuestion = sq.subQuestionNumber
-      ? parseCanonicalQuestionIdentity(`Q${identityFromCode.questionNumber}(${sq.subQuestionNumber})`)
-      : identityFromCode;
-    const rawIdentity = (identityFromSubQuestion.sourceSubQuestionPath?.length || 0) >
-      (identityFromCode.sourceSubQuestionPath?.length || 0)
-      ? identityFromSubQuestion
-      : identityFromCode;
-    const canonicalId = toCanonicalQuestionId(
-      sq.fullQuestionCode || sq.questionNumber,
-      sq.subQuestionNumber,
-      subQuestions,
-    );
-    const normalizedIdentity = parseCanonicalQuestionIdentity(canonicalId);
-    const sourcePath = rawIdentity.sourceSubQuestionPath || rawIdentity.subQuestionPath || [];
-    const normalizedPath = normalizedIdentity.subQuestionPath || [];
-    const sourcePathKey = sourcePath.map((part) => part.toLowerCase()).join('/');
-    const hasRomanChild = sourcePath.length > normalizedPath.length && sourcePath.some((part, index) =>
-      index > 0 && /^[ivxlcdm]+$/i.test(part)
-    );
-
-    let group = groups.get(canonicalId);
-    if (!group) {
-      group = {
-        first: sq,
-        seenSourcePaths: new Set<string>(),
-        romanChildMaximums: new Map<string, number>(),
-        questionTexts: [],
-        suggestedAnchors: [],
-        topics: [],
-      };
-      groups.set(canonicalId, group);
-    }
-    if (group.seenSourcePaths.has(sourcePathKey)) continue;
-    group.seenSourcePaths.add(sourcePathKey);
-
-    const rawMaximum = Number(sq.maximumMarks);
-    const maximum = Number.isFinite(rawMaximum) && rawMaximum > 0 ? rawMaximum : 0;
-    if (hasRomanChild) {
-      group.romanChildMaximums.set(sourcePathKey, maximum);
-    } else if (group.directMaximumMarks === undefined) {
-      group.directMaximumMarks = maximum;
-    }
-
-    for (const [target, value] of [
-      [group.questionTexts, sq.questionText],
-      [group.suggestedAnchors, sq.suggestedAnswerAnchor],
-      [group.topics, sq.topic],
-    ] as Array<[string[], string | undefined]>) {
-      const normalized = String(value || '').trim();
-      if (normalized && !target.includes(normalized)) target.push(normalized);
-    }
-  }
-
-  return Array.from(groups.entries()).map(([canonicalId, group]) => {
-    const parsed = parseCanonicalQuestionIdentity(canonicalId);
-    const childMaximum = Array.from(group.romanChildMaximums.values())
-      .reduce((total, marks) => total + marks, 0);
-    const mergedQuestionText = group.questionTexts.join('\n\n');
-    const mergedSuggestedAnchor = group.suggestedAnchors.join('\n\n');
-    const mergedTopic = group.topics.join(' / ');
-    return {
-      ...group.first,
-      fullQuestionCode: canonicalId,
-      questionNumber: parsed.questionNumber,
-      subQuestionNumber: parsed.subQuestion,
-      maximumMarks: group.directMaximumMarks ?? childMaximum,
-      ...(mergedQuestionText ? { questionText: mergedQuestionText } : {}),
-      ...(mergedSuggestedAnchor ? { suggestedAnswerAnchor: mergedSuggestedAnchor } : {}),
-      ...(mergedTopic ? { topic: mergedTopic } : {}),
-    };
-  });
-}
 
 export interface IndependentAttemptRecord {
   canonicalId: string;
