@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { validateAnswerSheetCoverageCompleteness } from '../services/answerSheetCoverageService.js';
 import {
+  buildCanonicalEvaluationLedger,
+  buildCanonicalQuestionInventory,
+} from '../services/canonicalQuestionInventoryService.js';
+import {
   validatePreRenderGate,
   validatePostRenderGate,
 } from '../services/pdfCheckedCopyService.js';
@@ -155,5 +159,43 @@ const duplicatePhysicalPage = validatePostRenderGate({
 });
 assert.equal(duplicatePhysicalPage.isValid, false);
 assert.match(duplicatePhysicalPage.errors.join(' '), /Original page 2 was rendered more than once/);
+
+// An attempted but unselected OR branch must still receive examiner feedback.
+// Its marks remain excluded from the canonical grand total.
+const alternativeInventory = buildCanonicalQuestionInventory({
+  paperStructure: {
+    paperTitle: 'Alternative attempt test',
+    totalPaperMaxMarks: 10,
+    questions: [],
+    mcqs: [],
+    subQuestions: [
+      { fullQuestionCode: 'Q1(a)', questionNumber: '1', subQuestionNumber: 'a', maximumMarks: 5, isMcq: false, isAlternative: true },
+      { fullQuestionCode: 'Q1(b)', questionNumber: '1', subQuestionNumber: 'b', maximumMarks: 5, isMcq: false, isAlternative: true },
+    ],
+  } as any,
+});
+const alternativeAttempts: any = new Map([
+  ['Q1(a)', { canonicalId: 'Q1(a)', questionNumber: '1', subQuestion: 'a', sourcePages: [1], isAttempted: true, isPartial: false, isContinuation: false, isCrossedOutWithNoReplacement: false, evidence: 'Attempted alternative A', isMcq: false }],
+  ['Q1(b)', { canonicalId: 'Q1(b)', questionNumber: '1', subQuestion: 'b', sourcePages: [2], isAttempted: true, isPartial: false, isContinuation: false, isCrossedOutWithNoReplacement: false, evidence: 'Attempted alternative B', isMcq: false }],
+]);
+const alternativeLedger = buildCanonicalEvaluationLedger({
+  runId: 'alternative-attempt',
+  inventory: alternativeInventory,
+  attemptedMap: alternativeAttempts,
+  selectedAlternatives: { ALT_1: 'Q1(a)' },
+  evaluatedQuestions: [
+    { canonicalId: 'Q1(a)', questionNumber: '1', subQuestion: 'a', maximumMarks: 5, marksAwarded: 4, status: 'partially_correct', markingComponents: [{ componentId: 'a1', componentType: 'APPLICATION', marksAvailable: 5, marksAwarded: 4 }] },
+    { canonicalId: 'Q1(b)', questionNumber: '1', subQuestion: 'b', maximumMarks: 5, marksAwarded: 3, status: 'partially_correct', markingComponents: [{ componentId: 'b1', componentType: 'APPLICATION', marksAvailable: 5, marksAwarded: 3 }] },
+  ] as any,
+});
+const selectedAlternative = alternativeLedger.records.find((record) => record.questionId === 'Q1(a)')!;
+const unselectedAttemptedAlternative = alternativeLedger.records.find((record) => record.questionId === 'Q1(b)')!;
+assert.equal(selectedAlternative.counted, true);
+assert.equal(unselectedAttemptedAlternative.counted, false,
+  'The unselected alternative must not affect the grand total.');
+assert.equal(unselectedAttemptedAlternative.annotationRequired, true,
+  'The unselected alternative was still attempted and must have an examiner disposition on the checked copy.');
+assert.equal(unselectedAttemptedAlternative.awardedMarks, 3,
+  'Keep the independently evaluated feedback available while excluded from the final total.');
 
 console.log('✅ Full page and question disposition completeness gates passed.');
