@@ -880,6 +880,7 @@ export async function generateCheckedCopyPdf(
     marksAwarded: number;
     maxMarks: number;
   }> = [];
+  const physicallyRenderedPages: PageRenderManifestItem[] = [];
 
   const rejectIncompletePhysicalRender = (reason: string): never => {
     const physicalGate = validatePostRenderGate({
@@ -888,6 +889,7 @@ export async function generateCheckedCopyPdf(
       records: gateRecords,
       renderedAnnotations: physicallyRenderedAnnotations,
       totalPages: originalPageCount,
+      physicalPageRenders: physicallyRenderedPages,
     });
     const err = new Error(
       `CHECKED_COPY_RENDER_INTEGRITY_FAILURE: ${reason}${physicalGate.errors.length ? `; ${physicalGate.errors.join('; ')}` : ''}`
@@ -1075,9 +1077,11 @@ export async function generateCheckedCopyPdf(
         borderWidth: 1.2,
       });
 
-      const qDisplay = qAnn.questionNumber.startsWith('Q') || qAnn.questionNumber.startsWith('MCQ')
-        ? qAnn.questionNumber
-        : `Q.${qAnn.questionNumber}`;
+      const qDisplay = qAnn.pageReviewOnly
+        ? `PAGE ${pageNumber} REVIEW`
+        : qAnn.questionNumber.startsWith('Q') || qAnn.questionNumber.startsWith('MCQ')
+          ? qAnn.questionNumber
+          : `Q.${qAnn.questionNumber}`;
 
       safeDrawText(page, qDisplay, {
         x: marginX + 6,
@@ -1124,22 +1128,26 @@ export async function generateCheckedCopyPdf(
           feedbackY -= (isCompactMode ? 6 : 7);
         }
         currY -= mcqCardHeight + (isCompactMode ? 4 : 6);
-        physicallyRenderedAnnotations.push({
-          pageNumber,
-          questionNumber: qAnn.questionNumber,
-          canonicalId: qAnn.canonicalId,
-          marksAwarded: qAnn.marksAwarded,
-          maxMarks: qAnn.maxMarks,
-        });
+        if (!qAnn.pageReviewOnly) {
+          physicallyRenderedAnnotations.push({
+            pageNumber,
+            questionNumber: qAnn.questionNumber,
+            canonicalId: qAnn.canonicalId,
+            marksAwarded: qAnn.marksAwarded,
+            maxMarks: qAnn.maxMarks,
+          });
+        }
         continue;
       }
 
-      safeDrawText(page, qAnn.reviewRequired
-        ? 'SCORE WITHHELD - NOT AN ACADEMIC ZERO'
-        : 'STEP-WISE EVALUATION', {
+      safeDrawText(page, qAnn.pageReviewOnly
+        ? 'PAGE CONTENT REQUIRES EXAMINER REVIEW - NOT SCORED'
+        : qAnn.reviewRequired
+          ? 'SCORE WITHHELD - NOT AN ACADEMIC ZERO'
+          : 'STEP-WISE EVALUATION', {
         x: marginX + 6,
         y: currY - (isCompactMode ? 24 : 28),
-        size: qAnn.reviewRequired ? 5.2 : isCompactMode ? 5.8 : 6.5,
+        size: qAnn.reviewRequired ? (qAnn.pageReviewOnly ? 4.8 : 5.2) : isCompactMode ? 5.8 : 6.5,
         font: helveticaBold,
         color: qAnn.reviewRequired ? amberExaminer : darkSlate,
       });
@@ -1227,13 +1235,15 @@ export async function generateCheckedCopyPdf(
       }
 
       currY -= (isCompactMode ? 4 : 6);
-      physicallyRenderedAnnotations.push({
-        pageNumber,
-        questionNumber: qAnn.questionNumber,
-        canonicalId: qAnn.canonicalId,
-        marksAwarded: qAnn.marksAwarded,
-        maxMarks: qAnn.maxMarks,
-      });
+      if (!qAnn.pageReviewOnly) {
+        physicallyRenderedAnnotations.push({
+          pageNumber,
+          questionNumber: qAnn.questionNumber,
+          canonicalId: qAnn.canonicalId,
+          marksAwarded: qAnn.marksAwarded,
+          maxMarks: qAnn.maxMarks,
+        });
+      }
     }
 
     // (C) Official Examiner Final Verification Seal (Overlay on LAST page bottom margin)
@@ -1298,6 +1308,20 @@ export async function generateCheckedCopyPdf(
         color: grayText,
       }
     );
+
+    // Record this source page only after the original page, examiner header,
+    // all page annotations, footer and (on the final page) the seal were drawn.
+    physicallyRenderedPages.push({
+      pageNumber,
+      originalPagePresent: true,
+      headerRendered: true,
+      footerRendered: true,
+      examinerSealRendered: pageIdx === originalPageCount - 1,
+      annotationCount: pageAnnotations.length,
+      questionIds: pageAnnotations
+        .filter((annotation) => !annotation.pageReviewOnly && Boolean(annotation.canonicalId))
+        .map((annotation) => annotation.canonicalId!),
+    });
   }
 
   // 4. CRITICAL ASSERTION (Rule 72):
@@ -1315,13 +1339,60 @@ export async function generateCheckedCopyPdf(
     records: gateRecords,
     renderedAnnotations: physicallyRenderedAnnotations,
     totalPages: originalPageCount,
+    physicalPageRenders: physicallyRenderedPages,
   });
   if (!physicalPostGate.isValid) {
     rejectIncompletePhysicalRender(`Physical drawing verification failed: ${physicalPostGate.errors.join('; ')}`);
   }
-  if (runPkg) (runPkg as any).renderManifest = physicalPostGate.renderManifest;
+  if (runPkg) {
+    const renderedQuestionIds = new Set(
+      physicalPostGate.renderManifest.items
+        .filter((item) => item.rendered)
+        .map((item) => item.questionId)
+    );
+    const renderedPagesByNumber = new Map(physicallyRenderedPages.map((page) => [page.pageNumber, page]));
+    const updatedPageAudit: PageCoverageAuditItem[] = (runPkg.pageCoverageAudit || []).map((audit) => {
+      const physicalPage = renderedPagesByNumber.get(audit.pageNumber);
+      return {
+        ...audit,
+        renderedQuestionIds: physicallyRenderedAnnotations
+          .filter((annotation) => annotation.pageNumber === audit.pageNumber && annotation.canonicalId)
+          .map((annotation) => annotation.canonicalId!),
+        pageRendered: Boolean(physicalPage?.originalPagePresent && physicalPage.headerRendered && physicalPage.footerRendered),
+        renderedAnnotationCount: physicalPage?.annotationCount || 0,
+      };
+    });
+    (runPkg as any).pageCoverageAudit = updatedPageAudit;
+    (runPkg as any).studentAttemptManifest = {
+      ...runPkg.studentAttemptManifest,
+      pageCoverageAudit: updatedPageAudit,
+    };
+
+    const markRendered = (records: CanonicalEvaluationRecord[]) => {
+      for (const record of records) {
+        record.rendered = renderedQuestionIds.has(record.questionId);
+      }
+    };
+    markRendered(runPkg.evaluationRecords);
+    markRendered(runPkg.scoreLedger.records);
+    (runPkg.scoreLedger as any).totalRendered = runPkg.scoreLedger.records.filter((record) => record.rendered).length;
+    (runPkg as any).renderManifest = physicalPostGate.renderManifest;
+    (runPkg as any).reconciliation = buildFourSetReconciliation({
+      ledger: runPkg.scoreLedger,
+      manifest: runPkg.studentAttemptManifest,
+      scorecardTotal: runPkg.scoreLedger.totalAwardedMarks,
+      evaluationReportTotal: runPkg.scoreLedger.totalAwardedMarks,
+      checkedCopyTotal: runPkg.scoreLedger.totalAwardedMarks,
+      finalDisplayedTotal: runPkg.scoreLedger.totalAwardedMarks,
+    });
+  }
 
   const pdfBytes = await pdfDoc.save();
+  // Verify the serialized artifact itself, not only the in-memory document.
+  const serializedPdf = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  if (serializedPdf.getPageCount() !== originalPageCount) {
+    throw new Error(`CHECKED_COPY_SERIALIZED_PAGE_COUNT_MISMATCH: expected ${originalPageCount}, got ${serializedPdf.getPageCount()}.`);
+  }
   return Buffer.from(pdfBytes);
 }
 
