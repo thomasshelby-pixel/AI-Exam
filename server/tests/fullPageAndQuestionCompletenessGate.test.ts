@@ -154,6 +154,6 @@ const duplicatePhysicalPage = validatePostRenderGate({
   physicalPageRenders: [...physicalPages, physicalPages[1]],
 });
 assert.equal(duplicatePhysicalPage.isValid, false);
-assert.match(duplicatePhysicalPage.errors.join(' '), /Page 2 was rendered more than once/);
+assert.match(duplicatePhysicalPage.errors.join(' '), /Original page 2 was rendered more than once/);
 
 console.log('✅ Full page and question disposition completeness gates passed.');
