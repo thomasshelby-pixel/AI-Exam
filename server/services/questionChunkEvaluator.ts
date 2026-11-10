@@ -149,10 +149,10 @@ export function assessQuestionReferenceTopicAlignment(
     return { aligned: true, sharedTopicTerms: [] };
   }
 
-  const compare = (snippet: string) => {
+  const compare = (snippet: string, minimumReferenceTerms = 5) => {
     const referenceTerms = terms(snippet);
-    if (referenceTerms.size < 5) {
-      return { sufficientlySpecific: false, shared: [] as string[] };
+    if (referenceTerms.size < minimumReferenceTerms) {
+      return { sufficientlySpecific: false, aligned: true, shared: [] as string[] };
     }
     const shared = [...questionTerms].filter((word) => referenceTerms.has(word));
     const minimumShared = Math.max(2, Math.ceil(Math.min(questionTerms.size, referenceTerms.size) * 0.12));
@@ -173,7 +173,10 @@ export function assessQuestionReferenceTopicAlignment(
     };
   }
 
-  const markingScheme = compare(markingSchemeSnippet);
+  // Derived Marking Scheme anchors are often short excerpts. Three distinctive
+  // terms are enough to detect a sibling-question anchor when the QP/SA pair
+  // is already verified, while generic two-word boilerplate remains inconclusive.
+  const markingScheme = compare(markingSchemeSnippet, 3);
   if (markingScheme.sufficientlySpecific && !markingScheme.aligned) {
     return {
       aligned: true,
