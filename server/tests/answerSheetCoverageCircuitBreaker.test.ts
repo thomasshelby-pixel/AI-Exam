@@ -144,7 +144,7 @@ async function run() {
     'The combined parent reference must retain both Roman child answer anchors.');
   assert.match(nestedDescriptivePrompt, /ROMAN-CHILD NORMALIZATION/);
   assert.match(nestedDescriptivePrompt, /one detectedQuestions object per visible block/i);
-  assert.match(nestedDescriptivePrompt, /Each visible attempted block must appear exactly once/i);
+  assert.match(nestedDescriptivePrompt, /Each visible attempted block must appear exactly\s+once/i);
 
   const nestedMcqStructure: any = [
     { fullQuestionCode: 'MCQ1', questionNumber: '1', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 1(i)' },
