@@ -139,6 +139,23 @@ assert.equal(
   'A Marking Scheme leaf allocation can fill a maximum omitted by the QP.',
 );
 
+// Standalone totals written in parentheses without a dash are also explicit.
+const parenthesizedTotalConflict = structureFor('MTP', {
+  questionPaperText: [
+    'Question Paper',
+    'Question 5(a) - 5 Marks',
+    'Prepare the statement.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Marking Scheme',
+    'Question 5(a) (3 Marks)',
+  ].join('\n'),
+});
+assert.ok(
+  parenthesizedTotalConflict.markAllocationConflicts?.some((message) => message.includes('Q5(a)')),
+  'A parenthesized standalone total is compared with the QP allocation.',
+);
+
 // A QP sub-part with no total allocation must not be assigned the first
 // component award found in an explanatory Marking Scheme paragraph.
 const explanationOnlyMarkingScheme = [
