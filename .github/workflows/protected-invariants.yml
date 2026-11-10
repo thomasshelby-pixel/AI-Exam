@@ -226,6 +226,9 @@ jobs:
       - name: Model Test source identity and inventory regression
         run: node_modules/.bin/tsx server/tests/modelTestPaperStructure.test.ts
 
+      - name: Prose question-label and fabricated maximum rejection regression
+        run: node_modules/.bin/tsx server/tests/proseQuestionLabelSafety.test.ts
+
       - name: PYQ / MTP source-backed question maximum and conflict regression
         run: node_modules/.bin/tsx server/tests/sourceMarkAllocationAudit.test.ts
 
