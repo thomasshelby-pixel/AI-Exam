@@ -168,10 +168,7 @@ export function parseAndValidateQuestionChunkOutput(
   }
   raw.status = normalizedStatus;
 
-  if (typeof raw.marksAwarded !== 'number' || !Number.isFinite(raw.marksAwarded) ||
-      raw.marksAwarded < 0 || raw.marksAwarded > maxMarks + 0.05) {
-    throw new Error('QUESTION_CHUNK_INVALID_TOTAL: awarded marks are missing or outside the authoritative range.');
-  }
+  const modelReportedQuestionTotal = raw.marksAwarded;
 
   const components = raw.markingComponents;
   if (!Array.isArray(components) || components.length === 0) {
@@ -204,14 +201,6 @@ export function parseAndValidateQuestionChunkOutput(
     }
     component.componentType = componentType;
 
-    const assessment = typeof component.assessment === 'string'
-      ? component.assessment.trim().toUpperCase()
-      : '';
-    if (!allowedAssessments.has(assessment)) {
-      throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has an unsupported assessment.`);
-    }
-    component.assessment = assessment;
-
     if (typeof component.expectedRequirement !== 'string' || !component.expectedRequirement.trim()) {
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing the authoritative requirement.`);
     }
@@ -219,10 +208,9 @@ export function parseAndValidateQuestionChunkOutput(
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} is missing candidate evidence or an explicit omission statement.`);
     }
 
-    // marksDeducted is a redundant display field. The two score-bearing inputs
-    // are the authoritative component allocation and the model's awarded marks.
-    // Deriving the deduction avoids rejecting an otherwise valid question when
-    // a model emits a stale or arithmetically inconsistent duplicate field.
+    // marksDeducted and assessment are redundant labels. The allocation and
+    // awarded marks remain the scoring source; derive these labels so a casing
+    // or stale duplicate field cannot reject an otherwise valid answer.
     const available = component.marksAvailable;
     const awarded = component.marksAwarded;
     if (
@@ -234,6 +222,17 @@ export function parseAndValidateQuestionChunkOutput(
     if (available < 0 || awarded < 0 || awarded > available + 0.01) {
       throw new Error(`QUESTION_CHUNK_INVALID_COMPONENT: ${prefix} has marks outside its component limit.`);
     }
+
+    const reportedAssessment = typeof component.assessment === 'string'
+      ? component.assessment.trim().toUpperCase()
+      : '';
+    component.assessment = reportedAssessment === 'OMITTED' && awarded <= 0
+      ? 'OMITTED'
+      : available > 0 && awarded >= available - 0.01
+        ? 'CORRECT'
+        : awarded > 0.01
+          ? 'PARTIALLY_CORRECT'
+          : 'INCORRECT';
 
     component.marksDeducted = Math.round(Math.max(0, available - awarded) * 100) / 100;
     availableTotal += available;
@@ -249,10 +248,16 @@ export function parseAndValidateQuestionChunkOutput(
   // individually valid. Reconcile to the components instead of discarding the
   // entire answer and burning the configured model fallback chain.
   const reconciledAwarded = Math.round(awardedTotal * 4) / 4;
-  if (Math.abs(awardedTotal - raw.marksAwarded) > 0.26) {
-    raw.modelReportedMarksAwarded = raw.marksAwarded;
+  if (
+    typeof modelReportedQuestionTotal !== 'number' ||
+    !Number.isFinite(modelReportedQuestionTotal) ||
+    modelReportedQuestionTotal < 0 ||
+    modelReportedQuestionTotal > maxMarks + 0.05 ||
+    Math.abs(awardedTotal - modelReportedQuestionTotal) > 0.26
+  ) {
+    raw.modelReportedMarksAwarded = modelReportedQuestionTotal ?? null;
     raw.scoreReconciliationNote =
-      `Question total reconciled from ${raw.marksAwarded} to ${reconciledAwarded} using the validated component awards.`;
+      `Question total reconciled from ${String(modelReportedQuestionTotal ?? 'missing')} to ${reconciledAwarded} using the validated component awards.`;
   }
   raw.marksAwarded = Math.min(maxMarks, reconciledAwarded);
   raw.markingComponents = components;
