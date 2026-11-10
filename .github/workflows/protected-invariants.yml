@@ -53,6 +53,12 @@ jobs:
           node_modules/.bin/tsx server/tests/pyqAuthoritativeStructureReferenceFallback.test.ts
           node_modules/.bin/tsx server/tests/studentFacingReviewReason.test.ts
 
+      - name: Supervisor correction and authoritative-structure fallback regression
+        run: node_modules/.bin/tsx server/tests/evaluationSupervisor.test.ts
+
+      - name: Faculty Mock exact-copy review retry entitlement regression
+        run: node_modules/.bin/tsx server/tests/facultyMockEvaluation.test.ts
+
       - name: Evaluation supervisor training-pipeline regression
         run: |
           python3 -m py_compile research/ca-evaluation-supervisor-ai/generate_supervisor_dataset.py research/ca-evaluation-supervisor-ai/train_supervisor_lora.py research/ca-evaluation-supervisor-ai/training_tokenization_utils.py research/ca-evaluation-supervisor-ai/evaluate_supervisor.py research/ca-evaluation-supervisor-ai/prepare_evaluated_copies.py

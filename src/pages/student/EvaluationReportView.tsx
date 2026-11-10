@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { EvaluationResult, QuestionEvaluation } from '../../types/index.js';
 import {
   FileCheck2,
@@ -46,6 +47,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   onBack,
   onRefresh,
 }) => {
+  const navigate = useNavigate();
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [downloadingType, setDownloadingType] = useState<string | null>(null);
@@ -454,11 +456,11 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     Administrative Review in Progress
                   </span>
                   <span className="text-[11px] text-amber-800 dark:text-amber-300 font-semibold">
-                    Academic Score Recorded
+                    Provisional Result Preserved
                   </span>
                 </div>
                 <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                  Your academic score of {activeMarks} / {officialMax} marks is recorded. Automated integrity checks are finalizing certified copy generation.
+                  Your current provisional score is {activeMarks} / {officialMax} marks. It is preserved, but it is not your final result until the review is complete.
                 </p>
                 <p className="text-[11px] text-amber-700 dark:text-amber-300/90 leading-relaxed">
                   {(evaluationResult as any).reviewReason || 'You can refresh or check the official certification status below.'}
@@ -466,11 +468,21 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
               </div>
             </div>
 
-            <button
-              onClick={() => handleRunConsistencyVerification(false)}
-              disabled={isVerifyingConsistency}
-              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 cursor-pointer shrink-0 transition"
-            >
+            <div className="flex shrink-0 flex-col gap-2">
+              {(evaluationResult as any).facultyMockReviewRetryAvailable === true && (
+                  <button
+                    onClick={() => navigate(`/student/faculty-mock-evaluation?retryOfEvaluationId=${encodeURIComponent(evaluationResult.evaluationId)}`)}
+                    className="px-4 py-2.5 bg-sky-700 hover:bg-sky-800 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 cursor-pointer transition"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Re-evaluate same copy — free once
+                  </button>
+                )}
+              <button
+                onClick={() => handleRunConsistencyVerification(false)}
+                disabled={isVerifyingConsistency}
+                className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 cursor-pointer shrink-0 transition"
+              >
               {isVerifyingConsistency ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -482,8 +494,12 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                   <span>Check Certification</span>
                 </>
               )}
-            </button>
+              </button>
+            </div>
           </div>
+          <p className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+            You will receive your reviewed result within 24–48 working hours. We will notify you when the review is complete.
+          </p>
         </div>
       )}
 

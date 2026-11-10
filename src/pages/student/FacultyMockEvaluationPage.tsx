@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.js';
 import { apiRequest, downloadAuthenticatedFile } from '../../api/client.js';
 import { DisclaimerModal } from '../../components/student/DisclaimerModal.js';
@@ -41,6 +41,8 @@ function normaliseCourse(value: unknown): CALevel | null {
 export const FacultyMockEvaluationPage: React.FC = () => {
   const { user, profile, refreshUser } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const reviewRetryQueryId = searchParams.get('retryOfEvaluationId');
   const activeEvaluationStorageKey = user?.id ? `faculty_mock_active_eval_${user.id}` : null;
   const activeEvaluationStartStorageKey = user?.id ? `faculty_mock_active_eval_started_${user.id}` : null;
   const [faculties, setFaculties] = useState<Faculty[]>([]);
@@ -67,6 +69,9 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   const [evaluationProgressMessage, setEvaluationProgressMessage] = useState('Your answer sheet is securely registered for checking.');
   const [evaluationStartedAt, setEvaluationStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [retryOfEvaluationId, setRetryOfEvaluationId] = useState<string | null>(null);
+  const [loadingReviewRetry, setLoadingReviewRetry] = useState(false);
+  const reviewRetryRestoreStarted = useRef<string | null>(null);
 
   const courseLevel = normaliseCourse((profile as any)?.ca_level ?? (profile as any)?.caLevel);
   const selectedFaculty = faculties.find((item) => item.id === facultyId);
@@ -199,7 +204,8 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     if (!subjectTests.some((item) => item.id === testId)) setTestId(subjectTests[0]?.id || '');
   }, [subjectKey, subjectTests]);
 
-  const selectAnswerFile = async (file?: File) => {
+  const selectAnswerFile = async (file?: File, preserveReviewRetry = false) => {
+    if (!preserveReviewRetry) setRetryOfEvaluationId(null);
     setError('');
     setSuccess('');
     setAnswerFile(null);
@@ -232,6 +238,93 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       setLoadingFile(false);
     }
   };
+
+  // Restore the exact original answer sheet from a Faculty Mock NEEDS_REVIEW
+  // report. The server independently checks ownership, mock identity and SHA-256.
+  useEffect(() => {
+    const previousEvaluationId = reviewRetryQueryId;
+    if (!previousEvaluationId || !user?.id || tests.length === 0) return;
+    if (reviewRetryRestoreStarted.current === previousEvaluationId) return;
+    reviewRetryRestoreStarted.current = previousEvaluationId;
+    let active = true;
+
+    const restoreOriginalCopy = async () => {
+      setLoadingReviewRetry(true);
+      setError('');
+      try {
+        const detail = await apiRequest<{ evaluation: {
+          id: string;
+          status?: string;
+          evaluation_source?: string;
+          material_type?: string;
+          faculty_mock_test_id?: string;
+          faculty_mock_review_retry_evaluation_id?: string | null;
+          original_filename?: string;
+        } }>(`/api/student/evaluations/${encodeURIComponent(previousEvaluationId)}`);
+        const evaluation = detail.evaluation;
+        if (
+          String(evaluation?.status || '').toUpperCase() !== 'NEEDS_REVIEW' ||
+          String(evaluation?.evaluation_source || '').toUpperCase() !== 'FACULTY_MOCK' ||
+          String(evaluation?.material_type || '').toUpperCase() !== 'FACULTY_MOCK_TEST' ||
+          !evaluation?.faculty_mock_test_id
+        ) {
+          throw new Error('This evaluation is not an eligible Faculty Mock review retry.');
+        }
+        if (String(evaluation.faculty_mock_review_retry_evaluation_id || '').trim()) {
+          throw new Error('The one-time free review retry for this answer sheet has already been used.');
+        }
+        const mock = tests.find((item) => item.id === evaluation.faculty_mock_test_id);
+        if (!mock) {
+          throw new Error('The original faculty mock is no longer available. Contact support to arrange the review retry.');
+        }
+        if (!active) return;
+
+        setFacultyId(mock.faculty_id);
+        setAttempt(mock.attempt);
+        setSubjectKey(mock.subject_key);
+        setTestId(mock.id);
+
+        const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
+        const originalResponse = await fetch(
+          `/api/student/evaluations/${encodeURIComponent(previousEvaluationId)}/download-original`,
+          {
+            credentials: 'include',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          }
+        );
+        if (!originalResponse.ok) {
+          const errorBody = await originalResponse.json().catch(() => ({}));
+          throw new Error(errorBody.error || 'The original submitted answer sheet could not be restored.');
+        }
+        const blob = await originalResponse.blob();
+        const originalFile = new File(
+          [blob],
+          evaluation.original_filename || `Faculty_Mock_Review_Retry_${mock.mock_number}.pdf`,
+          { type: 'application/pdf' }
+        );
+        if (!active) return;
+        await selectAnswerFile(originalFile, true);
+        if (!active) return;
+        setRetryOfEvaluationId(previousEvaluationId);
+        setSuccess('The exact original answer sheet is restored. This one-time review retry will not use another paid mock copy or general evaluation credit.');
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          next.delete('retryOfEvaluationId');
+          return next;
+        }, { replace: true });
+      } catch (restoreError) {
+        if (active) {
+          setRetryOfEvaluationId(null);
+          setError(restoreError instanceof Error ? restoreError.message : 'The original Faculty Mock answer sheet could not be restored.');
+        }
+      } finally {
+        if (active) setLoadingReviewRetry(false);
+      }
+    };
+
+    void restoreOriginalCopy();
+    return () => { active = false; };
+  }, [reviewRetryQueryId, tests, user?.id]);
 
   const startMockCopyPayment = async (
     onPaymentVerified: (orderId: string) => Promise<void>,
@@ -374,6 +467,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
           evaluationSource: 'FACULTY_MOCK',
           facultyMockTestId: selectedTest.id,
           ...(facultyMockPaymentOrderId ? { facultyMockPaymentOrderId } : {}),
+          ...(retryOfEvaluationId ? { retryOfEvaluationId } : {}),
         }),
       });
       const acceptedEvaluationId = response.evaluationId || evaluationId;
@@ -603,6 +697,17 @@ export const FacultyMockEvaluationPage: React.FC = () => {
 
           {selectedTest && (
             <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+              {retryOfEvaluationId && (
+                <div className="mb-4 rounded-xl border border-sky-300 bg-sky-50 p-3 text-xs leading-relaxed text-sky-950 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100">
+                  <strong className="block">One-time Faculty Mock review retry</strong>
+                  The exact original answer sheet has been restored. Submit it again for a second evaluation; no additional mock payment or general evaluation credit will be used. The server checks the original file fingerprint before accepting the retry.
+                </div>
+              )}
+              {loadingReviewRetry && (
+                <p className="mb-4 rounded-lg bg-slate-100 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  Restoring the original answer sheet from your review record…
+                </p>
+              )}
               <h2 className="text-sm font-bold">Upload handwritten answer sheet</h2>
               <p className="mt-1 text-xs leading-relaxed text-slate-500">Write the selected paper by hand, scan all pages into one PDF (or upload JPG/PNG pages), then submit. The AI checker will use this exact mock's Suggested Answer and marking reference.</p>
               <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
@@ -645,7 +750,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                     </span>
                     <span className="mt-3 max-w-full break-all text-sm font-bold text-slate-100">{answerFile?.name || 'Choose your scanned answer sheet'}</span>
                     <span className="mt-1 text-[10px] text-slate-400">{answerFile ? (answerFile.size / 1024 / 1024).toFixed(2) + ' MB selected' : 'PDF, JPG or PNG · all pages in one PDF is recommended'}</span>
-                    <input className="hidden" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" disabled={submitting || !!activeEvaluationId} onChange={(e) => { void selectAnswerFile(e.target.files?.[0]); e.currentTarget.value = ''; }} />
+                    <input className="hidden" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" disabled={submitting || loadingReviewRetry || !!activeEvaluationId} onChange={(e) => { void selectAnswerFile(e.target.files?.[0]); e.currentTarget.value = ''; }} />
                   </label>
                   {loadingFile && <p className="mt-2 text-xs text-indigo-300">Reading and preparing your answer sheet…</p>}
                   {answerFile && !loadingFile && !activeEvaluationId && (
@@ -659,9 +764,9 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                   <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                   <span>{permanentFreeAccess ? 'Permanent free access is active. Every evaluation and Faculty Mock copy is free for this account; no evaluation credits or paid unlocks will be used.' : String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? `This mock requires ₹${selectedTest.unlock_price_inr || 35} per evaluation. Payment unlocks one copy and does not use general evaluation credits.` : `First copy is free for each student. Further copies cost ₹${selectedTest.unlock_price_inr || 35} each and do not use general evaluation credits.`}</span>
                 </div>
-                <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer || !!activeEvaluationId} onClick={() => void handleSubmitClick()} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-500 px-5 py-3 text-xs font-black text-white shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer || loadingReviewRetry || !!activeEvaluationId} onClick={() => void handleSubmitClick()} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-500 px-5 py-3 text-xs font-black text-white shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
                   {submitting || checkingDisclaimer ? <RefreshCw className="h-4 w-4 animate-spin" /> : activeEvaluationId ? <CheckCircle2 className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
-                  {activeEvaluationId ? 'Evaluation in progress' : submitting ? 'Submitting answer sheet…' : checkingDisclaimer ? 'Checking disclaimer…' : !permanentFreeAccess && selectedTest.access_type === 'PAID' ? `Unlock ₹${selectedTest.unlock_price_inr || 35} & Submit` : 'Submit for AI Evaluation'}
+                  {activeEvaluationId ? 'Evaluation in progress' : submitting ? 'Submitting answer sheet…' : checkingDisclaimer ? 'Checking disclaimer…' : retryOfEvaluationId ? 'Submit free review retry' : !permanentFreeAccess && selectedTest.access_type === 'PAID' ? `Unlock ₹${selectedTest.unlock_price_inr || 35} & Submit` : 'Submit for AI Evaluation'}
                 </button>
               </div>
 

@@ -25,6 +25,7 @@ import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js
 import { isEvaluationValidationSafeForCertification } from './evaluationIntegrityHardening.js';
 import { finalizeEvaluationRun } from './canonicalQuestionInventoryService.js';
 import { validateQuestionDeduplication, deduplicateQuestionList } from './canonicalQuestionService.js';
+import type { QuestionReferenceLockMetadata, ReferenceSourceType } from './questionReferenceLock.js';
 import { getAuthoritativePaperStructure } from './paperStructureService.js';
 import { getMaxModelTestNumberForLevel } from './modelTestLimits.js';
 import { resolveMaterialComponentSourceIds, resolveFacultyMockComponentSourceIds } from './materialComponentSourceIds.js';
@@ -84,9 +85,10 @@ export interface EvaluationJobData {
   originalFileStorageConfirmed?: boolean;
 }
 
-// Keep the supervisor correction loop opt-in until its model/pipeline is validated.
-// This prevents extra model calls on the normal evaluation path by default.
-const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED === 'true';
+// Run a bounded supervisor pass by default. Clean papers incur no extra model calls;
+// only repairable question-level issues use at most four targeted correction calls.
+// Operators can explicitly disable the second pass with EVALUATION_SUPERVISOR_ENABLED=false.
+const ENABLE_EVALUATION_SUPERVISOR = process.env.EVALUATION_SUPERVISOR_ENABLED !== 'false';
 
 // In-memory active job tracker to prevent duplicate concurrent runs for the same evaluationId.
 const activeJobs = new Map<string, Promise<void>>();
@@ -1050,11 +1052,31 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       evaluationResult.coverageMap.attemptedQuestions = deduplicateQuestionList(evaluationResult.coverageMap.attemptedQuestions, paperStruct.subQuestions);
     }
 
-    // Stage 4B is opt-in while the supervisor correction pipeline is being validated.
-    // Main CA evaluation, deterministic integrity checks, PDF extraction, and report
-    // generation remain active when the flag is unset (the production-safe default).
+    // Run the bounded second-pass supervisor after the first complete evaluation.
+    // Clean results incur no extra model calls; only repairable question-level issues
+    // receive up to four targeted re-evaluations before unresolved cases stay in review.
     if (ENABLE_EVALUATION_SUPERVISOR) {
       const { runEvaluationSupervisor } = await import('./evaluationSupervisorService.js');
+      const supervisorReferenceSourceType: ReferenceSourceType =
+        job.materialType === 'FACULTY_MOCK_TEST' || job.requestedEvalSource === 'FACULTY_MOCK'
+          ? 'FACULTY_MOCK'
+          : job.materialType === 'MODEL_TEST_PAPER'
+            ? 'MODEL_TEST'
+            : job.requestedEvalSource === 'INSTITUTE'
+              ? 'INSTITUTE'
+              : 'GLOBAL';
+      const supervisorReferenceMetadata: QuestionReferenceLockMetadata = {
+        qpMaterialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        saMaterialId: job.suggestedAnswerMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        msMaterialId: job.markingSchemeMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        materialVersions: job.referenceMaterialVersion || '1.0',
+        sourceType: supervisorReferenceSourceType,
+        materialType: job.materialType,
+        mtpSeries: job.materialType === 'MTP' ? job.mtpSeries : undefined,
+        modelTestNumber: job.materialType === 'MODEL_TEST_PAPER' ? job.modelTestNumber : undefined,
+        facultyMockTestId: job.facultyMockTestId,
+        materialTitle: job.referenceMaterialTitle,
+      };
       evaluationResult = await runEvaluationSupervisor({
         evaluationResult,
         pdfBuffer: job.pdfBuf,
@@ -1069,6 +1091,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         paper: job.paper,
         subjectKey: job.subjectKey,
         materialId: job.questionMaterialId || job.combinedSourceMaterialId || job.referenceMaterialId,
+        referenceMetadata: supervisorReferenceMetadata,
         coverageMap: evaluationResult.coverageMap || null,
       });
     }

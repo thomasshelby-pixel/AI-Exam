@@ -44,11 +44,15 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 import {
   claimFacultyMockFreeCopy,
+  claimFacultyMockReviewRetry,
   consumeFacultyMockPaidCopy,
   findAvailableFacultyMockPaidCopy,
   getFacultyMockFreeCopyClaim,
+  isEligibleFacultyMockReviewRetry,
+  isExactFacultyMockReviewRetryCopy,
   releaseFacultyMockFreeCopy,
   releaseFacultyMockPaidCopy,
+  releaseFacultyMockReviewRetry,
 } from '../services/facultyMockEntitlementService.js';
 import { checkStudentEvaluationCourseAccess } from '../services/studentCourseAccessService.js';
 import { normalizeEvaluationRejectionStatus } from '../services/evaluationStatusService.js';
@@ -1133,6 +1137,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       : `eval_${crypto.randomBytes(8).toString('hex')}`;
   let facultyMockFreeCopyClaimed = false;
   let facultyMockPaidCopyOrderId: string | null = null;
+  let facultyMockReviewRetryClaimed = false;
+  let facultyMockReviewRetryPrevious: any | null = null;
+  let facultyMockReviewRetryOfEvaluationId: string | null = null;
   let creditAlreadyConsumed = false;
   let asyncEvaluationAccepted = false;
   let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' =
@@ -1158,6 +1165,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       instituteMaterialId,
       facultyMockTestId,
       facultyMockPaymentOrderId,
+      retryOfEvaluationId,
     } = req.body;
     const requestedCheckingMode = String(checkingMode || 'standard').trim().toLowerCase();
     const selectedCheckingMode: CheckingMode =
@@ -1342,7 +1350,34 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
         return res.status(403).json({ error: 'This faculty mock does not match your registered CA course.', code: 'FACULTY_MOCK_COURSE_MISMATCH' });
       }
 
-      if (!isPermanentFreeStudent) {
+      const requestedReviewRetryId = String(retryOfEvaluationId || '').trim();
+      if (requestedReviewRetryId) {
+        const previousEvaluation = db.prepare(`
+          SELECT id, student_id, status, evaluation_source, material_type, faculty_mock_test_id,
+                 answer_sheet_sha256, retry_of_evaluation_id, faculty_mock_review_retry_evaluation_id
+          FROM evaluations
+          WHERE id = ? AND student_id = ?
+          LIMIT 1
+        `).get(requestedReviewRetryId, studentId) as any;
+        const validPreviousReview = isEligibleFacultyMockReviewRetry(
+          previousEvaluation,
+          studentId,
+          selectedTestId,
+        );
+        if (!validPreviousReview) {
+          return res.status(409).json({
+            error: 'A free re-evaluation is available only for your own Faculty Mock copy that is currently marked NEEDS_REVIEW.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_NOT_ELIGIBLE',
+          });
+        }
+
+        facultyMockReviewRetryPrevious = previousEvaluation;
+        facultyMockReviewRetryOfEvaluationId = requestedReviewRetryId;
+      }
+
+      // A valid review retry is exempt from ordinary FREE/PAID copy purchase
+      // checks; the exact answer-sheet hash is verified before any copy is claimed.
+      if (!isPermanentFreeStudent && !facultyMockReviewRetryPrevious) {
         const mockAccessType = String(facultyMockRecord.access_type || 'FREE').trim().toUpperCase() === 'PAID'
           ? 'PAID'
           : 'FREE';
@@ -1660,6 +1695,15 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       }
 
       answerSheetSha256 = crypto.createHash('sha256').update(pdfBuf).digest('hex');
+      if (
+        facultyMockReviewRetryPrevious &&
+        !isExactFacultyMockReviewRetryCopy(facultyMockReviewRetryPrevious.answer_sheet_sha256, answerSheetSha256)
+      ) {
+        return res.status(409).json({
+          error: 'The uploaded file is not byte-for-byte the same answer sheet as the original Faculty Mock submission. Upload the original copy from the review page to use the free retry.',
+          code: 'FACULTY_MOCK_REVIEW_RETRY_COPY_MISMATCH',
+        });
+      }
       const originalFilePath = path.join(uploadsDir, `${evaluationId}_original.pdf`);
       fs.writeFileSync(originalFilePath, pdfBuf);
 
@@ -1745,6 +1789,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       filename || 'ca_answer_sheet.pdf',
       entitlementSource
     );
+
+    if (facultyMockReviewRetryOfEvaluationId) {
+      db.prepare('UPDATE evaluations SET retry_of_evaluation_id = ? WHERE id = ?')
+        .run(facultyMockReviewRetryOfEvaluationId, evaluationId);
+    }
 
     // Persist the normalized answer-sheet fingerprint for future cross-account duplicate checks.
     if (answerSheetSha256) {
@@ -1832,8 +1881,53 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // FREE mocks grant one first copy per student + exact mock; PAID mocks
     // require a captured one-copy purchase for every evaluation. Accounts with
     // a permanent-free entitlement bypass both copy-payment paths entirely.
-    if (isFacultyMockMode && !isPermanentFreeStudent) {
+    if (isFacultyMockMode && (!isPermanentFreeStudent || facultyMockReviewRetryPrevious)) {
       const selectedMockId = String(facultyMockRecord?.id || '').trim();
+      if (facultyMockReviewRetryPrevious && facultyMockReviewRetryOfEvaluationId) {
+        const claimed = await claimFacultyMockReviewRetry(
+          studentId,
+          selectedMockId,
+          facultyMockReviewRetryOfEvaluationId,
+          evaluationId,
+        );
+        if (!claimed) {
+          db.prepare(`
+            UPDATE evaluations
+            SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'PROCESSING'
+          `).run('The one-time Faculty Mock review retry was already claimed by another submission.', evaluationId);
+          return res.status(409).json({
+            error: 'The one-time free review retry for this Faculty Mock answer sheet has already been used.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_ALREADY_USED',
+          });
+        }
+        facultyMockReviewRetryClaimed = true;
+        const linked = db.prepare(`
+          UPDATE evaluations
+          SET faculty_mock_review_retry_evaluation_id = ?
+          WHERE id = ? AND (faculty_mock_review_retry_evaluation_id IS NULL OR faculty_mock_review_retry_evaluation_id = ?)
+        `).run(evaluationId, facultyMockReviewRetryOfEvaluationId, evaluationId);
+        if (Number(linked.changes) !== 1) {
+          await releaseFacultyMockReviewRetry(studentId, selectedMockId, facultyMockReviewRetryOfEvaluationId, evaluationId);
+          facultyMockReviewRetryClaimed = false;
+          db.prepare(`
+            UPDATE evaluations
+            SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'PROCESSING'
+          `).run('Could not link the Faculty Mock review retry to its original evaluation.', evaluationId);
+          return res.status(409).json({
+            error: 'This Faculty Mock review retry was already used or could not be reserved. No second paid copy was consumed.',
+            code: 'FACULTY_MOCK_REVIEW_RETRY_ALREADY_USED',
+          });
+        }
+        db.prepare('UPDATE evaluations SET retry_of_evaluation_id = ? WHERE id = ?')
+          .run(facultyMockReviewRetryOfEvaluationId, evaluationId);
+        const linkedPreviousEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?')
+          .get(facultyMockReviewRetryOfEvaluationId) as any;
+        if (linkedPreviousEvaluation) {
+          await syncRecordToFirestore('evaluations', facultyMockReviewRetryOfEvaluationId, linkedPreviousEvaluation);
+        }
+      } else {
       const mockAccessType = String(facultyMockRecord?.access_type || 'FREE').trim().toUpperCase() === 'PAID'
         ? 'PAID'
         : 'FREE';
@@ -1913,6 +2007,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           ON CONFLICT(order_id) DO UPDATE SET status = 'CONSUMED', evaluation_id = excluded.evaluation_id,
             consumed_at = CURRENT_TIMESTAMP
         `).run(paidOrderId, studentId, selectedMockId, evaluationId);
+      }
       }
     }
 
@@ -2012,7 +2107,9 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       status: 'PROCESSING',
       progressStage: 'QUEUED',
       progressPercentage: 5,
-      message: 'Answer sheet received and evaluation started in background.',
+      message: facultyMockReviewRetryOfEvaluationId
+        ? 'Your exact same Faculty Mock answer sheet has been accepted for its one-time free review retry.'
+        : 'Answer sheet received and evaluation started in background.',
     });
   } catch (error: unknown) {
     console.error('Answer sheet evaluation error:', error);
@@ -2052,6 +2149,23 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
           .run(studentId, String(req.body?.facultyMockTestId || ''), evaluationId);
       } catch (releaseError) {
         console.warn('[FacultyMocks] Could not release an unaccepted free-copy claim:', releaseError);
+      }
+    }
+    if (facultyMockReviewRetryClaimed && facultyMockReviewRetryOfEvaluationId) {
+      try {
+        await releaseFacultyMockReviewRetry(
+          studentId,
+          String(req.body?.facultyMockTestId || ''),
+          facultyMockReviewRetryOfEvaluationId,
+          evaluationId,
+        );
+        db.prepare(`
+          UPDATE evaluations
+          SET faculty_mock_review_retry_evaluation_id = NULL
+          WHERE id = ? AND faculty_mock_review_retry_evaluation_id = ?
+        `).run(facultyMockReviewRetryOfEvaluationId, evaluationId);
+      } catch (releaseError) {
+        console.warn('[FacultyMocks] Could not release an unaccepted review-retry reservation:', releaseError);
       }
     }
     if (facultyMockPaidCopyOrderId) {
@@ -2331,6 +2445,17 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
           resultJson.version = auditMeta.currentVersion || (resultJson as any).version || 'v1';
           resultJson.recheckHistory = auditMeta.recheckHistory || [];
           resultJson.originalEvaluationSnapshot = auditMeta.originalEvaluationSnapshot || null;
+          (resultJson as any).facultyMockTestId = record.faculty_mock_test_id || null;
+          (resultJson as any).facultyMockReviewRetryEvaluationId = record.faculty_mock_review_retry_evaluation_id || null;
+          (resultJson as any).retryOfEvaluationId = record.retry_of_evaluation_id || null;
+          (resultJson as any).facultyMockReviewRetryAvailable =
+            String(record.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
+            String(record.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK' &&
+            String(record.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
+            Boolean(String(record.faculty_mock_test_id || '').trim()) &&
+            /^[a-f0-9]{64}$/i.test(String(record.answer_sheet_sha256 || '').trim()) &&
+            !String(record.retry_of_evaluation_id || '').trim() &&
+            !String(record.faculty_mock_review_retry_evaluation_id || '').trim();
 
           // Single Source of Truth: inject authoritative EvaluationRunPackage if available
           const realEvaluationId = record.id;
@@ -3077,23 +3202,36 @@ router.get(
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
     const originalFilePath = path.join(uploadsDir, `${realEvaluationId}_original.pdf`);
+    const isFacultyMockOriginal = String(record.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK';
+    const expectedAnswerSheetHash = String(record.answer_sheet_sha256 || '').trim().toLowerCase();
+    const hasExactOriginalHash = (buffer: Buffer): boolean => {
+      if (!isFacultyMockOriginal) return true;
+      if (!/^[a-f0-9]{64}$/.test(expectedAnswerSheetHash)) return false;
+      const actualHash = crypto.createHash('sha256').update(buffer).digest('hex');
+      return actualHash === expectedAnswerSheetHash;
+    };
 
     if (fs.existsSync(originalFilePath)) {
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
-      return res.sendFile(originalFilePath);
+      const localOriginal = fs.readFileSync(originalFilePath);
+      if (hasExactOriginalHash(localOriginal)) {
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
+        return res.send(localOriginal);
+      }
+      console.warn(`[FacultyMocks] Local original file hash mismatch for evaluation ${realEvaluationId}; trying persistent storage.`);
     }
 
     // Check persistent cloud storage
     const persistentOriginal = await getPersistentFile(`${realEvaluationId}_original`, `${realEvaluationId}_original.pdf`);
-    if (persistentOriginal && persistentOriginal.buffer) {
+    if (persistentOriginal && persistentOriginal.buffer && hasExactOriginalHash(persistentOriginal.buffer)) {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${record.original_filename || `Original_${record.display_id || realEvaluationId}.pdf`}"`);
       return res.send(persistentOriginal.buffer);
     }
 
-    // Check if alternate image file format exists
-    const possibleExts = ['.png', '.jpg', '.jpeg'];
+    // Check alternate image files only for non-Faculty-Mock historical downloads.
+    // Faculty Mock retry is pinned to the normalized PDF whose hash was recorded.
+    const possibleExts = isFacultyMockOriginal ? [] : ['.png', '.jpg', '.jpeg'];
     for (const ext of possibleExts) {
       const imgPath = path.join(uploadsDir, `${evaluationId}_original${ext}`);
       if (fs.existsSync(imgPath)) {
@@ -3103,8 +3241,19 @@ router.get(
       }
     }
 
-    // Graceful fallback: If original file was not on disk (e.g. server restart or test evaluations),
-    // dynamically generate an authentic ICAI candidate submission answer booklet archive PDF
+    // A Faculty Mock review retry must use the exact uploaded answer-sheet bytes so
+    // its SHA-256 can be verified against the original evaluation. Never synthesize a
+    // replacement booklet here: it would look like an original download but fail the
+    // server's exact-copy check (or, worse, could mislead the student).
+    if (String(record.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK') {
+      return res.status(404).json({
+        error: 'The original Faculty Mock answer sheet is unavailable or its stored file cannot be verified against the original SHA-256 fingerprint. An exact same-copy retry cannot be started safely. Please contact support to arrange the review.',
+        code: 'FACULTY_MOCK_ORIGINAL_COPY_UNAVAILABLE',
+      });
+    }
+
+    // For other legacy evaluations only, gracefully generate a candidate-submission
+    // archive if the original upload is no longer available.
     let resultJson: any = null;
     if (record.result_json) {
       try {

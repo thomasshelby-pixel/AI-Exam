@@ -7,6 +7,104 @@ import {
 const FREE_COPY_COLLECTION = 'faculty_mock_free_uses';
 const PAID_COPY_COLLECTION = 'faculty_mock_paid_copy_ledgers';
 
+const REVIEW_RETRY_COLLECTION = 'faculty_mock_review_retries';
+
+function reviewRetryLedgerId(studentId: string, facultyMockTestId: string, previousEvaluationId: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(`${String(studentId).trim()}\\0${String(facultyMockTestId).trim()}\\0${String(previousEvaluationId).trim()}`)
+    .digest('hex');
+}
+
+export interface FacultyMockReviewRetryClaim {
+  id: string;
+  studentId: string;
+  facultyMockTestId: string;
+  previousEvaluationId: string;
+  retryEvaluationId: string;
+  createdAt: string;
+}
+
+export function isEligibleFacultyMockReviewRetry(
+  previousEvaluation: any,
+  studentId: string,
+  facultyMockTestId: string,
+): boolean {
+  return Boolean(
+    previousEvaluation &&
+    String(previousEvaluation.student_id || '') === String(studentId) &&
+    String(previousEvaluation.status || '').toUpperCase() === 'NEEDS_REVIEW' &&
+    String(previousEvaluation.evaluation_source || '').toUpperCase() === 'FACULTY_MOCK' &&
+    String(previousEvaluation.material_type || '').toUpperCase() === 'FACULTY_MOCK_TEST' &&
+    String(previousEvaluation.faculty_mock_test_id || '') === String(facultyMockTestId) &&
+    String(previousEvaluation.answer_sheet_sha256 || '').trim() &&
+    !String(previousEvaluation.retry_of_evaluation_id || '').trim() &&
+    !String(previousEvaluation.faculty_mock_review_retry_evaluation_id || '').trim()
+  );
+}
+
+export function isExactFacultyMockReviewRetryCopy(
+  previousSha256: unknown,
+  submittedSha256: unknown,
+): boolean {
+  const previous = String(previousSha256 || '').trim().toLowerCase();
+  const submitted = String(submittedSha256 || '').trim().toLowerCase();
+  return Boolean(previous && submitted && /^[a-f0-9]{64}$/.test(previous) && previous === submitted);
+}
+
+/**
+ * Allows exactly one no-charge retry of the same Faculty Mock answer sheet after
+ * NEEDS_REVIEW. The Firestore transaction is authoritative across app instances.
+ */
+export async function claimFacultyMockReviewRetry(
+  studentId: string,
+  facultyMockTestId: string,
+  previousEvaluationId: string,
+  retryEvaluationId: string,
+): Promise<boolean> {
+  const id = reviewRetryLedgerId(studentId, facultyMockTestId, previousEvaluationId);
+  const now = new Date().toISOString();
+  const claimed = await runFirestoreTransaction(async (transaction) => {
+    const snapshot = await transaction.get(REVIEW_RETRY_COLLECTION, id);
+    const existing = snapshot.data() as FacultyMockReviewRetryClaim | undefined;
+    if (snapshot.exists) {
+      return String(existing?.retryEvaluationId || '') === retryEvaluationId;
+    }
+    transaction.set(REVIEW_RETRY_COLLECTION, id, {
+      id,
+      studentId,
+      facultyMockTestId,
+      previousEvaluationId,
+      retryEvaluationId,
+      createdAt: now,
+    });
+    return true;
+  });
+  if (typeof claimed !== 'boolean') {
+    throw new Error('Firestore did not confirm the Faculty Mock review-retry reservation.');
+  }
+  return claimed;
+}
+
+/** Release only the reservation created by this unaccepted retry submission. */
+export async function releaseFacultyMockReviewRetry(
+  studentId: string,
+  facultyMockTestId: string,
+  previousEvaluationId: string,
+  retryEvaluationId: string,
+): Promise<void> {
+  const id = reviewRetryLedgerId(studentId, facultyMockTestId, previousEvaluationId);
+  const released = await runFirestoreTransaction(async (transaction) => {
+    const snapshot = await transaction.get(REVIEW_RETRY_COLLECTION, id);
+    const existing = snapshot.data() as FacultyMockReviewRetryClaim | undefined;
+    if (snapshot.exists && String(existing?.retryEvaluationId || '') === retryEvaluationId) {
+      transaction.delete(REVIEW_RETRY_COLLECTION, id);
+    }
+    return true;
+  });
+  if (released !== true) throw new Error('Firestore did not confirm the Faculty Mock review-retry release.');
+}
+
 function studentMockLedgerId(studentId: string, facultyMockTestId: string): string {
   return crypto
     .createHash('sha256')

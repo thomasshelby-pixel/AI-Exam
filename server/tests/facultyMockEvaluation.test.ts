@@ -4,8 +4,73 @@ import { db, initDatabase } from '../db.js';
 import { enforceMaterialHardGate, resolveOfficialPaperMaximumMarks } from '../services/materialHardGateService.js';
 import { resolveFacultyMockComponentSourceIds } from '../services/materialComponentSourceIds.js';
 import { buildFacultyMockEvaluationReference, parseFacultyMockEvaluationReference, validateFacultyMockReferenceSections } from '../services/facultyMockReferenceParser.js';
+import {
+  isEligibleFacultyMockReviewRetry,
+  isExactFacultyMockReviewRetryCopy,
+} from '../services/facultyMockEntitlementService.js';
 
 initDatabase();
+
+const eligibleRetrySource = {
+  id: 'eval_review_original',
+  student_id: 'student_review_retry',
+  status: 'NEEDS_REVIEW',
+  evaluation_source: 'FACULTY_MOCK',
+  material_type: 'FACULTY_MOCK_TEST',
+  faculty_mock_test_id: 'faculty_mock_retry_test',
+  answer_sheet_sha256: 'a'.repeat(64),
+  faculty_mock_review_retry_evaluation_id: null,
+};
+assert.equal(
+  isEligibleFacultyMockReviewRetry(eligibleRetrySource, 'student_review_retry', 'faculty_mock_retry_test'),
+  true,
+  'Only the owner can use the one-time retry for their own Faculty Mock NEEDS_REVIEW record.',
+);
+assert.equal(
+  isEligibleFacultyMockReviewRetry(eligibleRetrySource, 'another_student', 'faculty_mock_retry_test'),
+  false,
+  'A different student cannot reuse another student\'s review retry.',
+);
+assert.equal(
+  isEligibleFacultyMockReviewRetry(eligibleRetrySource, 'student_review_retry', 'another_mock'),
+  false,
+  'A review retry cannot be moved to a different Faculty Mock.',
+);
+assert.equal(
+  isEligibleFacultyMockReviewRetry({ ...eligibleRetrySource, status: 'COMPLETED' }, 'student_review_retry', 'faculty_mock_retry_test'),
+  false,
+  'A completed/certified evaluation is not eligible for a free review retry.',
+);
+assert.equal(
+  isEligibleFacultyMockReviewRetry({ ...eligibleRetrySource, faculty_mock_review_retry_evaluation_id: 'eval_retry_used' }, 'student_review_retry', 'faculty_mock_retry_test'),
+  false,
+  'The same review result cannot claim a second free retry.',
+);
+assert.equal(
+  isEligibleFacultyMockReviewRetry({ ...eligibleRetrySource, retry_of_evaluation_id: 'eval_review_original' }, 'student_review_retry', 'faculty_mock_retry_test'),
+  false,
+  'A NEEDS_REVIEW result that is already a retry cannot start another free retry chain.',
+);
+assert.equal(
+  isEligibleFacultyMockReviewRetry({ ...eligibleRetrySource, answer_sheet_sha256: null }, 'student_review_retry', 'faculty_mock_retry_test'),
+  false,
+  'No free retry is allowed when the original answer-sheet fingerprint is missing.',
+);
+assert.equal(
+  isExactFacultyMockReviewRetryCopy('b'.repeat(64), 'b'.repeat(64)),
+  true,
+  'Exact same-copy retry requires an identical SHA-256 fingerprint.',
+);
+assert.equal(
+  isExactFacultyMockReviewRetryCopy('b'.repeat(64), 'c'.repeat(64)),
+  false,
+  'An edited or different PDF cannot use the free review retry.',
+);
+assert.equal(
+  isExactFacultyMockReviewRetryCopy('', 'c'.repeat(64)),
+  false,
+  'Missing original fingerprint never passes the same-copy check.',
+);
 
 // The hard gate may take the official total from the QP header. Worker
 // re-validation must apply this same precedence rather than comparing the

@@ -11,6 +11,7 @@ import {
 } from './questionChunkEvaluator.js';
 import type { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
 import { toCanonicalQuestionId } from './canonicalQuestionService.js';
+import type { QuestionReferenceLockMetadata } from './questionReferenceLock.js';
 
 const MAX_CORRECTION_ROUNDS = 2;
 const MAX_PARALLEL_CORRECTIONS = 2;
@@ -48,6 +49,7 @@ export interface EvaluationSupervisorParams {
   paper?: string;
   subjectKey?: string;
   materialId?: string;
+  referenceMetadata?: QuestionReferenceLockMetadata;
   coverageMap?: AnswerCoverageMap | null;
 }
 
@@ -58,7 +60,8 @@ export interface EvaluationSupervisorDependencies {
     fullQuestionCode: string,
     questionPaperText: string,
     suggestedAnswersText: string,
-    markingSchemeText: string
+    markingSchemeText: string,
+    metadata?: QuestionReferenceLockMetadata
   ) => ExtractedReferenceSnippets;
 }
 
@@ -119,7 +122,10 @@ function auditEvaluation(
   const issues: string[] = [
     ...(result.validationErrors || []),
     ...gate.errors,
-    ...gate.warnings,
+    // A duplicate-deduction warning is actionable and can be repaired with a
+    // targeted second read. Informational/diagnostic warnings are not blockers
+    // by themselves; the deterministic gate's actual errors remain hard gates.
+    ...gate.warnings.filter((warning) => /POTENTIAL_DOUBLE_DEDUCTION/.test(warning)),
   ];
   const warnings: string[] = [...gate.warnings];
 
@@ -183,13 +189,35 @@ function auditEvaluation(
         authoritative.fullQuestionCode,
         params.questionPaperText || '',
         params.suggestedAnswersText || '',
-        params.markingSchemeText || ''
+        params.markingSchemeText || '',
+        params.referenceMetadata
       );
-      if (!reference.questionPaperFound || !reference.suggestedAnswerFound) {
+      const materialType = String(params.evaluationResult.materialType || '').trim().toUpperCase();
+      const supportsAuthoritativeStructureAnchor = new Set([
+        'PYQ',
+        'MTP',
+        'MODEL_TEST_PAPER',
+        'FACULTY_MOCK_TEST',
+      ]).has(materialType);
+      const authoritativeLeafVerified =
+        supportsAuthoritativeStructureAnchor &&
+        Boolean(String(authoritative.fullQuestionCode || '').trim()) &&
+        Number(authoritative.maximumMarks) > 0;
+      const sourceBackedFallbackIsSafe =
+        authoritativeLeafVerified &&
+        reference.suggestedAnswerFound &&
+        !reference.referenceNeedsReview;
+
+      if (
+        !reference.suggestedAnswerFound ||
+        reference.referenceNeedsReview ||
+        (!reference.questionPaperFound && !sourceBackedFallbackIsSafe)
+      ) {
         issues.push(
           'SUPERVISOR_REFERENCE_LOCK_INCOMPLETE: ' + id +
           ' (questionPaperFound=' + reference.questionPaperFound +
-          ', suggestedAnswerFound=' + reference.suggestedAnswerFound + ')'
+          ', suggestedAnswerFound=' + reference.suggestedAnswerFound +
+          ', authoritativeStructureAnchor=' + sourceBackedFallbackIsSafe + ')'
         );
       }
     } catch (error) {
@@ -406,6 +434,7 @@ export async function runEvaluationSupervisor(
           checkingMode: params.checkingMode,
           level: params.level,
           subjectName: params.subjectName,
+          referenceMetadata: params.referenceMetadata,
           supervisorIssues: target.issues,
           supervisorCorrectionAttempt: round,
         };
