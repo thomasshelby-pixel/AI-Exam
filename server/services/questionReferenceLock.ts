@@ -366,7 +366,7 @@ export function extractLockedQuestionSlice(
         startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
       } else if (subQ) {
         startRegexes.push(new RegExp(
-          '(?:Question\\s*' + qNum + '|Answer\\s*' + qNum + '|Ans\\.?\\s*' + qNum + '|Q\\.?\\s*' + qNum + '|' + qNum + '\\.)\\s*' + canonicalSuffixPattern,
+          '^\\s*(?:(?:Question|Answer|Ans\\.?|Q\\.?)\\s*(?:NO\\.?)?\\s*' + qNum + '|' + qNum + '\\.)\\s*' + canonicalSuffixPattern,
           'i',
         ));
       } else {
@@ -395,7 +395,7 @@ export function extractLockedQuestionSlice(
       }
     } else {
       if (subQ) {
-        startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*${canonicalSuffixPattern}`, 'i'));
+        startRegexes.push(new RegExp(`^\\s*(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*${canonicalSuffixPattern}`, 'i'));
       } else {
         // Match standalone numeric QP headings at line start. A word boundary
         // after a literal period never matches (both '.' and the following
