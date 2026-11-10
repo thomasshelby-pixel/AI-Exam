@@ -269,6 +269,50 @@ export function extractLockedQuestionSlice(
     };
   }
 
+  // Generated examiner-style marking schemes use explicit section headers such
+  // as "SUBQUESTION: Q4(b)". Their source-derived answer anchor can itself
+  // contain an original question label (and, in defective schemes, the wrong
+  // sibling label). Keep that complete scheme block intact until the next
+  // SUBQUESTION header so the evaluator can independently verify its topic.
+  if (docType === 'MS' && /^\s*SUBQUESTION\s*:/im.test(docText)) {
+    const rawLines = docText.replace(/\r/g, '').split('\n');
+    const targetNumber = String(Number(qNum));
+    const requestedSuffix = subQ && subQ.toUpperCase() !== 'MCQ'
+      ? subQuestionSuffixPattern(subQ)
+      : '';
+    const exactSchemeHeader = new RegExp(
+      '^\\s*SUBQUESTION\\s*:\\s*(?:Q\\s*)?' + escapeRegex(targetNumber) +
+        (requestedSuffix ? '\\s*' + requestedSuffix : '(?=\\s|[:.)]|$)'),
+      'i',
+    );
+    const start = rawLines.findIndex((line) => exactSchemeHeader.test(line));
+    if (start >= 0) {
+      let end = rawLines.length;
+      for (let index = start + 1; index < rawLines.length; index += 1) {
+        if (
+          /^\s*SUBQUESTION\s*:/i.test(rawLines[index]) ||
+          /^\s*QUESTION\s+MARK\s+RECONCILIATION\b/i.test(rawLines[index]) ||
+          /^\s*={3,}\s*QUESTION\s+\d+\b/i.test(rawLines[index])
+        ) {
+          end = index;
+          break;
+        }
+      }
+      const snippet = rawLines.slice(start, end).join('\n').trim();
+      const checksum = crypto.createHash('sha256').update(snippet).digest('hex');
+      const sectionHeader = rawLines[start].trim();
+      const found = snippet.length > sectionHeader.length + 10;
+      return {
+        found,
+        confidence: found ? 95 : 40,
+        sectionHeader,
+        snippet,
+        characterCount: snippet.length,
+        checksum,
+      };
+    }
+  }
+
   const num = parseInt(qNum, 10);
   const { sectionA, sectionB } = splitIntoSections(docText);
   // Q5-Q8 restart under Section B only for Taxation papers. Other CA papers
