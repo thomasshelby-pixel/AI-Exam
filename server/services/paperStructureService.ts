@@ -909,17 +909,30 @@ function auditSourceMarkAllocations(options: {
 }): string[] {
   const questionPaperAllocations = extractStandaloneQuestionMarkAllocations(options.questionPaperText || '');
   const markingSchemeAllocations = extractStandaloneQuestionMarkAllocations(options.markingSchemeText || '');
+  const suggestedAnswerAllocations = extractStandaloneQuestionMarkAllocations(options.suggestedAnswersText || '');
   const conflicts: string[] = [];
 
-  for (const [questionId, questionPaperMarks] of questionPaperAllocations) {
-    const markingSchemeMarks = markingSchemeAllocations.get(questionId);
-    if (markingSchemeMarks !== undefined && Math.abs(questionPaperMarks - markingSchemeMarks) > 0.01) {
-      conflicts.push(
-        'MARK_ALLOCATION_SOURCE_CONFLICT: ' + questionId + ' is ' + questionPaperMarks +
-        ' marks in the selected Question Paper but ' + markingSchemeMarks + ' marks in the selected Marking Scheme.'
-      );
+  const compareAllocations = (
+    left: Map<string, number>,
+    right: Map<string, number>,
+    leftLabel: string,
+    rightLabel: string,
+  ) => {
+    for (const [questionId, leftMarks] of left) {
+      const rightMarks = right.get(questionId);
+      if (rightMarks !== undefined && Math.abs(leftMarks - rightMarks) > 0.01) {
+        conflicts.push(
+          'MARK_ALLOCATION_SOURCE_CONFLICT: ' + questionId + ' is ' + leftMarks +
+          ' marks in the selected ' + leftLabel + ' but ' + rightMarks +
+          ' marks in the selected ' + rightLabel + '.'
+        );
+      }
     }
-  }
+  };
+
+  compareAllocations(questionPaperAllocations, markingSchemeAllocations, 'Question Paper', 'Marking Scheme');
+  compareAllocations(questionPaperAllocations, suggestedAnswerAllocations, 'Question Paper', 'Suggested Answers');
+  compareAllocations(markingSchemeAllocations, suggestedAnswerAllocations, 'Marking Scheme', 'Suggested Answers');
 
   const mcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
   for (const questionNumber of mcqKeys.keys()) {
