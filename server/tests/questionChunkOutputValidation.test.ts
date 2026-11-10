@@ -139,7 +139,7 @@ const crossWiredMarkingSchemeCases = [
     question: {
       topic: 'Appointment of internal auditor by an unlisted public company',
       provision: 'Companies Act section 138 and Companies Accounts Rules Rule 13',
-      questionText: 'Downtown Limited has turnover of Rs 210 crore and outstanding public deposits of Rs 28 crore; determine whether it must appoint an internal auditor.',
+      questionText: 'Downtown Limited is an unlisted public company. Its audited financial statements for FY 2024-25 show turnover of Rs 210 crore and outstanding public deposits of Rs 28 crore; determine whether it must appoint an internal auditor.',
     },
     suggestedAnswer: 'Section 138 and Rule 13 require an internal auditor where an unlisted public company has turnover of at least Rs 200 crore or outstanding deposits of at least Rs 25 crore.',
     wrongMarkingScheme: 'Companies Act filing of financial statements with Registrar within thirty days of an adjourned annual general meeting.',
