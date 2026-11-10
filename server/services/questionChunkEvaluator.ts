@@ -179,7 +179,6 @@ export function parseAndValidateQuestionChunkOutput(
     'PROVISION', 'PRINCIPLE', 'CONDITION', 'APPLICATION', 'CALCULATION',
     'WORKING', 'TREATMENT', 'REASONING', 'CONCLUSION', 'PRESENTATION',
   ]);
-  const allowedAssessments = new Set(['CORRECT', 'PARTIALLY_CORRECT', 'INCORRECT', 'OMITTED']);
   let availableTotal = 0;
   let awardedTotal = 0;
 
