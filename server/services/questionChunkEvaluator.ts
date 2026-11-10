@@ -378,6 +378,33 @@ CHECKED-COPY SCORE INDEPENDENCE:
 `;
 }
 
+export function buildQuestionChunkSubPartCompletenessDirective(
+  fullQuestionCode: string,
+  maximumMarks: number,
+): string {
+  const canonicalCode = String(fullQuestionCode || '').trim();
+  return `SINGLE-LEAF IDENTITY AND MARKING-RUBRIC COMPLETENESS:
+- This call evaluates exactly the authoritative leaf ${canonicalCode} for ${maximumMarks} marks.
+- Do not merge this leaf with its parent, any sibling sub-part, or another nested question ID.
+- Read the complete locked Question Paper / Suggested Answer / Marking Scheme slice for this leaf,
+  including continuation lines, tables, working notes and every separately mark-bearing criterion.
+- Represent each distinct, independently mark-bearing source criterion exactly once as a
+  markingComponents entry. Do not collapse multiple explicit rubric steps into one vague generic
+  component such as "application" or "working" when the source marks them separately.
+- Preserve the source's own component allocations. The sum of marksAvailable must equal the
+  authoritative ${maximumMarks} marks because the source allocates that amount, not because you
+  invented, scaled or redistributed component weights to force a total.
+- If a source-marked criterion is visibly not attempted, include it as OMITTED with zero awarded
+  marks and explicit evidence that no corresponding work appears in the supplied answer pages.
+  Do not call a criterion omitted merely because handwriting is difficult to read; unreadable
+  evidence requires UNCLEAR/review, not an assumed omission.
+- Before returning, compare every independently mark-bearing requirement in the locked marking
+  references with the component list: no source criterion may be silently skipped or duplicated.
+- If the reference does not provide enough information to reconcile source-grounded component
+  allocations to the authoritative maximum, do not fabricate a balancing step; return UNCLEAR
+  so the question can be reviewed.`;
+}
+
 export async function evaluateQuestionChunk(
   ctx: ChunkEvaluationContext
 ): Promise<QuestionEvaluation> {
@@ -550,6 +577,8 @@ STRICT QUESTION-IDENTITY LOCK:
 - The supplied question ID and maximum marks are immutable. Do not remap by page number, answer
   order, expected sequence or subject assumptions. If the answer block identity is ambiguous,
   preserve it for review rather than scoring another question.
+${buildQuestionChunkSubPartCompletenessDirective(fullCode, maxMarks)}
+
 CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
 2. Award step marks strictly according to the verified step-marking scheme and suggested answer above.
