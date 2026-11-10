@@ -82,6 +82,8 @@ export interface PageCoverageModelOutput {
     authoritativeQuestionCode?: string;
     mappingBasis?: 'VISIBLE_LABEL' | 'MATERIAL_CONTENT' | 'CONTINUATION' | 'UNCERTAIN';
     labelMismatch?: boolean;
+    /** Readability of this specific answer block; distinct from aggregate page status. */
+    readabilityStatus?: 'ATTEMPTED_READABLE' | 'ATTEMPTED_PARTIALLY_READABLE' | 'ATTEMPTED_UNCLEAR';
     snippet?: string;
   }>;
   mcqSelections: Record<string, string>;
@@ -353,6 +355,20 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
       if (question.labelMismatch !== undefined && labelMismatch === undefined) {
         warnings.push('A detected answer contained an invalid label-mismatch flag.');
       }
+      const allowedReadabilityStatuses = new Set([
+        'ATTEMPTED_READABLE',
+        'ATTEMPTED_PARTIALLY_READABLE',
+        'ATTEMPTED_UNCLEAR',
+      ]);
+      const normalizedReadabilityStatus = typeof question.readabilityStatus === 'string'
+        ? question.readabilityStatus.trim().toUpperCase()
+        : '';
+      const readabilityStatus = allowedReadabilityStatuses.has(normalizedReadabilityStatus)
+        ? normalizedReadabilityStatus as 'ATTEMPTED_READABLE' | 'ATTEMPTED_PARTIALLY_READABLE' | 'ATTEMPTED_UNCLEAR'
+        : undefined;
+      if (question.readabilityStatus !== undefined && !readabilityStatus) {
+        warnings.push('A detected answer contained an invalid per-answer readability status; aggregate page status was retained as fallback.');
+      }
 
       const contextualIdentity = parentVisible === false && Boolean(subQuestion);
       const explicitContinuation = continuation || isContinuation === true;
@@ -369,6 +385,7 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
         ...(authoritativeQuestionCode ? { authoritativeQuestionCode } : {}),
         ...(mappingBasis ? { mappingBasis } : {}),
         ...(labelMismatch !== undefined ? { labelMismatch } : {}),
+        ...(readabilityStatus ? { readabilityStatus } : {}),
         ...(snippet !== undefined ? { snippet } : {}),
       });
     }
@@ -1227,8 +1244,12 @@ HANDWRITING STYLE FAIRNESS — MANDATORY:
   context, calculations and the selected question — but do not invent a number, word, section or formula.
 - Preserve every readable word, digit, symbol, calculation and working. If only one word, digit or
   line is uncertain, localize the uncertainty to that fragment; do not discard the entire answer or page.
+- The top-level status describes the PAGE only. Each detectedQuestions item MUST also include
+  readabilityStatus: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE or ATTEMPTED_UNCLEAR
+  for that specific answer block. Do not copy an aggregate page-level unclear label to a clearly
+  readable answer on the same page.
 - If useful content is visible but partly difficult to decipher, return ATTEMPTED_PARTIALLY_READABLE
-  and retain the evidence. Use ATTEMPTED_UNCLEAR only when the actual answer content cannot be read
+  and retain the evidence. Use ATTEMPTED_UNCLEAR only when that specific answer block cannot be read
   sufficiently to identify or assess it, not as a handwriting-style label.
 - A style difference is never evidence of cheating, document fraud or an invalid answer sheet.
 - The page reader, not the upload-authenticity check, decides which specific answer fragments are readable.
@@ -1299,6 +1320,7 @@ Return valid JSON only:
       "authoritativeQuestionCode": "Q2(a)",
       "mappingBasis": "VISIBLE_LABEL",
       "labelMismatch": false,
+      "readabilityStatus": "ATTEMPTED_READABLE",
       "snippet": "short answer evidence"
     }
   ],
@@ -1307,6 +1329,30 @@ Return valid JSON only:
 `;
 }
 
+export function resolveDetectedAnswerReadabilityStatus(
+  pageStatus: PageAttemptStatus,
+  perAnswerStatus: PageAttemptStatus | undefined,
+  detectedAnswerCount: number,
+  hasEvidenceSnippet: boolean
+): PageAttemptStatus {
+  if (
+    perAnswerStatus === 'ATTEMPTED_READABLE' ||
+    perAnswerStatus === 'ATTEMPTED_PARTIALLY_READABLE' ||
+    perAnswerStatus === 'ATTEMPTED_UNCLEAR'
+  ) {
+    return perAnswerStatus;
+  }
+
+  // A page can contain multiple answers with different readability. Without
+  // per-block model metadata, do not propagate a page-level unclear label to
+  // every mapped block when literal answer evidence is available.
+  if (pageStatus === 'ATTEMPTED_UNCLEAR' && detectedAnswerCount > 1 && hasEvidenceSnippet) {
+    return 'ATTEMPTED_PARTIALLY_READABLE';
+  }
+  return pageStatus;
+}
+
+/** Resolves an answer's readability independently of the aggregate page label. */
 /**
  * Analyzes a single page of the answer sheet using a subject-neutral handwriting
  * and question-identity prompt anchored to the selected authoritative question inventory.
@@ -1409,11 +1455,20 @@ async function analyzeSinglePageCoverage(
           detectedMcqAttempts.add(parsed.questionNumber);
           continue;
         }
+        const detectedAnswerBlockCount = Math.max(
+          raw.answerBlocksObserved || 0,
+          raw.detectedQuestions.length + Object.keys(raw.mcqSelections || {}).length + raw.mcqNeedsReview.length
+        );
         detectedQuestions.push({
           fullQuestionCode: parsed.canonicalId,
           questionNumber: parsed.questionNumber,
           subQuestionNumber: parsed.subQuestion,
-          status,
+          status: resolveDetectedAnswerReadabilityStatus(
+            status,
+            dq.readabilityStatus as PageAttemptStatus | undefined,
+            detectedAnswerBlockCount,
+            Boolean(dq.snippet)
+          ),
           isContinuation: Boolean(dq.isContinuation),
           pageNumber,
           snippet: dq.snippet || summary,
@@ -1452,7 +1507,9 @@ async function analyzeSinglePageCoverage(
           fullQuestionCode: `MCQ${num}`,
           questionNumber: num,
           subQuestionNumber: 'MCQ',
-          status,
+          // mcqSelections contains only options the page reader considered clear;
+          // unreadable/conflicting options are represented separately in review.
+          status: 'ATTEMPTED_READABLE',
           isContinuation: false,
           pageNumber,
           snippet: `MCQ ${num} selected option: ${opt}`,
