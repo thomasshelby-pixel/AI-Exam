@@ -162,6 +162,22 @@ export function safeDrawText(page: any, text: any, options: any) {
   return page.drawText(toSafePdfText(text), options);
 }
 
+function wrapPdfAnnotationText(value: unknown, maxChars: number): string[] {
+  const words = String(value || '').split(/\\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    if (!line || (line + ' ' + word).length <= maxChars) {
+      line = (line + ' ' + word).trim();
+    } else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 function drawCheckmark(page: any, x: number, y: number, color: any) {
   page.drawLine({
     start: { x, y: y + 3 },
@@ -809,7 +825,7 @@ export async function generateCheckedCopyPdf(
     for (const qAnn of pageAnnotations) {
       const isMcq = qAnn.questionNumber.startsWith('MCQ');
       if (qAnn.reviewRequired) {
-        const reasonLines = wrapText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2);
+        const reasonLines = wrapPdfAnnotationText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2);
         estimatedStandardHeight += 58 + reasonLines.length * 8;
       } else if (isMcq) {
         const optionStep = qAnn.steps[0];
@@ -832,7 +848,7 @@ export async function generateCheckedCopyPdf(
     for (const qAnn of pageAnnotations) {
       const isMcqAnnotation = qAnn.questionNumber.startsWith('MCQ');
       const reviewLines = qAnn.reviewRequired
-        ? wrapText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2)
+        ? wrapPdfAnnotationText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2)
         : [];
       const optionStep = qAnn.steps[0];
       const optionMatch = optionStep?.stepName.match(/Option:\s*([^|]+)\|\s*Key:\s*([^|]+)/i);
