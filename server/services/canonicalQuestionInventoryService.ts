@@ -618,7 +618,7 @@ export function buildCanonicalEvaluationLedger(options: {
       }
       annotationPage = minPage;
     }
-    if (isAttempted && status === 'EVALUATED') {
+    if (isAttempted && status === 'EVALUATED' && annotationPage !== undefined) {
       pageLoadMap.set(annotationPage, (pageLoadMap.get(annotationPage) || 0) + 1);
     }
     const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
