@@ -17,6 +17,12 @@ export interface ModeScoreSummary {
 export interface MultiModeResult {
   activeMode: 'standard' | 'strict' | 'lenient';
   activeQuestions: QuestionEvaluation[];
+  /** All three question sets stay available so the report UI switches detail rows with the selected mode. */
+  modeQuestions: {
+    standard: QuestionEvaluation[];
+    strict: QuestionEvaluation[];
+    moderate: QuestionEvaluation[];
+  };
   activeTotalMarks: number;
   attemptedMaxMarks: number;
   officialPaperMaxMarks: number;
@@ -404,6 +410,11 @@ export function applyMultiModeMarkingPhilosophy(
   return {
     activeMode: requestedMode,
     activeQuestions,
+    modeQuestions: {
+      standard: standardQuestions,
+      strict: strictQuestions,
+      moderate: moderateQuestions,
+    },
     activeTotalMarks,
     attemptedMaxMarks,
     officialPaperMaxMarks,

@@ -45,6 +45,15 @@ jobs:
       - name: Detected attempted-answer unsupported-zero review regression
         run: node_modules/.bin/tsx server/tests/attemptedAnswerUnsupportedZeroReview.test.ts
 
+      - name: Canonical descriptive step-evidence review regression
+        run: node_modules/.bin/tsx server/tests/canonicalDescriptiveStepEvidenceGate.test.ts
+
+      - name: Checked-copy missing step evidence review regression
+        run: node_modules/.bin/tsx server/tests/checkedCopyMissingStepEvidence.test.ts
+
+      - name: Full page and question disposition completeness regression
+        run: node_modules/.bin/tsx server/tests/fullPageAndQuestionCompletenessGate.test.ts
+
       - name: Valid nested canonical question ID integrity regression
         run: node_modules/.bin/tsx server/tests/nestedCanonicalQuestionGate.test.ts
 

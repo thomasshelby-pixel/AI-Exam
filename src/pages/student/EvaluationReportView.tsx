@@ -252,6 +252,9 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const canonicalTotalMarks = canonicalLedger?.totalAwardedMarks !== undefined ? canonicalLedger.totalAwardedMarks : totalMarks;
 
   const modeData = evaluationResult.modeBreakdown?.[selectedMode];
+  // Switching the displayed mode must switch its question/component rows too,
+  // not just the headline total and grade.
+  const modeQuestionSource = evaluationResult.modeQuestions?.[selectedMode] || questions || [];
   const activeMarks = modeData ? modeData.totalMarks : canonicalTotalMarks;
   const activePercentage = modeData ? modeData.percentage : percentage;
   const activeGrade = modeData ? modeData.grade : grade;
@@ -294,7 +297,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const normalizedQuestions = React.useMemo(() => {
     const seen = new Set<string>();
     const list: QuestionEvaluation[] = [];
-    for (const q of questions || []) {
+    for (const q of modeQuestionSource) {
       const code = getQuestionDisplayCode(q);
       if (!seen.has(code)) {
         seen.add(code);
@@ -302,7 +305,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       }
     }
     return list;
-  }, [questions]);
+  }, [modeQuestionSource]);
 
   const filteredQuestions = normalizedQuestions.filter((q) => {
     if (filterStatus === 'ALL') return true;
@@ -1291,7 +1294,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
 
         {breakdownViewMode === 'COMPARISON' ? (
           <ModelAnswerComparisonView
-            questions={questions}
+            questions={modeQuestionSource}
             subjectName={subjectName}
             caLevel={caLevel}
             studentName={studentName}
@@ -1644,7 +1647,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       <ModelAnswerComparisonModal
         isOpen={isComparisonModalOpen}
         onClose={() => setIsComparisonModalOpen(false)}
-        questions={questions}
+        questions={modeQuestionSource}
         subjectName={subjectName}
         caLevel={caLevel}
         studentName={studentName}

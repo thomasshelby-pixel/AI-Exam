@@ -1348,6 +1348,47 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const consistencyReport = validateAuthoritativeConsistency(evaluationResult);
     const runPackage = evaluationResult.evaluationRunPackage;
     const renderManifest = runPackage?.renderManifest;
+    const pageAudit = runPackage?.pageCoverageAudit || [];
+    const pageAnalysisAuditPassed = Boolean(
+      pageAudit.length === originalPageCount &&
+      Array.from({ length: originalPageCount }, (_, index) => index + 1).every((pageNumber) => {
+        const page = pageAudit.find((item) => item.pageNumber === pageNumber);
+        return Boolean(
+          page &&
+          page.analysisCompleted === true &&
+          !page.analysisFailureCode &&
+          !page.hasUnresolvedContent &&
+          !page.mappingReviewReason &&
+          (page.answerBlocksObserved === undefined ||
+            page.answerBlocksObserved === page.accountedAnswerBlocks)
+        );
+      })
+    );
+    const physicalPageRenderPassed = Boolean(
+      renderManifest?.isRenderValid === true &&
+      renderManifest?.isAllPagesRendered === true &&
+      renderManifest.totalPages === originalPageCount &&
+      renderManifest.totalPagesRendered === originalPageCount &&
+      Array.isArray(renderManifest.pages) &&
+      renderManifest.pages.length === originalPageCount
+    );
+    const checkedCopyArtifactReady = checkedCopyStatus === 'READY';
+
+    // A valid score is not enough: certification also requires (1) a completed
+    // analysis disposition for every source page, (2) a saved checked copy, and
+    // (3) physical render proof for every original page and attempted question.
+    const renderCompletenessErrors = [
+      ...(!pageAnalysisAuditPassed
+        ? [`PAGE_ANALYSIS_COVERAGE_INCOMPLETE: ${pageAudit.filter((page) => page.analysisCompleted === true && !page.hasUnresolvedContent).length}/${originalPageCount} source pages have a complete, resolved analysis audit.`]
+        : []),
+      ...(!checkedCopyArtifactReady
+        ? [`CHECKED_COPY_ARTIFACT_NOT_READY: Checked-copy artifact status is ${checkedCopyStatus}.`]
+        : []),
+      ...(!physicalPageRenderPassed
+        ? [`PHYSICAL_PAGE_RENDER_INCOMPLETE: ${renderManifest?.totalPagesRendered ?? 0}/${originalPageCount} source pages have a verified physical render manifest.`]
+        : []),
+      ...(renderManifest?.renderErrors || []),
+    ];
 
     // Check critical integrity: questions exist, ledger arithmetic is sound, no bounds violations
     const hasValidQuestions = Array.isArray(evaluationResult.questions) && evaluationResult.questions.length > 0;
@@ -1362,7 +1403,10 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       hasValidQuestions &&
       isMathConsistent &&
       evaluationValidationPassed &&
-      supervisorApproved;
+      supervisorApproved &&
+      pageAnalysisAuditPassed &&
+      checkedCopyArtifactReady &&
+      physicalPageRenderPassed;
 
     let durablePackagePersisted = false;
     let finalStatus: 'COMPLETED' | 'NEEDS_REVIEW' = criticalIntegrityPassed ? 'COMPLETED' : 'NEEDS_REVIEW';
@@ -1427,6 +1471,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       reviewErrors = Array.from(new Set([
         ...(!consistencyReport.isValid ? consistencyReport.errors : []),
         ...(evaluationResult.validationErrors || []),
+        ...renderCompletenessErrors,
         ...finalizationErrors,
       ]));
       evaluationResult.validationStatus = 'NEEDS_REVIEW';

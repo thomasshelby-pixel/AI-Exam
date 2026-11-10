@@ -12,9 +12,12 @@ import { loadEvaluationRunPackage } from '../db.js';
 import { isEvaluationPendingReview } from './evaluationReviewState.js';
 import {
   CanonicalEvaluationRecord,
+  PageCoverageAuditItem,
+  PageRenderManifestItem,
   RenderManifest,
   RenderManifestItem,
 } from '../../src/types/index.js';
+import { buildFourSetReconciliation } from './canonicalQuestionInventoryService.js';
 
 export interface EvaluationData {
   id: string;
@@ -162,6 +165,22 @@ export function safeDrawText(page: any, text: any, options: any) {
   return page.drawText(toSafePdfText(text), options);
 }
 
+function wrapPdfAnnotationText(value: unknown, maxChars: number): string[] {
+  const words = String(value || '').split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    if (!line || (line + ' ' + word).length <= maxChars) {
+      line = (line + ' ' + word).trim();
+    } else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 function drawCheckmark(page: any, x: number, y: number, color: any) {
   page.drawLine({
     start: { x, y: y + 3 },
@@ -196,12 +215,43 @@ function drawCrossmark(page: any, x: number, y: number, color: any) {
  * Generates an Authentic Checked Copy PDF with Examiner annotations, red-pen step marks,
  * and official scorecard.
  */
+export function resolveCheckedCopyReviewState(
+  record: Pick<CanonicalEvaluationRecord,
+    'questionId' | 'questionType' | 'evaluationStatus' | 'reviewRequired' | 'reviewReason' |
+    'markingComponents' | 'stepMarkingBreakdown' | 'technicalFailureReason'
+  >,
+): { reviewRequired: boolean; reviewReason?: string } {
+  const isMcq = record.questionType === 'MCQ' || String(record.questionId || '').toUpperCase().startsWith('MCQ');
+  const hasSteps =
+    (Array.isArray(record.markingComponents) && record.markingComponents.length > 0) ||
+    (Array.isArray(record.stepMarkingBreakdown) && record.stepMarkingBreakdown.length > 0);
+  const statusRequiresReview = ['NEEDS_REVIEW', 'FAILED_TO_EVALUATE', 'NEEDS_MAPPING_REVIEW']
+    .includes(String(record.evaluationStatus || ''));
+  const reviewRequired = Boolean(record.reviewRequired || statusRequiresReview || (!isMcq && !hasSteps));
+  if (!reviewRequired) return { reviewRequired: false };
+  return {
+    reviewRequired: true,
+    reviewReason: record.reviewReason || (
+      !isMcq && !hasSteps
+        ? 'No persisted component-level marking evidence exists for this attempted descriptive question. The score is withheld; this is not an academic zero.'
+        : record.technicalFailureReason || 'The answer was detected, but a verified step-wise score was not produced. No academic zero has been assigned.'
+    ),
+  };
+}
+
 export interface PageAnnotation {
   pageNumber: number;
   questionNumber: string;
   canonicalId?: string;
   marksAwarded: number;
   maxMarks: number;
+  /** A technical/reference/step-evidence hold; zero is not an academic award. */
+  reviewRequired?: boolean;
+  reviewReason?: string;
+  /** Evaluated feedback for an attempted alternative excluded from the final total. */
+  excludedFromTotal?: boolean;
+  /** Page-only unresolved content note; not a canonical question and never scored. */
+  pageReviewOnly?: boolean;
   studentSelectedOption?: string;
   officialAnswer?: string;
   steps: Array<{
@@ -250,24 +300,29 @@ export function validatePreRenderGate(options: {
   const failedQuestionIds: string[] = [];
 
   for (const rec of records) {
-    // Section 13: Attempted questions that failed to evaluate MUST block finalization
-    if (rec.attempted && rec.evaluationStatus === 'FAILED_TO_EVALUATE') {
-      errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Attempted question failed to evaluate. Cannot generate clean checked copy.`);
+    const isEvaluated = rec.evaluationStatus === 'EVALUATED' || rec.evaluated === true;
+    const isExcludedAlternative = rec.evaluationStatus === 'EXCLUDED_ALTERNATIVE';
+    const isAnnotationReq = rec.annotationRequired !== false && (rec.attempted || isEvaluated);
+
+    // Every attempted question must either be an explicitly excluded alternative
+    // or receive a question-level examiner annotation, including review/technical
+    // failures. A failed score must not make the question disappear from the copy.
+    if (rec.attempted && !isExcludedAlternative && !isAnnotationReq) {
+      errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Attempted question has no checked-copy annotation requirement.`);
       failedQuestionIds.push(rec.questionId);
     }
 
-    // For every evaluated record where annotation is required:
-    const isEvaluated = rec.evaluationStatus === 'EVALUATED' || rec.evaluated === true;
-    const isAnnotationReq = rec.annotationRequired !== false && (rec.attempted || isEvaluated);
-
-    if (isEvaluated && isAnnotationReq) {
+    if (isAnnotationReq) {
       if (!rec.questionId || typeof rec.questionId !== 'string') {
         errors.push(`PRE_RENDER_ERROR: Missing or invalid questionId.`);
         failedQuestionIds.push(rec.questionId || 'UNKNOWN');
         continue;
       }
-      if (rec.maxMarks === undefined || rec.maxMarks === null || isNaN(rec.maxMarks) || rec.maxMarks <= 0) {
-        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid maxMarks (${rec.maxMarks}). Must be positive.`);
+      if (
+        rec.maxMarks === undefined || rec.maxMarks === null || isNaN(rec.maxMarks) ||
+        (isEvaluated ? rec.maxMarks <= 0 : rec.maxMarks < 0)
+      ) {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid maxMarks (${rec.maxMarks}) for ${rec.evaluationStatus}.`);
         failedQuestionIds.push(rec.questionId);
       }
       if (rec.awardedMarks === undefined || rec.awardedMarks === null || isNaN(rec.awardedMarks) || rec.awardedMarks < 0) {
@@ -288,8 +343,8 @@ export function validatePreRenderGate(options: {
         errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: Invalid or missing annotationAnchor.`);
         failedQuestionIds.push(rec.questionId);
       }
-      if (rec.evaluationStatus !== 'EVALUATED') {
-        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: evaluationStatus is ${rec.evaluationStatus}, expected EVALUATED.`);
+      if (isEvaluated && rec.evaluationStatus !== 'EVALUATED') {
+        errors.push(`PRE_RENDER_ERROR[${rec.questionId}]: evaluated flag conflicts with evaluationStatus ${rec.evaluationStatus}.`);
         failedQuestionIds.push(rec.questionId);
       }
     }
@@ -317,13 +372,14 @@ export function validatePostRenderGate(options: {
   records: CanonicalEvaluationRecord[];
   renderedAnnotations: Array<{ pageNumber: number; questionNumber: string; canonicalId?: string; marksAwarded: number; maxMarks: number }>;
   totalPages: number;
+  physicalPageRenders?: PageRenderManifestItem[];
 }): {
   isValid: boolean;
   renderManifest: RenderManifest;
   orphanAnnotations: string[];
   errors: string[];
 } {
-  const { evaluationId, runId, records, renderedAnnotations, totalPages } = options;
+  const { evaluationId, runId, records, renderedAnnotations, totalPages, physicalPageRenders } = options;
   const errors: string[] = [];
   const orphanAnnotations: string[] = [];
 
@@ -365,12 +421,12 @@ export function validatePostRenderGate(options: {
     const annotationCount = renderEntry ? renderEntry.count : 0;
     const renderedPages = renderEntry ? renderEntry.pages : [];
 
-    if (isEvaluated && isAnnotationReq) {
+    if (isAnnotationReq) {
       if (!wasRendered) {
-        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Evaluated question was NOT rendered on checked copy.`);
+        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Attempted question disposition was NOT rendered on checked copy (status ${rec.evaluationStatus}).`);
       }
-      if (annotationCount > 1) {
-        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Duplicate rendering detected (${annotationCount} occurrences). Exactly 1 required.`);
+      if (annotationCount !== 1) {
+        errors.push(`POST_RENDER_ERROR[${rec.questionId}]: Expected exactly one examiner annotation but found ${annotationCount}.`);
       }
     }
 
@@ -386,7 +442,46 @@ export function validatePostRenderGate(options: {
     });
   }
 
-  const isRenderValid = errors.length === 0 && orphanAnnotations.length === 0;
+  let pageItems: PageRenderManifestItem[] | undefined;
+  let allPagesRendered: boolean | undefined;
+  if (physicalPageRenders) {
+    pageItems = [...physicalPageRenders].sort((a, b) => a.pageNumber - b.pageNumber);
+    const pageCounts = new Map<number, number>();
+    for (const page of pageItems) pageCounts.set(page.pageNumber, (pageCounts.get(page.pageNumber) || 0) + 1);
+    for (let expectedPage = 1; expectedPage <= totalPages; expectedPage++) {
+      const page = pageItems.find((item) => item.pageNumber === expectedPage);
+      if (!page) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Original page ${expectedPage} was not rendered.`);
+        continue;
+      }
+      if ((pageCounts.get(expectedPage) || 0) !== 1) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Original page ${expectedPage} was rendered more than once.`);
+      }
+      if (!page.originalPagePresent || !page.headerRendered || !page.footerRendered) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Original page ${expectedPage} is missing its preserved source page/header/footer render.`);
+      }
+      if (expectedPage === totalPages && !page.examinerSealRendered) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Final examiner seal was not rendered on original page ${totalPages}.`);
+      }
+      if (expectedPage !== totalPages && page.examinerSealRendered) {
+        errors.push(`POST_RENDER_PAGE_ERROR: Examiner seal was incorrectly rendered on non-final page ${expectedPage}.`);
+      }
+    }
+    const invalidPageNumbers = pageItems.filter((page) =>
+      !Number.isInteger(page.pageNumber) || page.pageNumber < 1 || page.pageNumber > totalPages
+    );
+    if (invalidPageNumbers.length > 0) {
+      errors.push(`POST_RENDER_PAGE_ERROR: Found ${invalidPageNumbers.length} out-of-range physical page record(s).`);
+    }
+    allPagesRendered = pageItems.length === totalPages &&
+      Array.from({ length: totalPages }, (_, index) => index + 1)
+        .every((pageNumber) => pageCounts.get(pageNumber) === 1) &&
+      pageItems.every((page) => page.originalPagePresent && page.headerRendered && page.footerRendered) &&
+      pageItems.find((page) => page.pageNumber === totalPages)?.examinerSealRendered === true;
+  }
+
+  const isRenderValid = errors.length === 0 && orphanAnnotations.length === 0 &&
+    (allPagesRendered === undefined || allPagesRendered);
 
   const renderManifest: RenderManifest = {
     evaluationId,
@@ -397,6 +492,12 @@ export function validatePostRenderGate(options: {
     isRenderValid,
     orphanAnnotations,
     renderErrors: errors,
+    ...(physicalPageRenders ? {
+      totalPages,
+      totalPagesRendered: pageItems?.length || 0,
+      isAllPagesRendered: Boolean(allPagesRendered),
+      pages: pageItems || [],
+    } : {}),
     timestamp: new Date().toISOString(),
   };
 
@@ -564,26 +665,16 @@ export function buildStructuredAnnotations(
           comment: isCorrect ? 'Option verified with official answer' : 'Option does not match official key',
         },
       ];
-    } else {
-      steps = [
-        {
-          componentType: 'PROVISION',
-          stepName: 'Statutory / Conceptual Principle',
-          marksAwarded: Math.min(2, rec.awardedMarks),
-          maxMarks: Math.min(2, rec.maxMarks),
-          status: rec.awardedMarks > 0 ? 'CORRECT' : 'INCORRECT',
-          comment: rec.awardedMarks > 0 ? 'Relevant principle identified' : 'Principle missing or omitted',
-        },
-        {
-          componentType: 'APPLICATION',
-          stepName: 'Application & Working Notes',
-          marksAwarded: Math.max(0, rec.awardedMarks - 2),
-          maxMarks: Math.max(1, rec.maxMarks - 2),
-          status: rec.awardedMarks >= rec.maxMarks ? 'CORRECT' : rec.awardedMarks > 0 ? 'PARTIALLY_CORRECT' : 'INCORRECT',
-          comment: rec.awardedMarks >= rec.maxMarks ? 'Calculations verified' : 'Partial working verified',
-        },
-      ];
     }
+
+    const reviewState = resolveCheckedCopyReviewState(rec);
+    const reviewRequired = reviewState.reviewRequired;
+    const reviewReason = reviewState.reviewReason;
+
+    // Never fabricate a generic 2+1 mark split for a descriptive answer.
+    // Without persisted step evidence, the canonical ledger places the question
+    // in review and the checked copy must say that the score is withheld.
+    if (reviewRequired) steps = [];
 
     const pageAnn: PageAnnotation = {
       pageNumber: safeTargetPage,
@@ -591,6 +682,9 @@ export function buildStructuredAnnotations(
       canonicalId: rec.questionId,
       marksAwarded: rec.awardedMarks,
       maxMarks: rec.maxMarks,
+      reviewRequired,
+      reviewReason,
+      excludedFromTotal: Boolean(rec.isAlternative && !rec.counted),
       studentSelectedOption: rec.studentSelectedOption,
       officialAnswer: rec.officialAnswer,
       steps: steps.map((s: any) => {
@@ -619,6 +713,68 @@ export function buildStructuredAnnotations(
       canonicalId: rec.questionId,
       marksAwarded: rec.awardedMarks,
       maxMarks: rec.maxMarks,
+    });
+  }
+
+  // Every original source page with unresolved/failed coverage receives a
+  // page-level review marker. This preserves unlabelled handwriting without
+  // inventing a question ID, maximum mark or academic score.
+  const pageCoverageAudit: PageCoverageAuditItem[] =
+    runPkg?.pageCoverageAudit ||
+    resultJson?.pageCoverageAudit ||
+    resultJson?.studentAttemptManifest?.pageCoverageAudit ||
+    [];
+  const pageAuditByNumber = new Map(pageCoverageAudit.map((item) => [item.pageNumber, item]));
+  const hasExplicitPageAnalysisAudit = pageCoverageAudit.some((item) =>
+    item.analysisCompleted !== undefined ||
+    item.analysisStatus !== undefined ||
+    item.analysisFailureCode !== undefined ||
+    item.answerBlocksObserved !== undefined ||
+    item.hasUnresolvedContent !== undefined
+  );
+  const resultRequiresPageReview = Boolean(
+    hasExplicitPageAnalysisAudit ||
+    resultJson?.validationStatus === 'NEEDS_REVIEW' ||
+    resultJson?.certificationStatus === 'REVIEW_REQUIRED' ||
+    resultJson?.isTechnicalReviewState === true
+  );
+  for (let pageNumber = 1; pageNumber <= safeTotalPages; pageNumber++) {
+    if (!resultRequiresPageReview) continue;
+    const audit = pageAuditByNumber.get(pageNumber);
+    const reasons: string[] = [];
+    if (!audit) {
+      reasons.push('This original page has no page-level analysis audit record.');
+    } else {
+      if (audit.analysisCompleted !== true) {
+        reasons.push(audit.analysisFailureCode
+          ? `Page analysis did not complete (${audit.analysisFailureCode}).`
+          : 'This original page has no completed page-analysis record.');
+      }
+      if (audit.mappingReviewReason) reasons.push(audit.mappingReviewReason);
+      if (audit.unresolvedAnswerBlocks?.length) {
+        reasons.push(`Unmapped answer block(s): ${audit.unresolvedAnswerBlocks.join(' | ')}`);
+      }
+      if (audit.hasUnresolvedContent) {
+        reasons.push('One or more answer blocks on this page remain unresolved.');
+      }
+      if (
+        audit.answerBlocksObserved !== undefined &&
+        audit.accountedAnswerBlocks !== undefined &&
+        audit.answerBlocksObserved !== audit.accountedAnswerBlocks
+      ) {
+        reasons.push(`Observed ${audit.answerBlocksObserved} answer block(s), but accounted for ${audit.accountedAnswerBlocks}.`);
+      }
+    }
+    if (reasons.length === 0) continue;
+    pagesMap.get(pageNumber)!.push({
+      pageNumber,
+      questionNumber: `PAGE ${pageNumber} REVIEW`,
+      marksAwarded: 0,
+      maxMarks: 0,
+      reviewRequired: true,
+      reviewReason: Array.from(new Set(reasons)).join(' '),
+      pageReviewOnly: true,
+      steps: [],
     });
   }
 
@@ -741,6 +897,7 @@ export async function generateCheckedCopyPdf(
     marksAwarded: number;
     maxMarks: number;
   }> = [];
+  const physicallyRenderedPages: PageRenderManifestItem[] = [];
 
   const rejectIncompletePhysicalRender = (reason: string): never => {
     const physicalGate = validatePostRenderGate({
@@ -749,6 +906,7 @@ export async function generateCheckedCopyPdf(
       records: gateRecords,
       renderedAnnotations: physicallyRenderedAnnotations,
       totalPages: originalPageCount,
+      physicalPageRenders: physicallyRenderedPages,
     });
     const err = new Error(
       `CHECKED_COPY_RENDER_INTEGRITY_FAILURE: ${reason}${physicalGate.errors.length ? `; ${physicalGate.errors.join('; ')}` : ''}`
@@ -809,7 +967,10 @@ export async function generateCheckedCopyPdf(
     let estimatedStandardHeight = 0;
     for (const qAnn of pageAnnotations) {
       const isMcq = qAnn.questionNumber.startsWith('MCQ');
-      if (isMcq) {
+      if (qAnn.reviewRequired) {
+        const reasonLines = wrapPdfAnnotationText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2);
+        estimatedStandardHeight += 58 + reasonLines.length * 8;
+      } else if (isMcq) {
         const optionStep = qAnn.steps[0];
         const rawFeedback = optionStep?.comment || '';
         const lineCount = rawFeedback ? Math.min(3, Math.ceil(rawFeedback.length / 32)) : 0;
@@ -829,13 +990,18 @@ export async function generateCheckedCopyPdf(
 
     for (const qAnn of pageAnnotations) {
       const isMcqAnnotation = qAnn.questionNumber.startsWith('MCQ');
+      const reviewLines = qAnn.reviewRequired
+        ? wrapPdfAnnotationText(qAnn.reviewReason || 'No verified score was issued.', 32).slice(0, 2)
+        : [];
       const optionStep = qAnn.steps[0];
       const optionMatch = optionStep?.stepName.match(/Option:\s*([^|]+)\|\s*Key:\s*([^|]+)/i);
       const selectedOption = qAnn.studentSelectedOption || optionMatch?.[1]?.trim() || '-';
       const officialKey = qAnn.officialAnswer || optionMatch?.[2]?.trim() || '-';
-      const mcqStatus = qAnn.marksAwarded >= qAnn.maxMarks
-        ? 'CORRECT'
-        : qAnn.marksAwarded > 0 ? 'PARTIAL' : 'INCORRECT';
+      const mcqStatus = qAnn.reviewRequired
+        ? 'NEEDS REVIEW'
+        : qAnn.marksAwarded >= qAnn.maxMarks
+          ? 'CORRECT'
+          : qAnn.marksAwarded > 0 ? 'PARTIAL' : 'INCORRECT';
       const mcqFeedbackLines: string[] = [];
       const mcqFeedback = optionStep?.comment || '';
       if (mcqFeedback) {
@@ -891,8 +1057,12 @@ export async function generateCheckedCopyPdf(
       // Preflight the whole canonical annotation before drawing any of it. A
       // page-height limit is an integrity failure, never a reason to drop the
       // current question or its remaining steps silently.
-      const qHeaderHeight = isCompactMode ? 30 : 36;
-      const qHeaderAdvance = isCompactMode ? 36 : 44;
+      const qHeaderHeight = qAnn.reviewRequired
+        ? (isCompactMode ? 42 : 48) + reviewLines.length * (isCompactMode ? 6 : 8)
+        : isCompactMode ? 30 : 36;
+      const qHeaderAdvance = qAnn.reviewRequired
+        ? qHeaderHeight + (isCompactMode ? 4 : 6)
+        : isCompactMode ? 36 : 44;
       const stepGap = isCompactMode ? 2.5 : 4;
 
       if (isMcqAnnotation) {
@@ -924,9 +1094,11 @@ export async function generateCheckedCopyPdf(
         borderWidth: 1.2,
       });
 
-      const qDisplay = qAnn.questionNumber.startsWith('Q') || qAnn.questionNumber.startsWith('MCQ')
-        ? qAnn.questionNumber
-        : `Q.${qAnn.questionNumber}`;
+      const qDisplay = qAnn.pageReviewOnly
+        ? `PAGE ${pageNumber} REVIEW`
+        : qAnn.questionNumber.startsWith('Q') || qAnn.questionNumber.startsWith('MCQ')
+          ? qAnn.questionNumber
+          : `Q.${qAnn.questionNumber}`;
 
       safeDrawText(page, qDisplay, {
         x: marginX + 6,
@@ -936,12 +1108,16 @@ export async function generateCheckedCopyPdf(
         color: redExaminer,
       });
 
-      safeDrawText(page, `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
+      safeDrawText(page, qAnn.reviewRequired
+        ? 'NEEDS REVIEW'
+        : qAnn.excludedFromTotal
+          ? 'ALT NOT COUNTED'
+          : `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
         x: marginX + (isCompactMode ? 46 : 50),
         y: currY - (isCompactMode ? 12 : 14),
-        size: isCompactMode ? 9.5 : 10.5,
+        size: qAnn.reviewRequired || qAnn.excludedFromTotal ? 6.5 : isCompactMode ? 9.5 : 10.5,
         font: helveticaBold,
-        color: redExaminer,
+        color: qAnn.reviewRequired || qAnn.excludedFromTotal ? amberExaminer : redExaminer,
       });
 
       if (isMcqAnnotation) {
@@ -971,23 +1147,44 @@ export async function generateCheckedCopyPdf(
           feedbackY -= (isCompactMode ? 6 : 7);
         }
         currY -= mcqCardHeight + (isCompactMode ? 4 : 6);
-        physicallyRenderedAnnotations.push({
-          pageNumber,
-          questionNumber: qAnn.questionNumber,
-          canonicalId: qAnn.canonicalId,
-          marksAwarded: qAnn.marksAwarded,
-          maxMarks: qAnn.maxMarks,
-        });
+        if (!qAnn.pageReviewOnly) {
+          physicallyRenderedAnnotations.push({
+            pageNumber,
+            questionNumber: qAnn.questionNumber,
+            canonicalId: qAnn.canonicalId,
+            marksAwarded: qAnn.marksAwarded,
+            maxMarks: qAnn.maxMarks,
+          });
+        }
         continue;
       }
 
-      safeDrawText(page, 'STEP-WISE EVALUATION', {
+      safeDrawText(page, qAnn.pageReviewOnly
+        ? 'PAGE CONTENT REQUIRES EXAMINER REVIEW - NOT SCORED'
+        : qAnn.reviewRequired
+          ? 'SCORE WITHHELD - NOT AN ACADEMIC ZERO'
+          : qAnn.excludedFromTotal
+            ? 'FEEDBACK ONLY - ALTERNATIVE NOT INCLUDED IN TOTAL'
+            : 'STEP-WISE EVALUATION', {
         x: marginX + 6,
         y: currY - (isCompactMode ? 24 : 28),
-        size: isCompactMode ? 5.8 : 6.5,
+        size: qAnn.reviewRequired ? (qAnn.pageReviewOnly ? 4.8 : 5.2) : isCompactMode ? 5.8 : 6.5,
         font: helveticaBold,
-        color: darkSlate,
+        color: qAnn.reviewRequired ? amberExaminer : darkSlate,
       });
+      if (qAnn.reviewRequired) {
+        let reviewY = currY - (isCompactMode ? 34 : 40);
+        for (const line of reviewLines) {
+          safeDrawText(page, line, {
+            x: marginX + 6,
+            y: reviewY,
+            size: isCompactMode ? 4.4 : 4.8,
+            font: helvetica,
+            color: darkSlate,
+          });
+          reviewY -= (isCompactMode ? 5.5 : 7);
+        }
+      }
 
       currY -= qHeaderAdvance;
 
@@ -1059,13 +1256,15 @@ export async function generateCheckedCopyPdf(
       }
 
       currY -= (isCompactMode ? 4 : 6);
-      physicallyRenderedAnnotations.push({
-        pageNumber,
-        questionNumber: qAnn.questionNumber,
-        canonicalId: qAnn.canonicalId,
-        marksAwarded: qAnn.marksAwarded,
-        maxMarks: qAnn.maxMarks,
-      });
+      if (!qAnn.pageReviewOnly) {
+        physicallyRenderedAnnotations.push({
+          pageNumber,
+          questionNumber: qAnn.questionNumber,
+          canonicalId: qAnn.canonicalId,
+          marksAwarded: qAnn.marksAwarded,
+          maxMarks: qAnn.maxMarks,
+        });
+      }
     }
 
     // (C) Official Examiner Final Verification Seal (Overlay on LAST page bottom margin)
@@ -1130,6 +1329,20 @@ export async function generateCheckedCopyPdf(
         color: grayText,
       }
     );
+
+    // Record this source page only after the original page, examiner header,
+    // all page annotations, footer and (on the final page) the seal were drawn.
+    physicallyRenderedPages.push({
+      pageNumber,
+      originalPagePresent: true,
+      headerRendered: true,
+      footerRendered: true,
+      examinerSealRendered: pageIdx === originalPageCount - 1,
+      annotationCount: pageAnnotations.length,
+      questionIds: pageAnnotations
+        .filter((annotation) => !annotation.pageReviewOnly && Boolean(annotation.canonicalId))
+        .map((annotation) => annotation.canonicalId!),
+    });
   }
 
   // 4. CRITICAL ASSERTION (Rule 72):
@@ -1147,13 +1360,66 @@ export async function generateCheckedCopyPdf(
     records: gateRecords,
     renderedAnnotations: physicallyRenderedAnnotations,
     totalPages: originalPageCount,
+    physicalPageRenders: physicallyRenderedPages,
   });
   if (!physicalPostGate.isValid) {
     rejectIncompletePhysicalRender(`Physical drawing verification failed: ${physicalPostGate.errors.join('; ')}`);
   }
-  if (runPkg) (runPkg as any).renderManifest = physicalPostGate.renderManifest;
+  if (runPkg) {
+    const renderedQuestionIds = new Set(
+      physicalPostGate.renderManifest.items
+        .filter((item) => item.rendered)
+        .map((item) => item.questionId)
+    );
+    const renderedPagesByNumber = new Map(physicallyRenderedPages.map((page) => [page.pageNumber, page]));
+    const updatedPageAudit: PageCoverageAuditItem[] = (runPkg.pageCoverageAudit || []).map((audit) => {
+      const physicalPage = renderedPagesByNumber.get(audit.pageNumber);
+      return {
+        ...audit,
+        renderedQuestionIds: physicallyRenderedAnnotations
+          .filter((annotation) => annotation.pageNumber === audit.pageNumber && annotation.canonicalId)
+          .map((annotation) => annotation.canonicalId!),
+        pageRendered: Boolean(physicalPage?.originalPagePresent && physicalPage.headerRendered && physicalPage.footerRendered),
+        renderedAnnotationCount: physicalPage?.annotationCount || 0,
+      };
+    });
+    (runPkg as any).pageCoverageAudit = updatedPageAudit;
+    (runPkg as any).studentAttemptManifest = {
+      ...runPkg.studentAttemptManifest,
+      pageCoverageAudit: updatedPageAudit,
+    };
+
+    const markRendered = (records: CanonicalEvaluationRecord[]): CanonicalEvaluationRecord[] =>
+      records.map((record) => ({
+        ...record,
+        rendered: renderedQuestionIds.has(record.questionId),
+      }));
+    const renderedEvaluationRecords = markRendered(runPkg.evaluationRecords);
+    const renderedLedgerRecords = markRendered(runPkg.scoreLedger.records);
+    const renderedLedger = {
+      ...runPkg.scoreLedger,
+      records: renderedLedgerRecords,
+      totalRendered: renderedLedgerRecords.filter((record) => record.rendered).length,
+    };
+    (runPkg as any).evaluationRecords = renderedEvaluationRecords;
+    (runPkg as any).scoreLedger = renderedLedger;
+    (runPkg as any).renderManifest = physicalPostGate.renderManifest;
+    (runPkg as any).reconciliation = buildFourSetReconciliation({
+      ledger: renderedLedger,
+      manifest: runPkg.studentAttemptManifest,
+      scorecardTotal: renderedLedger.totalAwardedMarks,
+      evaluationReportTotal: renderedLedger.totalAwardedMarks,
+      checkedCopyTotal: renderedLedger.totalAwardedMarks,
+      finalDisplayedTotal: renderedLedger.totalAwardedMarks,
+    });
+  }
 
   const pdfBytes = await pdfDoc.save();
+  // Verify the serialized artifact itself, not only the in-memory document.
+  const serializedPdf = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+  if (serializedPdf.getPageCount() !== originalPageCount) {
+    throw new Error(`CHECKED_COPY_SERIALIZED_PAGE_COUNT_MISMATCH: expected ${originalPageCount}, got ${serializedPdf.getPageCount()}.`);
+  }
   return Buffer.from(pdfBytes);
 }
 

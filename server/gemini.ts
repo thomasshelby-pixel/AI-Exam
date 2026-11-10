@@ -897,21 +897,15 @@ Zero negative marking applies for this paper.`;
     markingSchemeHeading,
   } = buildEvaluationReferenceSourceInstructions(params);
 
-  const checkingStrictness = params.checkingMode === 'strict'
-    ? `MODE: Strict Head Examiner (Conservative on Working Notes)
-   - Standard: Rigorous evaluation following senior CA head examiner scrutiny.
-   - Working Notes & Provisions: Full marks strictly require explicit working notes, correct statutory section/rule citations, and standard disclosures. If working notes are omitted or abbreviated, deduct the allocated working-note component conservatively.
-   - Core Consistency: Must use the EXACT SAME ${referenceBasisLabel}, correct numerical values, and question allocations as Standard Mode. Do NOT invent arbitrary errors or penalize valid alternative solutions. Consequential marking MUST still be respected.`
-    : params.checkingMode === 'lenient'
-    ? `MODE: Moderate Guidance (Emphasizes Partial Step Marks)
-   - Standard: Diagnostic and guidance-oriented evaluation emphasizing step-by-step learning.
-   - Partial Marking: Generously recognize every valid intermediate calculation step, formula citation, and conceptual application even if final arithmetic or presentation has flaws.
-   - Constructive Guidance: For every mark deducted, clearly articulate what component was missing and how to achieve full marks.
-   - Core Consistency: Must use the EXACT SAME ${referenceBasisLabel} and marking guidance as Standard Mode. Never inflate marks beyond the component's maximum allotment.`
-    : `MODE: Standard ICAI Marking (Balanced & Realistic)
-   - Standard: Balanced, realistic CA examination evaluation following the applicable CA examination marking principles and the supplied reference basis.
-   - Step Marking: Proportionately awards step marks across provisions, intermediate calculations, working notes, and final conclusions.
-   - Core Consistency: Anchored strictly to ${referenceBasisLabel}.`;
+  // All display modes share one source-grounded base evaluation. Strict and
+  // Moderate are derived exactly once by applyMultiModeMarkingPhilosophy after
+  // the same component assessments and standard marks have been persisted.
+  const checkingStrictness = `BASE EVALUATION: STANDARD ICAI STEP MARKING ONLY.
+   - Use the same balanced, evidence-based scoring rubric for every display mode.
+   - Award each independently correct source-marked step; award partial marks only for the evidence actually present.
+   - Preserve the original CORRECT / PARTIALLY_CORRECT / INCORRECT / OMITTED assessment for every component.
+   - Do not simulate Strict or Moderate adjustments in the base evaluator. The deterministic multi-mode engine applies them once after evaluation.
+   - Use the EXACT SAME ${referenceBasisLabel}, question allocations, and source material for all modes.`;
 
   const evaluationPrompt = `
 MANDATORY EVALUATOR INSTRUCTION:
@@ -1589,6 +1583,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
               'Cite relevant sections and rules explicitly before drawing computational conclusions.',
             ],
             questions: activeQuestions,
+            modeQuestions: multiMode.modeQuestions,
             structuredMarkingEvidence: activeQuestions.map((q) => q.structuredEvidence!).filter(Boolean),
             scoreCalculationAudit,
             isMcqPaper: false,
@@ -1723,7 +1718,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           params.subjectKey.includes('accounting') ||
           params.subjectKey.includes('financial') ||
           params.subjectKey.includes('quantitative'),
-        isAmbiguousOrComplex: params.level === 'FINAL' || params.checkingMode === 'strict',
+        isAmbiguousOrComplex: params.level === 'FINAL',
       },
     });
   } catch (modelErr: any) {
@@ -2207,6 +2202,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
       'Always state the legal or statutory principle before drawing the final conclusion.',
     ],
     questions: activeQuestions,
+    modeQuestions: multiMode.modeQuestions,
     structuredMarkingEvidence: activeQuestions.map(q => q.structuredEvidence!).filter(Boolean),
     scoreCalculationAudit,
     modeBreakdown: multiMode.modeBreakdown,

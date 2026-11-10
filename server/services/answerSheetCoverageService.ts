@@ -783,6 +783,80 @@ export interface AnswerCoverageMap {
   mcqNeedsReview?: string[];
 }
 
+export interface AnswerSheetCoverageCompleteness {
+  isComplete: boolean;
+  errors: string[];
+  missingPages: number[];
+  duplicatePages: number[];
+}
+
+/**
+ * Verifies that every physical source page has exactly one analysis record.
+ * A provider-circuit skipped page still has a record, but is explicitly marked
+ * incomplete and therefore can never be silently treated as a blank page.
+ */
+export function validateAnswerSheetCoverageCompleteness(
+  coverage: Pick<AnswerCoverageMap, 'totalPages' | 'pages'>,
+): AnswerSheetCoverageCompleteness {
+  const errors: string[] = [];
+  const pages = Array.isArray(coverage.pages) ? coverage.pages : [];
+  const pageNumbers = pages.map((page) => Number(page.pageNumber));
+  const counts = new Map<number, number>();
+  for (const pageNumber of pageNumbers) {
+    counts.set(pageNumber, (counts.get(pageNumber) || 0) + 1);
+  }
+
+  const missingPages = Array.from({ length: Math.max(0, coverage.totalPages) }, (_, index) => index + 1)
+    .filter((pageNumber) => !counts.has(pageNumber));
+  const duplicatePages = [...counts.entries()]
+    .filter(([, count]) => count !== 1)
+    .map(([pageNumber]) => pageNumber)
+    .filter((pageNumber) => (counts.get(pageNumber) || 0) > 1)
+    .sort((a, b) => a - b);
+
+  if (!Number.isInteger(coverage.totalPages) || coverage.totalPages <= 0) {
+    errors.push('ANSWER_SHEET_PAGE_COUNT_INVALID: Original PDF page count must be a positive integer.');
+  }
+  if (pages.length !== coverage.totalPages) {
+    errors.push(`ANSWER_SHEET_PAGE_AUDIT_COUNT_MISMATCH: Expected ${coverage.totalPages} page audit records but found ${pages.length}.`);
+  }
+  if (missingPages.length > 0) {
+    errors.push(`ANSWER_SHEET_PAGES_MISSING_FROM_AUDIT: Page(s) ${missingPages.join(', ')} have no analysis record.`);
+  }
+  if (duplicatePages.length > 0) {
+    errors.push(`ANSWER_SHEET_PAGE_AUDIT_DUPLICATES: Page(s) ${duplicatePages.join(', ')} have duplicate analysis records.`);
+  }
+
+  for (const page of pages) {
+    if (!Number.isInteger(page.pageNumber) || page.pageNumber < 1 || page.pageNumber > coverage.totalPages) {
+      errors.push(`ANSWER_SHEET_PAGE_AUDIT_OUT_OF_RANGE: Page audit record ${page.pageNumber} is outside 1..${coverage.totalPages}.`);
+    }
+    if (page.analysisFailure) {
+      errors.push(`ANSWER_SHEET_PAGE_ANALYSIS_FAILED: Page ${page.pageNumber} was not successfully analysed (${page.analysisFailure.code}).`);
+    }
+    if (page.status === 'QUESTION_NOT_IDENTIFIED' || page.status === 'PAGE_UNREADABLE' || page.mappingReviewReason) {
+      errors.push(`ANSWER_SHEET_PAGE_REQUIRES_REVIEW: Page ${page.pageNumber} has unresolved content or question mapping.`);
+    }
+    const unresolved = Array.isArray(page.unresolvedAnswerBlocks) ? page.unresolvedAnswerBlocks : [];
+    const accounted = (page.detectedQuestions || []).length + unresolved.length;
+    if (
+      page.answerBlocksObserved !== undefined &&
+      page.answerBlocksObserved !== accounted
+    ) {
+      errors.push(
+        `ANSWER_BLOCK_COUNT_MISMATCH: Page ${page.pageNumber} observed ${page.answerBlocksObserved} answer block(s) but accounted for ${accounted}.`
+      );
+    }
+  }
+
+  return {
+    isComplete: errors.length === 0,
+    errors: Array.from(new Set(errors)),
+    missingPages,
+    duplicatePages,
+  };
+}
+
 /**
  * Builds the complete Answer Coverage Map across all pages of the uploaded answer sheet.
  */
@@ -1172,19 +1246,37 @@ export async function buildAnswerSheetCoverageMap(
   const allDetectedCodes = attemptedQuestions.map((a) => a.fullQuestionCode);
 
   const unmappedPages = pageRecords
-    .filter((p) => p.status === 'QUESTION_NOT_IDENTIFIED' || p.status === 'PAGE_UNREADABLE')
+    .filter((p) =>
+      p.status === 'QUESTION_NOT_IDENTIFIED' ||
+      p.status === 'PAGE_UNREADABLE' ||
+      Boolean(p.analysisFailure) ||
+      Boolean(p.mappingReviewReason) ||
+      Boolean(p.unresolvedAnswerBlocks?.length)
+    )
     .map((p) => p.pageNumber);
 
   const unclearPages = pageRecords
-    .filter((p) => p.status === 'ATTEMPTED_UNCLEAR' || p.status === 'ATTEMPTED_PARTIALLY_READABLE')
+    .filter((p) =>
+      p.status === 'ATTEMPTED_UNCLEAR' ||
+      p.status === 'ATTEMPTED_PARTIALLY_READABLE' ||
+      Boolean(p.analysisFailure)
+    )
     .map((p) => p.pageNumber);
 
-  const is100PercentCovered = pageRecords.every(
-    (p) => p.status !== 'QUESTION_NOT_IDENTIFIED' && p.status !== 'PAGE_UNREADABLE'
+  const pageAuditIsExact = pageRecords.length === totalPages &&
+    new Set(pageRecords.map((p) => p.pageNumber)).size === totalPages &&
+    pageRecords.every((p, index) => p.pageNumber === index + 1);
+  const is100PercentCovered = pageAuditIsExact && pageRecords.every(
+    (p) =>
+      !p.analysisFailure &&
+      !p.mappingReviewReason &&
+      !(p.unresolvedAnswerBlocks?.length) &&
+      p.status !== 'QUESTION_NOT_IDENTIFIED' &&
+      p.status !== 'PAGE_UNREADABLE'
   );
 
   const coveredPages = pageRecords
-    .filter((p) => p.status !== 'CLEARLY_UNATTEMPTED')
+    .filter((p) => !p.analysisFailure && p.status !== 'CLEARLY_UNATTEMPTED')
     .map((p) => p.pageNumber);
 
   const coverageResult: AnswerCoverageMap = {

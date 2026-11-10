@@ -477,6 +477,27 @@ export function createExactlyOnceEvaluationTasks(options: {
  * - Zero-mark attempted questions are kept intact with attempted: true, awardedMarks: 0, counted: true
  * - Unselected alternatives are excluded from count
  */
+/**
+ * A descriptive question cannot receive a certified academic score without
+ * persisted component/step evidence. This also prevents the checked-copy
+ * renderer from manufacturing generic PROVISION/APPLICATION cards for a zero.
+ */
+export function hasPersistedDescriptiveStepEvidence(
+  questionId: string,
+  questionType: unknown,
+  evaluation: any,
+): boolean {
+  const isMcq = String(questionType || '').toUpperCase() === 'MCQ' ||
+    String(questionId || '').toUpperCase().startsWith('MCQ');
+  if (isMcq) return true;
+  const components =
+    evaluation?.markingComponents ||
+    evaluation?.structuredEvidence?.markingComponents;
+  const breakdown = evaluation?.stepMarkingBreakdown;
+  return (Array.isArray(components) && components.length > 0) ||
+    (Array.isArray(breakdown) && breakdown.length > 0);
+}
+
 export function buildCanonicalEvaluationLedger(options: {
   runId: string;
   inventory: CanonicalQuestionInventory;
@@ -521,18 +542,36 @@ export function buildCanonicalEvaluationLedger(options: {
     let status: CanonicalEvaluationStatus = 'UNATTEMPTED';
     let awardedMarks = 0;
     let counted = false;
-    let rendered = true;
+    // Physical checked-copy rendering is verified after the PDF is actually drawn.
+    let rendered = false;
+    const studentPages = attempt && Array.isArray(attempt.sourcePages)
+      ? attempt.sourcePages.filter((page) => Number.isInteger(page) && page >= 1)
+      : [];
+    const missingStudentPageMapping = isAttempted && studentPages.length === 0;
+    let missingStepEvidence = false;
 
     if (isAttempted) {
       const isTechFail = Boolean(
         evaluation?.flags?.includes('FAILED_TO_EVALUATE') ||
         evaluation?.flags?.includes('TECHNICAL_FAILURE')
       );
+      missingStepEvidence = Boolean(
+        evaluation &&
+        !hasPersistedDescriptiveStepEvidence(
+          canonId,
+          item.questionType,
+          evaluation,
+        )
+      );
       const requiresHumanReview = Boolean(
         attempt?.mcqSelectionNeedsReview ||
+        missingStudentPageMapping ||
         evaluation?.status === 'unclear' ||
         evaluation?.flags?.includes('REVIEW_REQUIRED') ||
-        evaluation?.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED')
+        evaluation?.flags?.includes('NEEDS_MAPPING_REVIEW') ||
+        evaluation?.flags?.includes('QUESTION_REFERENCE_REVIEW_REQUIRED') ||
+        evaluation?.flags?.includes('MCQ_SELECTION_REVIEW_REQUIRED') ||
+        missingStepEvidence
       );
       if (evaluation && isTechFail) {
         status = 'FAILED_TO_EVALUATE';
@@ -564,8 +603,7 @@ export function buildCanonicalEvaluationLedger(options: {
       counted = false;
     }
 
-    const studentPages = attempt && Array.isArray(attempt.sourcePages) ? attempt.sourcePages : [];
-    let annotationPage = studentPages.length > 0 ? studentPages[0] : (item.sourcePage || 1);
+    let annotationPage: number | undefined = studentPages.length > 0 ? studentPages[0] : undefined;
     if (studentPages.length > 1) {
       // For questions spanning multiple student pages, distribute to the least-loaded student page
       // so annotations are balanced across valid student answer sheets.
@@ -580,11 +618,13 @@ export function buildCanonicalEvaluationLedger(options: {
       }
       annotationPage = minPage;
     }
-    if (isAttempted && status === 'EVALUATED') {
+    if (isAttempted && status === 'EVALUATED' && annotationPage !== undefined) {
       pageLoadMap.set(annotationPage, (pageLoadMap.get(annotationPage) || 0) + 1);
     }
     const isMcq = item.questionType === 'MCQ' || canonId.toUpperCase().startsWith('MCQ');
-    const annotationRequired = isAttempted && isSelectedAlternative &&
+    // Every attempted answer gets a checked-copy disposition, including a
+    // second OR/alternative branch that is intentionally excluded from the total.
+    const annotationRequired = isAttempted && Boolean(annotationPage) &&
       (status === 'EVALUATED' || status === 'FAILED_TO_EVALUATE' || status === 'NEEDS_REVIEW');
 
     records.push({
@@ -600,14 +640,16 @@ export function buildCanonicalEvaluationLedger(options: {
       awardedMarks,
       evaluationStatus: status,
       annotationRequired,
-      annotationPage,
-      annotationAnchor: {
-        pageNumber: annotationPage,
-        region: 'RIGHT_MARGIN',
-        annotationType: status === 'NEEDS_REVIEW'
-          ? 'EVALUATION_NOTE'
-          : isMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
-      },
+      ...(annotationPage ? { annotationPage } : {}),
+      ...(annotationPage ? {
+        annotationAnchor: {
+          pageNumber: annotationPage,
+          region: 'RIGHT_MARGIN' as const,
+          annotationType: status === 'NEEDS_REVIEW'
+            ? 'EVALUATION_NOTE' as const
+            : isMcq ? 'MCQ_BADGE' as const : 'SCORE_BOX' as const,
+        },
+      } : {}),
       renderOrder: item.sourceOrder ?? 1,
       rendered,
       counted,
@@ -617,7 +659,10 @@ export function buildCanonicalEvaluationLedger(options: {
       studentSelectedOption: evaluation?.candidateSelectedOption || attempt?.studentSelectedOption,
       reviewRequired: status === 'NEEDS_REVIEW',
       reviewReason: status === 'NEEDS_REVIEW'
-        ? attempt?.mappingReviewReason || evaluation?.reasonForDeduction || 'Answer evidence requires manual verification.'
+        ? attempt?.mappingReviewReason ||
+          (missingStepEvidence
+            ? 'No persisted component-level marking evidence exists for this attempted descriptive question. The score is withheld; this is not an academic zero.'
+            : evaluation?.reasonForDeduction || 'Answer evidence requires manual verification.')
         : undefined,
       officialAnswer: evaluation?.officialCorrectOption,
       evidence: attempt?.evidence,
@@ -640,8 +685,9 @@ export function buildCanonicalEvaluationLedger(options: {
       const counted = false;
       errors.push(`ATTEMPTED_QUESTION_UNMAPPED: Attempted question ${canonId} is not in the authoritative inventory and cannot be scored.`);
 
-      const extraStudentPages = attempt.sourcePages || [];
-      const extraAnnPage = extraStudentPages.length > 0 ? extraStudentPages[0] : 1;
+      const extraStudentPages = (attempt.sourcePages || [])
+        .filter((page) => Number.isInteger(page) && page >= 1);
+      const extraAnnPage = extraStudentPages.length > 0 ? extraStudentPages[0] : undefined;
       const isExtraMcq = canonId.toUpperCase().startsWith('MCQ') || attempt.isMcq;
 
       records.push({
@@ -656,13 +702,17 @@ export function buildCanonicalEvaluationLedger(options: {
         maxMarks: 0,
         awardedMarks,
         evaluationStatus: status,
-        annotationRequired: false,
-        annotationPage: extraAnnPage,
-        annotationAnchor: {
-          pageNumber: extraAnnPage,
-          region: 'RIGHT_MARGIN',
-          annotationType: isExtraMcq ? 'MCQ_BADGE' : 'SCORE_BOX',
-        },
+        // A visibly attempted but unmapped question remains on the checked copy
+        // as a review annotation. It is never given marks or included in totals.
+        annotationRequired: isAttempted && Boolean(extraAnnPage),
+        ...(extraAnnPage ? { annotationPage: extraAnnPage } : {}),
+        ...(extraAnnPage ? {
+          annotationAnchor: {
+            pageNumber: extraAnnPage,
+            region: 'RIGHT_MARGIN' as const,
+            annotationType: 'EVALUATION_NOTE' as const,
+          },
+        } : {}),
         renderOrder: 1000,
         rendered: false,
         counted,
@@ -783,7 +833,8 @@ export function buildEvaluationReconciliationSection(
     .filter((r) => r.attempted)
     .every((r) =>
       r.evaluationStatus === 'EXCLUDED_ALTERNATIVE' ||
-      (r.evaluationStatus === 'EVALUATED' && r.counted)
+      (r.evaluationStatus === 'EVALUATED' && r.counted) ||
+      (r.evaluationStatus === 'EVALUATED' && r.isAlternative === true && !r.counted)
     );
 
   const summary =
@@ -826,9 +877,19 @@ export function buildStudentAttemptManifest(options: {
     mcqSelectionNeedsReview?: boolean;
     mappingReviewReason?: string;
   }>;
+  pageCoverageRecords?: Array<{
+    pageNumber: number;
+    status?: string;
+    hasHandwriting?: boolean;
+    mappingReviewReason?: string;
+    answerBlocksObserved?: number;
+    detectedQuestions?: Array<{ fullQuestionCode?: string; questionNumber?: string; isMcq?: boolean }>;
+    unresolvedAnswerBlocks?: string[];
+    analysisFailure?: { code?: string };
+  }>;
   mcqSelections?: Record<string, string>;
 }): StudentAttemptManifest {
-  const { runId, totalPages, inventory, rawPageOccurrences, mcqSelections } = options;
+  const { runId, totalPages, inventory, rawPageOccurrences, pageCoverageRecords = [], mcqSelections } = options;
   const attemptsMap = detectIndependentAttempts({
     inventory,
     rawPageOccurrences,
@@ -855,26 +916,65 @@ export function buildStudentAttemptManifest(options: {
     });
   }
 
-  // Construct Page Coverage Audit from the normalized attempt manifest, not raw
-  // page-heading detections. Raw OCR can emit both a parent heading (Q7) and its
-  // actual child answer (Q7(b)); detectIndependentAttempts has already resolved
-  // that parent/child relationship and transferred the source pages to the leaf.
+  // Construct Page Coverage Audit from BOTH the normalized attempts and the
+  // per-page analyzer records. A page with handwriting but no resolvable question
+  // must not be mislabeled as blank merely because it has no canonical ID.
   const pageCoverageAudit: PageCoverageAuditItem[] = [];
   for (let p = 1; p <= totalPages; p++) {
     const pageOccs = rawPageOccurrences.filter((occ) => occ.pageNumber === p);
-    const hasStudentContent = pageOccs.length > 0;
+    const pageRecord = pageCoverageRecords.find((record) => record.pageNumber === p);
+    const unresolvedAnswerBlocks = Array.isArray(pageRecord?.unresolvedAnswerBlocks)
+      ? pageRecord!.unresolvedAnswerBlocks!
+      : [];
     const detectedQuestionIds = attempts
       .filter((attempt) => attempt.attempted && attempt.sourcePages.includes(p))
       .map((attempt) => attempt.questionId)
       .filter((questionId, index, all) => all.indexOf(questionId) === index)
       .sort();
+    const accountedAnswerBlocks = pageRecord
+      ? (pageRecord.detectedQuestions || []).length + unresolvedAnswerBlocks.length
+      : pageOccs.length;
+    const answerBlockCountMismatch = Boolean(
+      pageRecord?.answerBlocksObserved !== undefined &&
+      pageRecord.answerBlocksObserved !== accountedAnswerBlocks
+    );
+    const hasUnresolvedContent = Boolean(
+      pageRecord?.analysisFailure ||
+      pageRecord?.mappingReviewReason ||
+      unresolvedAnswerBlocks.length > 0 ||
+      answerBlockCountMismatch ||
+      pageRecord?.status === 'QUESTION_NOT_IDENTIFIED' ||
+      pageRecord?.status === 'PAGE_UNREADABLE'
+    );
+    const hasStudentContent = pageRecord
+      ? pageRecord.hasHandwriting !== false || pageRecord.status !== 'CLEARLY_UNATTEMPTED'
+      : pageOccs.length > 0;
 
     pageCoverageAudit.push({
       pageNumber: p,
       hasStudentContent,
       detectedQuestionIds,
       evaluatedQuestionIds: [],
+      // Physical rendering is only marked after the checked-copy writer verifies it.
       renderedQuestionIds: [],
+      ...(pageRecord ? {
+        analysisStatus: pageRecord.status,
+        analysisCompleted: !pageRecord.analysisFailure,
+        ...(pageRecord.analysisFailure?.code ? { analysisFailureCode: pageRecord.analysisFailure.code } : {}),
+        answerBlocksObserved: pageRecord.answerBlocksObserved,
+        accountedAnswerBlocks,
+        unresolvedAnswerBlocks,
+        hasUnresolvedContent,
+        mappingReviewReason: pageRecord.mappingReviewReason,
+        pageRendered: false,
+        renderedAnnotationCount: 0,
+      } : {
+        // Legacy/non-PDF integrity callers do not have an AI page-analysis result.
+        // Do not fabricate a failure state here; the PDF worker separately refuses
+        // certification unless every original page has explicit analysis evidence.
+        pageRendered: false,
+        renderedAnnotationCount: 0,
+      }),
     });
   }
 
@@ -946,15 +1046,21 @@ export function buildFourSetReconciliation(options: {
 
   // Check 3: RenderedSet == CountedSet (for scorable questions)
   const unselectedAlternatives = ledger.records
-    .filter((r) => r.evaluationStatus === 'EXCLUDED_ALTERNATIVE')
+    .filter((r) =>
+      r.evaluationStatus === 'EXCLUDED_ALTERNATIVE' ||
+      (r.isAlternative === true && r.counted === false)
+    )
     .map((r) => r.questionId);
 
-  const nonAltEvaluated = evaluatedSet.filter((id) => !unselectedAlternatives.includes(id));
+  // Alternative branches remain in EvaluatedSet and RenderedSet so their
+  // feedback is preserved, but only the selected/scorable branch belongs in
+  // the CountedSet equality check.
+  const scorableRenderedSet = renderedSet.filter((id) => !unselectedAlternatives.includes(id));
   const isRenderedEqualToCounted =
-    nonAltEvaluated.length === countedSet.length &&
-    nonAltEvaluated.every((qId) => countedSet.includes(qId));
+    scorableRenderedSet.length === countedSet.length &&
+    scorableRenderedSet.every((qId) => countedSet.includes(qId));
   if (!isRenderedEqualToCounted) {
-    mismatches.push(`COUNTED_SET_MISMATCH: Counted set (${countedSet.length}) does not match scorable evaluated set (${nonAltEvaluated.length})`);
+    mismatches.push(`COUNTED_SET_MISMATCH: Counted set (${countedSet.length}) does not match scorable rendered set (${scorableRenderedSet.length})`);
   }
 
   // Check 4: Score Reconciliation
@@ -1052,7 +1158,10 @@ export function createEvaluationRunPackage(options: {
     return {
       ...p,
       evaluatedQuestionIds: pageEvaluated,
-      renderedQuestionIds: pageEvaluated,
+      // Never infer physical rendering from evaluation.
+      renderedQuestionIds: [],
+      pageRendered: false,
+      renderedAnnotationCount: 0,
     };
   });
 
