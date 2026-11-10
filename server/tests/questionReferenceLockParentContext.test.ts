@@ -232,4 +232,30 @@ assert.match(bareNestedParent.snippet, /Only bare nested child one evidence/);
 assert.match(bareNestedParent.snippet, /Only bare nested child two evidence/);
 assert.doesNotMatch(bareNestedParent.snippet, /Top-level sibling evidence/);
 
+// Generated detailed schemes use one SUBQUESTION block per scoreable part.
+// Preserve the full block even when its content anchor has the wrong sibling label.
+const generatedMisboundScheme = [
+  'CA EXAM CHECKER AI',
+  'SUBQUESTION: Q1(a)',
+  'SUBQUESTION MARKS: 5',
+  'SOURCE-DERIVED CONTENT ANCHOR:',
+  '1. (a) Companies Act section 68 buy-back of equity shares by special resolution.',
+  'STEP 1: Identify the applicable provision.',
+  'SUBQUESTION: Q1(c)',
+  'SUBQUESTION MARKS: 4',
+  'SOURCE-DERIVED CONTENT ANCHOR:',
+  '1. (a) Companies Act section 68 buy-back of equity shares by special resolution.',
+  'STEP 1: Identify the applicable provision.',
+  'SUBQUESTION: Q2(a)',
+  'SUBQUESTION MARKS: 5',
+  'FEMA consultancy remittance threshold for an infrastructure project.',
+].join('\n');
+const q1cSchemeBlock = extractLockedQuestionSlice(generatedMisboundScheme, '1', 'c', 'MS');
+assert.equal(q1cSchemeBlock.found, true,
+  'A generated SUBQUESTION scheme block must resolve by its exact full label.');
+assert.match(q1cSchemeBlock.snippet, /Companies Act section 68 buy-back/i,
+  'Keep the complete cross-wired source anchor visible so it can be rejected rather than silently truncated.');
+assert.doesNotMatch(q1cSchemeBlock.snippet, /FEMA consultancy remittance threshold/,
+  'The next scoreable scheme block must not leak into Q1(c).');
+
 console.log('✅ Parent-scoped sub-question reference lock regression passed.');
