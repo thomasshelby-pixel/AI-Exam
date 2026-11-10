@@ -1347,7 +1347,7 @@ export function buildPageCoveragePrompt(params: {
     const sourcePathKey = sourcePath.map((part) => part.toLowerCase()).join('/');
     const hasRomanChild = sourcePath.length > normalizedPath.length &&
       sourcePath.some((part, index) =>
-        index > 0 && normalizeCanonicalQuestionPartPath(sourcePath).length < sourcePath.length &&
+        index > 0 &&
         /^(?:i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx|xxi|xxii|xxiii|xxiv|xxv|xxx|xl|l|lx|lxx|xc|c)$/i.test(part)
       );
 
