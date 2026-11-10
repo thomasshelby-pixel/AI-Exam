@@ -319,32 +319,47 @@ export async function generateDetailedReportPdf(
 
   let questions: any[] = [];
   if (runPkg && Array.isArray(runPkg.evaluationRecords) && runPkg.evaluationRecords.length > 0) {
+    // Keep skipped/unattempted paper questions in the report scoreboard.
+    // The canonical ledger remains the authority for totals; including a skipped
+    // optional question here is display-only and must not inflate the score.
     questions = runPkg.evaluationRecords
-      .filter((r: any) => r.counted || r.attempted)
       .map((r: any) => ({
         questionNumber: r.questionId,
         canonicalId: r.questionId,
+        topic: r.topic || r.topicName || r.questionTitle || r.subjectTopic,
         maximumMarks: r.maxMarks,
         maxMarks: r.maxMarks,
         marksAwarded: r.awardedMarks,
+        attempted: Boolean(r.attempted),
+        counted: Boolean(r.counted),
+        evaluationStatus: r.evaluationStatus,
+        reportStatus: r.reportStatus || r.status,
         detailedFeedback: r.evidence || `Evaluated with status ${r.evaluationStatus}`,
         markingComponents: r.markingComponents,
         stepMarkingBreakdown: r.stepMarkingBreakdown,
         stepsEvaluated: r.markingComponents,
+        idealAnswer: r.idealAnswer || r.modelAnswer || r.suggestedAnswer,
       }));
   } else if (resultJson?.canonicalLedger && Array.isArray(resultJson.canonicalLedger.records) && resultJson.canonicalLedger.records.length > 0) {
+    // Same display policy as the persisted run package: include skipped rows,
+    // but never add their marks into the canonical score total.
     questions = resultJson.canonicalLedger.records
-      .filter((r: any) => r.counted || r.attempted)
       .map((r: any) => ({
         questionNumber: r.questionId,
         canonicalId: r.questionId,
+        topic: r.topic || r.topicName || r.questionTitle || r.subjectTopic,
         maximumMarks: r.maxMarks,
         maxMarks: r.maxMarks,
         marksAwarded: r.awardedMarks,
+        attempted: Boolean(r.attempted),
+        counted: Boolean(r.counted),
+        evaluationStatus: r.evaluationStatus,
+        reportStatus: r.reportStatus || r.status,
         detailedFeedback: r.evidence || `Evaluated with status ${r.evaluationStatus}`,
         markingComponents: r.markingComponents,
         stepMarkingBreakdown: r.stepMarkingBreakdown,
         stepsEvaluated: r.markingComponents,
+        idealAnswer: r.idealAnswer || r.modelAnswer || r.suggestedAnswer,
       }));
   } else {
     const rawQuestions: any[] = resultJson?.questionWiseBreakdown || resultJson?.questions || [];
