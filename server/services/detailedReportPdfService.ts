@@ -983,10 +983,11 @@ export async function generateDetailedReportPdf(
         color: brandBlue,
       });
 
-      safeDrawText(currentStepPage, `Marks Awarded: ${qMarks} / ${qMax}`, {
-        x: pW - 170,
+      const qMarksLost = Math.max(0, qMax - qMarks);
+      safeDrawText(currentStepPage, `Earned +${qMarks} | Deducted -${qMarksLost} | Max ${qMax}`, {
+        x: pW - 220,
         y: stepY - 15,
-        size: 8.5,
+        size: 7.5,
         font: helveticaBold,
         color: qMarks >= qMax ? passGreen : darkSlate,
       });
@@ -1122,7 +1123,9 @@ export async function generateDetailedReportPdf(
           });
 
           // Marks awarded and deduction pill (anchored to top-right of the box)
-          const markLabel = sDeducted > 0 ? `+${sAward} / ${sMax} (-${sDeducted})` : `+${sAward} / ${sMax}`;
+          const markLabel = sDeducted > 0
+            ? `Earned +${sAward} / ${sMax} | Deducted -${sDeducted}`
+            : `Earned +${sAward} / ${sMax}`;
           safeDrawText(currentStepPage, markLabel, {
             x: pW - 145,
             y: stepY - 12,
@@ -1160,6 +1163,73 @@ export async function generateDetailedReportPdf(
       }
 
       stepY -= 8;
+    }
+  }
+
+  // Examiner action plan: include only genuinely unattempted questions and
+  // surface model points only when they are present in the verified evaluation data.
+  const unattemptedQuestions = questions.filter((q: any) => {
+    const status = String(q.reportStatus || q.evaluationStatus || q.status || '').toLowerCase();
+    return q.attempted === false || ['not_attempted', 'unattempted', 'blank'].includes(status);
+  });
+  if (unattemptedQuestions.length > 0) {
+    pageNum++;
+    let { page: actionPage, width: actionWidth, height: actionHeight } = createReportPage(pageNum);
+    let actionY = actionHeight - 75;
+    safeDrawText(actionPage, "EXAMINER'S ACTION PLAN & MODEL NOTES FOR UNATTEMPTED QUESTIONS", {
+      x: 36, y: actionY, size: 10, font: helveticaBold, color: brandBlue,
+    });
+    actionY -= 24;
+    safeDrawText(actionPage, 'These questions were not attempted in the supplied answer book. The notes below are shown only when supported by the verified evaluation reference.', {
+      x: 36, y: actionY, size: 7.2, font: helvetica, color: mutedSlate,
+    });
+    actionY -= 22;
+
+    for (const q of unattemptedQuestions) {
+      const qId = String(q.canonicalId || q.questionNumber || 'Question');
+      const qMax = Number(q.maximumMarks ?? q.maxMarks ?? 0);
+      if (actionY < 110) {
+        pageNum++;
+        const nextPage = createReportPage(pageNum);
+        actionPage = nextPage.page;
+        actionY = nextPage.height - 75;
+      }
+      safeDrawText(actionPage, `${qId} — Unattempted (0 / ${qMax} marks)`, {
+        x: 40, y: actionY, size: 8.5, font: helveticaBold, color: failRed,
+      });
+      actionY -= 14;
+
+      const components: any[] = q.markingComponents || q.structuredEvidence?.markingComponents || [];
+      const notes = [
+        ...(q.idealAnswer ? [String(q.idealAnswer)] : []),
+        ...components.map((c: any) => c.idealAnswer || c.authoritativeAnswer || c.expectedRequirement).filter(Boolean),
+      ].filter((value: any, index: number, all: any[]) => all.indexOf(value) === index);
+
+      if (notes.length === 0) {
+        safeDrawText(actionPage, 'No answer was detected. A verified model-answer excerpt was not available in this evaluation record.', {
+          x: 48, y: actionY, size: 7.2, font: helvetica, color: darkSlate,
+        });
+        actionY -= 14;
+      } else {
+        for (const note of notes) {
+          const noteLines = wrapText(`• ${String(note)}`, 92);
+          const noteHeight = noteLines.length * 9 + 4;
+          if (actionY - noteHeight < 65) {
+            pageNum++;
+            const nextPage = createReportPage(pageNum);
+            actionPage = nextPage.page;
+            actionY = nextPage.height - 75;
+          }
+          for (const noteLine of noteLines) {
+            safeDrawText(actionPage, noteLine, {
+              x: 48, y: actionY, size: 7.2, font: helvetica, color: darkSlate,
+            });
+            actionY -= 9;
+          }
+          actionY -= 4;
+        }
+      }
+      actionY -= 12;
     }
   }
 
