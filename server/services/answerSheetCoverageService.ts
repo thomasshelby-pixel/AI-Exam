@@ -341,10 +341,19 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
         subQuestion = inferredSubQuestion;
       } else if (typeof question.subQuestion === 'string' || typeof question.subQuestion === 'number') {
         const explicitSubQuestion = String(question.subQuestion).trim();
-        if (inferredSubQuestion && inferredSubQuestion !== 'MCQ') {
-          const normalizedFullCode = toCanonicalQuestionId(rawQuestionNumber, explicitSubQuestion);
+        if (questionNumber && inferredSubQuestion !== 'MCQ') {
+          // Normalize even when the model returns the parent question number
+          // and a nested path in separate fields (e.g. questionNumber="2",
+          // subQuestion="a(i)"). Otherwise the raw Roman child leaks into the
+          // answer map despite the canonical scoreable identity being Q2(a).
+          const normalizedFullCode = toCanonicalQuestionId(
+            rawQuestionNumber || questionNumber,
+            explicitSubQuestion,
+          );
           subQuestion = parseCanonicalQuestionIdentity(normalizedFullCode).subQuestion || explicitSubQuestion;
         } else {
+          // A truly bare child label without a visible parent remains raw so
+          // resolveContextualQuestionIdentity can validate its continuation context.
           subQuestion = explicitSubQuestion;
         }
       } else {
