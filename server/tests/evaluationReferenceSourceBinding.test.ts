@@ -131,8 +131,11 @@ const mixedPartQuestionPaper = [
   '6. Which rule governs audit-firm rotation?',
   'PART – II (Descriptive Portion)',
   'Question 1(c): Mr. Harish is asked to accept US$30 cash from Mr. Lucas, a foreign tourist, for an antique. (4 Marks)',
+  'Question 2(a): A separate deposits question follows.',
   'Question 4(b): Explain the designated-partner requirements and the effect of a partner relocating abroad. (5 Marks)',
+  'Question 5(a): A separate companies-law question follows.',
   'Question 6(b): Classify Arya Limited, Chirag Limited and Prism Limited as listed or unlisted companies. (5 Marks)',
+  'Question 7(a): A separate question follows.',
 ].join('\n');
 
 const mixedPartSuggestedAnswers = [
@@ -146,12 +149,18 @@ const mixedPartSuggestedAnswers = [
   'As per section 3 of FEMA, no person shall receive payment by order or on behalf of a person resident outside India otherwise than through an authorised person.',
   'Where a person receives payment through another person without corresponding inward remittance from outside India, it is deemed to be receipt otherwise than through an authorised person.',
   'Mr. Lucas is a foreign tourist and proposes to pay Mr. Harish US$30 in cash for an antique. Harish cannot accept the cash directly unless the applicable authorised-person / money-changer exception applies.',
+  'Answer 2 (a) (Deposits) 5 Marks',
+  'A separate deposits answer begins here.',
   'Answer 4 (b) (LLP) 5 Marks',
   'Designated partners must be individuals; at least two designated partners are required and at least one must satisfy the resident-in-India test.',
   'If the LLP agreement does not specify designated partners, the incorporation document route applies. A designated partner cannot avoid statutory responsibility by claiming ignorance.',
+  'Answer 5 (a) (Companies Act) 5 Marks',
+  'A separate company-law answer begins here.',
   'Answer 6 (b) (Preliminary) 5 Marks',
   'Section 2(52) defines a listed company. The Companies (Specification of Definitions Details) Rules, 2014 exclude specified public companies whose non-convertible debt securities or non-convertible redeemable preference shares are listed on private placement basis, and public companies with equity listed only in a jurisdiction specified under section 23(3).',
   'Arya Limited, Chirag Limited and Prism Limited are unlisted companies. Rule number not required.',
+  'Answer 7 (a) (Separate question) 5 Marks',
+  'A later question answer begins here.',
 ].join('\n');
 
 const mixedPartMarkingScheme = [
@@ -162,12 +171,18 @@ const mixedPartMarkingScheme = [
   'PART II - DESCRIPTIVE',
   'Q1(c) - FEMA: RECEIPT OF FOREIGN CURRENCY - 4 MARKS',
   'Award for the authorised-person rule, deemed receipt, application to Lucas/Harish, and conclusion.',
+  'Q2(a) - DEPOSITS - 5 MARKS',
+  'Award for the deposits rule and calculations.',
   'Q4(b) - DESIGNATED PARTNERS IN LLP - 5 MARKS',
   'Award for individual eligibility, minimum designated partners/resident partner, incorporation-document route, 120-day test, and statutory duties.',
   'SOURCE BASIS: Suggested Answer 4(b), Question Paper 4(b). Section/rule numbers are not required.',
+  'Q5(a) - COMPANY LAW - 5 MARKS',
+  'Award for the separate companies-law question.',
   'Q6(b) - LISTED VS UNLISTED COMPANIES - 5 MARKS',
   'Award definition, the two specified exclusions, and classification of Arya Limited, Chirag Limited and Prism Limited.',
   'SOURCE BASIS: Suggested Answer 6(b), Question Paper 6(b). Section and Rule numbers are not required.',
+  'Q7(a) - SEPARATE QUESTION - 5 MARKS',
+  'Award for a later question.',
 ].join('\n');
 
 const mixedPartMetadata = {
