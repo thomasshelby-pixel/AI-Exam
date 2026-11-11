@@ -17,7 +17,7 @@ initDatabase();
 for (const status of ['COMPLETED', 'FAILED', 'REJECTED']) {
   const locks = getFacultyMockEvaluationEditLocks({ status });
   assert.equal(locks.evaluationInProgress, false, `${status} evaluations are not active runs.`);
-  assert.equal(locks.pendingReviewRetry, false, `${status} evaluations do not have a pending NEEDS_REVIEW retry.`);
+  assert.equal(locks.reviewRetryCandidate, false, `${status} evaluations are not unused NEEDS_REVIEW retry candidates.`);
 }
 
 const editableHistoricalMockState = deriveFacultyMockEditability({
@@ -34,19 +34,19 @@ const inProgressState = getFacultyMockEvaluationEditLocks({ status: 'PROCESSING'
 assert.equal(inProgressState.evaluationInProgress, true, 'An active evaluation must be detected across app instances.');
 
 const pendingReviewRetry = getFacultyMockEvaluationEditLocks({ status: 'NEEDS_REVIEW' });
-assert.equal(pendingReviewRetry.pendingReviewRetry, true, 'An unused NEEDS_REVIEW retry must keep source inputs fixed.');
+assert.equal(pendingReviewRetry.reviewRetryCandidate, true, 'A NEEDS_REVIEW evaluation without a retry link is a candidate for the shared retry-ledger check.');
 
 const usedReviewRetry = getFacultyMockEvaluationEditLocks({
   status: 'NEEDS_REVIEW',
   faculty_mock_review_retry_evaluation_id: 'eval_retry_123',
 });
-assert.equal(usedReviewRetry.pendingReviewRetry, false, 'A review retry already linked to the original evaluation must not lock editing forever.');
+assert.equal(usedReviewRetry.reviewRetryCandidate, false, 'A review retry already linked to the original evaluation is not a candidate for a new retry.');
 
 const retryResultReview = getFacultyMockEvaluationEditLocks({
   status: 'NEEDS_REVIEW',
   retry_of_evaluation_id: 'eval_original_123',
 });
-assert.equal(retryResultReview.pendingReviewRetry, false, 'A retry result cannot create a second pending retry lock.');
+assert.equal(retryResultReview.reviewRetryCandidate, false, 'A retry result cannot create a second pending retry candidate.');
 
 const inProgressEditability = deriveFacultyMockEditability({ verified: true, evaluationInProgress: true });
 assert.equal(inProgressEditability.scoringInputsLocked, true, 'A running evaluation must lock scoring inputs.');
