@@ -163,7 +163,7 @@ function selectObjectiveOrDescriptivePart(docText: string, subQuestion?: string)
     // next non-empty line(s) as heading context, but never scan into answers.
     const headingContext = docText
       .slice(headingStart, nextHeadingStart)
-      .split(/\\r?\\n/)
+      .split(/\r?\n/)
       .filter((line) => line.trim())
       .slice(0, 2)
       .join(' ');
