@@ -737,7 +737,15 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     horizontalSpace + '*([0-9]+)' + horizontalSpace + '*' +
     '(?:(' + namedPrefixPath + ')|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]))?' +
     horizontalSpace + '*(?:[-–—:=]' + horizontalSpace + '*)?' +
-    '([0-9]+(?:\\.[0-9]+)?)' + horizontalSpace + '*(?:Marks?|M)\\b' + horizontalSpace + '*[.]?
+    '([0-9]+(?:\\.[0-9]+)?)' + horizontalSpace + '*(?:Marks?|M)\\b' + horizontalSpace + '*[.]?$',
+    'gim',
+  );
+  while ((match = marksPrefixedQuestionRegex.exec(text)) !== null) {
+    addQuestion(match[1], match[2] || match[3], Number(match[4]));
+  }
+
+  // Explicit labels with descriptive text before the marks allocation.
+  const explicitPartRegex = new RegExp(
     '(?:QUESTION' + horizontalSpace + '*(?:NO\\.?'+ horizontalSpace + '*)?|Q\\.?|Ans(?:wer)?\\.?)' +
     horizontalSpace + '*([0-9]+)' + horizontalSpace + '*' +
     '(' + namedPrefixPath + '|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]))([^\\r\\n]*)',
