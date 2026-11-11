@@ -68,7 +68,6 @@ import {
   syncRecordToFirestore,
   rebuildLocalCacheFromFirestore,
   recoverStudentAccountFromFirestoreByEmail,
-  persistStudentAccountToFirestore,
 } from '../services/firestoreSyncService.js';
 import {
   savePersistentFile,
@@ -570,21 +569,15 @@ router.post('/google-account-recovery/recover-cloud-account', async (req: AuthRe
           error: 'The student account already exists locally but its profile is incomplete. Manual review is required; no duplicate account was created.',
         });
       }
-      const persisted = await persistStudentAccountToFirestore(localAccount.id);
-      if (persisted !== 'persisted') {
-        return res.status(503).json({
-          success: false,
-          code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
-          error: 'The existing student account was found, but its durable cloud save could not be confirmed. Please retry.',
-          retryable: true,
-        });
-      }
+      // It is already visible to this platform registry. Do not mirror a local
+      // snapshot back over Firestore here: the local copy may be stale and must
+      // never overwrite newer credits or profile fields.
       return res.json({
         success: true,
         alreadyLinked: true,
         email,
         studentId: localAccount.id,
-        message: 'The existing student account and profile are already present and have been verified in shared storage. No new account or credits were created.',
+        message: 'The student account already exists in the platform registry. No account, profile, credit or evaluation data was changed.',
       });
     }
 
@@ -624,16 +617,9 @@ router.post('/google-account-recovery/recover-cloud-account', async (req: AuthRe
       });
     }
 
-    const persisted = await persistStudentAccountToFirestore(recoveredAccount.id);
-    if (persisted !== 'persisted') {
-      return res.status(503).json({
-        success: false,
-        code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
-        error: 'The existing student data was recovered locally, but a durable cloud read-back could not be confirmed. Do not create another account; retry this recovery.',
-        retryable: true,
-        studentId: recoveredAccount.id,
-      });
-    }
+    // The recovery helper restores the exact existing user/profile documents
+    // from shared Firestore and verifies local read-back. Do not write the local
+    // snapshot back to Firestore: that could overwrite newer shared fields.
 
     const auditId = `log_${crypto.randomBytes(8).toString('hex')}`;
     const audit = {
