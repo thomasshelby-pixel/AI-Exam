@@ -71,11 +71,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setIsLoading(true);
     try {
       const consent = mode === 'register'
-        ? { termsAccepted: true, privacyAccepted: true, termsVersion: '2.0', privacyVersion: '2.0' }
+        ? { termsAccepted: true, privacyAccepted: true, termsVersion: '2.0', privacyVersion: '3.0' }
         : undefined;
       const loggedInUser = await socialLogin(provider, undefined, consent);
       onSuccess(loggedInUser);
     } catch (err: any) {
+      if (['LEGAL_CONSENT_REQUIRED', 'LEGAL_VERSION_CHANGED'].includes(String(err?.code || '').toUpperCase()) && mode !== 'register') {
+        setMode('register');
+        setErrorMessage('This Google account is not yet registered in CA Exam Checker. Please accept the latest Terms & Conditions and Privacy Policy, then select Google sign-up to complete account creation.');
+        return;
+      }
       if (
         err?.status === 'SUSPENDED' ||
         err?.accountStatus === 'SUSPENDED' ||
@@ -167,7 +172,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         termsAccepted: true,
         privacyAccepted: true,
         termsVersion: '2.0',
-        privacyVersion: '2.0',
+        privacyVersion: '3.0',
       });
 
       if (data.requiresOtpVerification) {
