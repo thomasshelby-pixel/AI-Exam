@@ -1154,7 +1154,9 @@ router.get('/faculty-mocks/tests/:id/editability', async (req: AuthRequest, res:
     ]);
 
     const localEvaluations = db.prepare(`
-      SELECT status, retry_of_evaluation_id, faculty_mock_review_retry_evaluation_id
+      SELECT
+        id, student_id, status, evaluation_source, material_type, faculty_mock_test_id,
+        answer_sheet_sha256, retry_of_evaluation_id, faculty_mock_review_retry_evaluation_id
       FROM evaluations
       WHERE faculty_mock_test_id = ?
     `).all(testId) as any[];
@@ -1232,7 +1234,9 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
       });
     }
     const localEvaluations = db.prepare(`
-      SELECT status, retry_of_evaluation_id, faculty_mock_review_retry_evaluation_id
+      SELECT
+        id, student_id, status, evaluation_source, material_type, faculty_mock_test_id,
+        answer_sheet_sha256, retry_of_evaluation_id, faculty_mock_review_retry_evaluation_id
       FROM evaluations
       WHERE faculty_mock_test_id = ?
     `).all(testId) as any[];
