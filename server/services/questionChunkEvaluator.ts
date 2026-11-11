@@ -205,12 +205,45 @@ export function removeMismatchedDerivedSourceAnchor(markingSchemeSnippet: string
   if (!anchorMatch || !allocationMatch || allocationMatch.index <= anchorMatch.index) return '';
 
   const prefix = source.slice(0, anchorMatch.index).trimEnd();
-  const allocation = source.slice(allocationMatch.index).trim();
+  const allocationSource = source.slice(allocationMatch.index);
+  const stepHeaders = [...allocationSource.matchAll(/^\s*STEP\s*(\d+)\s*:/gim)];
+  if (!stepHeaders.length) return '';
+
+  // Keep only verified numeric component weights. Requirement/Award/Do Not
+  // Award prose may itself have been generated from the wrong sibling anchor,
+  // so it must never survive a topic-mismatch exclusion.
+  const weights: Array<{ step: number; marks: string }> = [];
+  for (let index = 0; index < stepHeaders.length; index += 1) {
+    const header = stepHeaders[index];
+    const blockStart = header.index ?? 0;
+    const blockEnd = stepHeaders[index + 1]?.index ?? allocationSource.length;
+    const block = allocationSource.slice(blockStart, blockEnd);
+    const marksMatch = block.match(/^\s*Marks\s*:\s*(\d+(?:\.\d+)?)\b/im)
+      || block.match(/\bMarks\s*:\s*(\d+(?:\.\d+)?)\b/i);
+    if (!marksMatch) return '';
+    weights.push({ step: Number(header[1]), marks: marksMatch[1] });
+  }
+
+  const declaredMaximum = prefix.match(/^\s*SUBQUESTION MARKS\s*:\s*(\d+(?:\.\d+)?)\s*$/im);
+  const allocatedTotal = weights.reduce((sum, item) => sum + Number(item.marks), 0);
+  if (declaredMaximum && Math.abs(allocatedTotal - Number(declaredMaximum[1])) > 0.001) {
+    // A mismatched or incomplete allocation is not safe to carry forward.
+    return [
+      prefix,
+      'SOURCE-DERIVED CONTENT ANCHOR: [EXCLUDED: topic mismatch with this exact question.]',
+      'DERIVED EXAMINER-STYLE ALLOCATION: [EXCLUDED: component weights do not reconcile to the authoritative sub-question maximum.]',
+    ].join('\n\n').trim();
+  }
+
+  const weightsOnly = [
+    'DERIVED EXAMINER-STYLE ALLOCATION (WEIGHTS ONLY; SOURCE-SPECIFIC CRITERIA EXCLUDED):',
+    ...weights.map((item) => 'STEP ' + item.step + ': Marks: ' + item.marks),
+  ].join('\n');
   return [
     prefix,
     'SOURCE-DERIVED CONTENT ANCHOR: [EXCLUDED: topic mismatch with this exact question.]',
-    allocation,
-  ].filter(Boolean).join('\n\n').trim();
+    weightsOnly,
+  ].join('\n\n').trim();
 }
 
 export interface QuestionReferenceEvaluationDisposition {
