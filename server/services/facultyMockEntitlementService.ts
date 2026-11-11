@@ -43,6 +43,44 @@ export function isEligibleFacultyMockReviewRetry(
   );
 }
 
+/**
+ * Returns true only when a NEEDS_REVIEW evaluation still has its one-time
+ * same-copy retry available. The Firestore retry ledger is authoritative
+ * across App Hosting instances; a local evaluation row alone cannot decide it.
+ */
+export async function hasPendingFacultyMockReviewRetry(
+  evaluations: any[],
+  facultyMockTestId: string,
+): Promise<boolean> {
+  const byId = new Map<string, any>();
+  for (const evaluation of evaluations || []) {
+    const id = String(evaluation?.id || '').trim();
+    if (id) byId.set(id, evaluation);
+  }
+
+  const candidates = [...byId.values()].filter((evaluation) =>
+    isEligibleFacultyMockReviewRetry(
+      evaluation,
+      String(evaluation.student_id || ''),
+      facultyMockTestId,
+    )
+  );
+
+  const claims = await Promise.all(candidates.map((evaluation) =>
+    getFirestoreDoc<FacultyMockReviewRetryClaim>(
+      REVIEW_RETRY_COLLECTION,
+      reviewRetryLedgerId(
+        String(evaluation.student_id),
+        facultyMockTestId,
+        String(evaluation.id),
+      ),
+      { failOnError: true },
+    )
+  ));
+
+  return claims.some((claim) => !claim);
+}
+
 export function isExactFacultyMockReviewRetryCopy(
   previousSha256: unknown,
   submittedSha256: unknown,
