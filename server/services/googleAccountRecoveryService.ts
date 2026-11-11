@@ -248,6 +248,11 @@ export async function scanUnlinkedGoogleAccounts(options: {
 export async function getVerifiedFirebaseGoogleAccountByEmail(emailValue: string): Promise<UserRecord | null> {
   const email = normalizeEmail(emailValue);
   if (!email) return null;
-  const user = await getAuth(getRecoveryFirebaseApp()).getUserByEmail(email);
-  return isGoogleProvider(user) && user.emailVerified && !user.disabled ? user : null;
+  try {
+    const user = await getAuth(getRecoveryFirebaseApp()).getUserByEmail(email);
+    return isGoogleProvider(user) && user.emailVerified && !user.disabled ? user : null;
+  } catch (error: any) {
+    if (error?.code === 'auth/user-not-found') return null;
+    throw error;
+  }
 }
