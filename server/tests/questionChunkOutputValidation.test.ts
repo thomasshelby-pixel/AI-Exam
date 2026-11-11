@@ -188,6 +188,15 @@ for (const item of crossWiredMarkingSchemeCases) {
     item.id + ': the mismatched Marking Scheme must be explicitly identified for exclusion.');
 }
 
+const singleSharedTopicTerm = assessQuestionReferenceTopicAlignment({
+  topic: 'Specific alpha beta gamma delta epsilon',
+  provision: 'Rule 42',
+  questionText: 'Explain specific alpha and its application to the facts.',
+}, 'Alpha is applied together with unrelated concepts about another statutory situation.',
+  'Completely different commercial rules with unrelated requirements and exceptions.');
+assert.equal(singleSharedTopicTerm.aligned, true,
+  'One distinctive shared term must not trigger a false reference-mismatch review.');
+
 const insufficientTopicAnchor = assessQuestionReferenceTopicAlignment({
   topic: 'General provisions',
   questionText: 'Explain the applicable provisions.',
