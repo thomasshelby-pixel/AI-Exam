@@ -154,12 +154,26 @@ function splitIntoSections(docText: string): { sectionA: string; sectionB: strin
 function selectObjectiveOrDescriptivePart(docText: string, subQuestion?: string): string {
   const isMcq = String(subQuestion || '').trim().toUpperCase() === 'MCQ';
   const headingPattern = /^\s*(PART|DIVISION)\s*[–—:-]?\s*(I{1,2}|A|B)\b[^\r\n]*$/gim;
-  const headings = [...docText.matchAll(headingPattern)].map((match) => ({
-    family: String(match[1] || '').toUpperCase(),
-    label: String(match[2] || '').toUpperCase(),
-    text: String(match[0] || ''),
-    index: match.index ?? 0,
-  }));
+  const headingMatches = [...docText.matchAll(headingPattern)];
+  const headings = headingMatches.map((match, index) => {
+    const headingStart = match.index ?? 0;
+    const nextHeadingStart = headingMatches[index + 1]?.index ?? docText.length;
+    // In ICAI answer booklets, the part title often sits on the next line:
+    // "PART – II 70 Marks" followed by "Descriptive Portion". Include the
+    // next non-empty line(s) as heading context, but never scan into answers.
+    const headingContext = docText
+      .slice(headingStart, nextHeadingStart)
+      .split(/\\r?\\n/)
+      .filter((line) => line.trim())
+      .slice(0, 2)
+      .join(' ');
+    return {
+      family: String(match[1] || '').toUpperCase(),
+      label: String(match[2] || '').toUpperCase(),
+      text: headingContext,
+      index: headingStart,
+    };
+  });
 
   // Require explicit objective/descriptive wording on the headings. PART I/II
   // may also be used for two unrelated subject divisions in other materials;
