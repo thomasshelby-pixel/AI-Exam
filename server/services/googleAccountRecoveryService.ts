@@ -101,6 +101,7 @@ export function classifyGoogleAccountRecoveryState(input: {
       Boolean(profile) &&
       String(profile?.user_id || '') === cloudUserId &&
       Boolean(String(profile?.icai_registration_number || '').trim()) &&
+      String(profile?.icai_registration_number || '').trim().toUpperCase() !== 'REG-PENDING' &&
       ['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(String(profile?.ca_level || '').toUpperCase());
 
     if (!complete) {
