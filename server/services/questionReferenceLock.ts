@@ -212,7 +212,7 @@ function selectObjectiveOrDescriptivePart(docText: string, subQuestion?: string)
         divisionA &&
         divisionB &&
         divisionB.index > divisionA.index &&
-        /\\b30\\s*Marks?\\b/i.test(divisionA.text)
+        /\b30\s*Marks?\b/i.test(divisionA.text)
       ) {
         if (isMcq) return docText.slice(divisionA.index, divisionB.index);
         if (isDescriptiveSubQuestion) return docText.slice(divisionB.index);
