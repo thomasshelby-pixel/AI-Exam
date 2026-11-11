@@ -157,35 +157,39 @@ function selectObjectiveOrDescriptivePart(docText: string, subQuestion?: string)
   const headings = [...docText.matchAll(headingPattern)].map((match) => ({
     family: String(match[1] || '').toUpperCase(),
     label: String(match[2] || '').toUpperCase(),
+    text: String(match[0] || ''),
     index: match.index ?? 0,
   }));
+
+  // Require explicit objective/descriptive wording on the headings. PART I/II
+  // may also be used for two unrelated subject divisions in other materials;
+  // numbering alone is not enough evidence that numbering restarts here.
+  const objectivePattern = /\b(?:MCQ|MCQS|MULTIPLE[\s-]+CHOICE|OBJECTIVE)\b/i;
+  const descriptivePattern = /\b(?:DESCRIPTIVE|SUBJECTIVE|LONG[\s-]+ANSWER|THEORY)\b/i;
 
   for (const family of ['PART', 'DIVISION']) {
     const familyHeadings = headings.filter((heading) => heading.family === family);
     const objective = familyHeadings.find((heading) =>
-      family === 'PART' ? heading.label === 'I' : heading.label === 'A'
+      (family === 'PART' ? heading.label === 'I' : heading.label === 'A') &&
+      objectivePattern.test(heading.text)
     );
     const descriptive = familyHeadings.find((heading) =>
-      family === 'PART' ? heading.label === 'II' : heading.label === 'B'
+      (family === 'PART' ? heading.label === 'II' : heading.label === 'B') &&
+      descriptivePattern.test(heading.text)
     );
 
-    const selected = isMcq ? objective : descriptive;
-    if (!selected) continue;
+    // Do not impose a split unless both halves are explicitly identified.
+    if (!objective || !descriptive || descriptive.index <= objective.index) continue;
 
-    const nextBoundary = familyHeadings.find((heading) => heading.index > selected.index);
-    const end = nextBoundary?.index ?? docText.length;
-
-    if (isMcq && objective && descriptive && descriptive.index > objective.index) {
-      return docText.slice(objective.index, descriptive.index);
-    }
-    return docText.slice(selected.index, end);
+    return isMcq
+      ? docText.slice(objective.index, descriptive.index)
+      : docText.slice(descriptive.index);
   }
 
   // Preserve legacy behavior for single-part documents and formats that do
-  // not declare an objective/descriptive part boundary.
+  // not explicitly distinguish objective MCQs from descriptive questions.
   return docText;
 }
-
 
 /**
  * Finds a lettered sub-question only inside its own numbered parent question.
