@@ -288,12 +288,12 @@ export async function scanUnlinkedGoogleAccounts(options: {
       }
     }
 
-    if (!page.nextPageToken) {
+    if (!page.pageToken) {
       nextPageToken = undefined;
       break;
     }
-    pageToken = page.nextPageToken;
-    nextPageToken = page.nextPageToken;
+    pageToken = page.pageToken;
+    nextPageToken = page.pageToken;
   }
 
   const counts: Record<GoogleAccountRecoveryStatus, number> = {
