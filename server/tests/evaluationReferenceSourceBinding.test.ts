@@ -130,9 +130,9 @@ const mixedPartQuestionPaper = [
   '4. Which provision governs issue of bonus shares?',
   '6. Which rule governs audit-firm rotation?',
   'PART – II (Descriptive Portion)',
-  'Answer 1(c): Mr. Harish is asked to accept US$30 cash from Mr. Lucas, a foreign tourist, for an antique. (4 Marks)',
-  'Answer 4(b): Explain the designated-partner requirements and the effect of a partner relocating abroad. (5 Marks)',
-  'Answer 6(b): Classify Arya Limited, Chirag Limited and Prism Limited as listed or unlisted companies. (5 Marks)',
+  'Question 1(c): Mr. Harish is asked to accept US$30 cash from Mr. Lucas, a foreign tourist, for an antique. (4 Marks)',
+  'Question 4(b): Explain the designated-partner requirements and the effect of a partner relocating abroad. (5 Marks)',
+  'Question 6(b): Classify Arya Limited, Chirag Limited and Prism Limited as listed or unlisted companies. (5 Marks)',
 ].join('\n');
 
 const mixedPartSuggestedAnswers = [
