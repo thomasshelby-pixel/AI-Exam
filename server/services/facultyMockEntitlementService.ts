@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   getFirestoreDoc,
+  queryFirestoreDocs,
   runFirestoreTransaction,
 } from './firestoreDbService.js';
 
@@ -66,19 +67,21 @@ export async function hasPendingFacultyMockReviewRetry(
     )
   );
 
-  const claims = await Promise.all(candidates.map((evaluation) =>
-    getFirestoreDoc<FacultyMockReviewRetryClaim>(
-      REVIEW_RETRY_COLLECTION,
-      reviewRetryLedgerId(
-        String(evaluation.student_id),
-        facultyMockTestId,
-        String(evaluation.id),
-      ),
-      { failOnError: true },
-    )
-  ));
+  if (candidates.length === 0) return false;
 
-  return claims.some((claim) => !claim);
+  // One indexed collection query replaces one document read per NEEDS_REVIEW row.
+  const claims = await queryFirestoreDocs<FacultyMockReviewRetryClaim>(
+    REVIEW_RETRY_COLLECTION,
+    [{ field: 'facultyMockTestId', op: '==', value: facultyMockTestId }],
+    { failOnError: true },
+  );
+  const claimedPreviousEvaluationIds = new Set(
+    claims.map((claim) => String(claim.previousEvaluationId || '').trim()).filter(Boolean)
+  );
+
+  return candidates.some((evaluation) =>
+    !claimedPreviousEvaluationIds.has(String(evaluation.id))
+  );
 }
 
 export function isExactFacultyMockReviewRetryCopy(
