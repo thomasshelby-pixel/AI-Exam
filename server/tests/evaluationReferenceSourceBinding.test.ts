@@ -125,11 +125,13 @@ assert.equal(modelTestReference.referenceTrace.suggestedAnswerMaterialId, 'model
 // These same-numbered answers must never cross-wire (for example MCQ1's
 // Section 91 answer must not be locked as descriptive Q1(c)'s FEMA answer).
 const mixedPartQuestionPaper = [
-  'PART – I (Case Scenario based MCQs)',
+  'PART – I 30 Marks',
+  'Case Scenario based MCQs',
   '1. Which provision governs closure of the Register of Members?',
   '4. Which provision governs issue of bonus shares?',
   '6. Which rule governs audit-firm rotation?',
-  'PART – II (Descriptive Portion)',
+  'PART – II 70 Marks',
+  'Descriptive Portion',
   'Question 1(c): Mr. Harish is asked to accept US$30 cash from Mr. Lucas, a foreign tourist, for an antique. (4 Marks)',
   'Question 2(a): A separate deposits question follows.',
   'Question 4(b): Explain the designated-partner requirements and the effect of a partner relocating abroad. (5 Marks)',
@@ -139,12 +141,14 @@ const mixedPartQuestionPaper = [
 ].join('\n');
 
 const mixedPartSuggestedAnswers = [
-  'PART – I (Case Scenario based MCQs)',
+  'PART – I 30 Marks',
+  'Case Scenario based MCQs',
   'Q. No. Answer Reason',
   '1. (C) Section 91 of the Companies Act, 2013: closure of the Register of Members.',
   '4. (B) Section 63(2) of the Companies Act, 2013: authority in Articles for bonus shares.',
   '6. (B) Section 139(2): auditor rotation and appointment.',
-  'PART – II (Descriptive Portion)',
+  'PART – II 70 Marks',
+  'Descriptive Portion',
   'Answer 1 (c) (FEMA) 4 Marks',
   'As per section 3 of FEMA, no person shall receive payment by order or on behalf of a person resident outside India otherwise than through an authorised person.',
   'Where a person receives payment through another person without corresponding inward remittance from outside India, it is deemed to be receipt otherwise than through an authorised person.',
