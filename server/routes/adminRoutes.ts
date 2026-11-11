@@ -26,6 +26,7 @@ import { extractMaterialFromPDF } from '../gemini.js';
 import { CUSTOM_PRICE_PER_EVALUATION_INR } from '../razorpay.js';
 import { parseFacultyMockEvaluationReference, validateFacultyMockReferenceSections } from '../services/facultyMockReferenceParser.js';
 import { deriveFacultyMockEditability, getFacultyMockEvaluationEditLocks } from '../services/facultyMockEditabilityService.js';
+import { hasPendingFacultyMockReviewRetry } from '../services/facultyMockEntitlementService.js';
 import { parseModelTestBulkFiles } from '../services/modelTestBulkImportService.js';
 import { getAuthoritativePaperStructure } from '../services/paperStructureService.js';
 import { buildMaterialQuestionMappingAudit } from '../services/materialQuestionMappingAudit.js';
@@ -1157,10 +1158,13 @@ router.get('/faculty-mocks/tests/:id/editability', async (req: AuthRequest, res:
       FROM evaluations
       WHERE faculty_mock_test_id = ?
     `).all(testId) as any[];
-    const evaluationLocks = [...sharedEvaluations, ...localEvaluations]
-      .map((evaluation: any) => getFacultyMockEvaluationEditLocks(evaluation));
+    // Prefer shared rows when the same evaluation ID is present in both sources.
+    const allEvaluations = [...localEvaluations, ...sharedEvaluations];
+    const evaluationLocks = allEvaluations.map((evaluation: any) =>
+      getFacultyMockEvaluationEditLocks(evaluation)
+    );
     const evaluationInProgress = evaluationLocks.some((state) => state.evaluationInProgress);
-    const hasPendingReviewRetry = evaluationLocks.some((state) => state.pendingReviewRetry);
+    const hasPendingReviewRetry = await hasPendingFacultyMockReviewRetry(allEvaluations, testId);
 
     const localActivity = db.prepare(`
       SELECT
@@ -1232,10 +1236,13 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
       FROM evaluations
       WHERE faculty_mock_test_id = ?
     `).all(testId) as any[];
-    const evaluationLocks = [...sharedEvaluations, ...localEvaluations]
-      .map((evaluation: any) => getFacultyMockEvaluationEditLocks(evaluation));
+    // Prefer shared rows when the same evaluation ID is present in both sources.
+    const allEvaluations = [...localEvaluations, ...sharedEvaluations];
+    const evaluationLocks = allEvaluations.map((evaluation: any) =>
+      getFacultyMockEvaluationEditLocks(evaluation)
+    );
     const evaluationInProgress = evaluationLocks.some((state) => state.evaluationInProgress);
-    const hasPendingReviewRetry = evaluationLocks.some((state) => state.pendingReviewRetry);
+    const hasPendingReviewRetry = await hasPendingFacultyMockReviewRetry(allEvaluations, testId);
 
     if (evaluationInProgress) {
       return res.status(409).json({
@@ -1290,13 +1297,13 @@ router.put('/faculty-mocks/tests/:id', async (req: AuthRequest, res: Response) =
 
     if (accessTypeChanged && editability.accessTypeLocked) {
       return res.status(409).json({
-        error: 'Free/Paid access cannot be changed after a student evaluation, free-copy claim, paid-copy entitlement or payment order exists. This protects previously issued student entitlements.',
+        error: 'Free/Paid access cannot be changed while an evaluation is running, a NEEDS_REVIEW retry is still available, a paid copy is unused, or a payment checkout is pending.',
         code: 'FACULTY_MOCK_ACCESS_TYPE_LOCKED',
       });
     }
     if (scoringInputsRequested && editability.scoringInputsLocked) {
       return res.status(409).json({
-        error: 'Maximum marks and source files cannot be changed after a student evaluation or student copy entitlement has been issued. This protects the paper and marking reference already associated with student copies. Publish a new mock for corrected scoring inputs.',
+        error: 'Maximum marks and source files cannot be changed while an evaluation is running, a NEEDS_REVIEW retry is still available, or a paid copy is unused. Wait until that protected student activity is settled before editing.',
         code: 'FACULTY_MOCK_SCORING_SOURCES_LOCKED',
       });
     }
