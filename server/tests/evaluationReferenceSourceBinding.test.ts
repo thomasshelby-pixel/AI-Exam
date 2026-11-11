@@ -175,7 +175,7 @@ const mixedPartMetadata = {
   saMaterialId: 'semester-test-suggested-answers',
   msMaterialId: 'semester-test-marking-scheme',
   materialVersions: '1.0',
-  sourceType: 'PYQ' as const,
+  sourceType: 'GLOBAL' as const,
   materialType: 'PYQ',
   materialTitle: 'YCB Semester Test - Corporate and Other Laws',
 };
