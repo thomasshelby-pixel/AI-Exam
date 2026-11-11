@@ -648,14 +648,13 @@ router.post('/google-account-recovery/recover-cloud-account', async (req: AuthRe
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(audit.id, audit.user_id, audit.action, audit.entity_type, audit.entity_id, audit.details);
-    const auditSaved = await syncRecordToFirestore('audit_logs', auditId, audit);
+    await syncRecordToFirestore('audit_logs', auditId, audit);
 
     return res.json({
       success: true,
       alreadyLinked: false,
       email,
       studentId: recoveredAccount.id,
-      auditPersisted: auditSaved,
       message: 'The existing Firestore student account and profile were restored and verified. Existing account identity, profile values and credit fields were preserved; no new credits or evaluation records were created.',
     });
   } catch (error: unknown) {
