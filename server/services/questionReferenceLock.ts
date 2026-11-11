@@ -181,6 +181,8 @@ function selectObjectiveOrDescriptivePart(docText: string, subQuestion?: string)
   const objectivePattern = /\b(?:MCQ|MCQS|MULTIPLE[\s-]+CHOICE|OBJECTIVE)\b/i;
   const descriptivePattern = /\b(?:DESCRIPTIVE|SUBJECTIVE|LONG[\s-]+ANSWER|THEORY)\b/i;
 
+  const isDescriptiveSubQuestion = !isMcq && Boolean(String(subQuestion || '').trim());
+
   for (const family of ['PART', 'DIVISION']) {
     const familyHeadings = headings.filter((heading) => heading.family === family);
     const objective = familyHeadings.find((heading) =>
@@ -192,16 +194,34 @@ function selectObjectiveOrDescriptivePart(docText: string, subQuestion?: string)
       descriptivePattern.test(heading.text)
     );
 
-    // Do not impose a split unless both halves are explicitly identified.
-    if (!objective || !descriptive || descriptive.index <= objective.index) continue;
+    // Explicit objective/descriptive labels take precedence. Bare numeric
+    // questions remain ambiguous, so leave them to the existing QP/SA matcher.
+    if (objective && descriptive && descriptive.index > objective.index) {
+      if (isMcq) return docText.slice(objective.index, descriptive.index);
+      if (isDescriptiveSubQuestion) return docText.slice(descriptive.index);
+      return docText;
+    }
 
-    return isMcq
-      ? docText.slice(objective.index, descriptive.index)
-      : docText.slice(descriptive.index);
+    // Legacy Model Test structure: "Division A (30 Marks)" contains MCQs and
+    // "Division B" starts the descriptive answers, but the word DESCRIPTIVE
+    // is not printed. Keep this narrow fallback for nested descriptive IDs.
+    if (family === 'DIVISION') {
+      const divisionA = familyHeadings.find((heading) => heading.label === 'A');
+      const divisionB = familyHeadings.find((heading) => heading.label === 'B');
+      if (
+        divisionA &&
+        divisionB &&
+        divisionB.index > divisionA.index &&
+        /\\b30\\s*Marks?\\b/i.test(divisionA.text)
+      ) {
+        if (isMcq) return docText.slice(divisionA.index, divisionB.index);
+        if (isDescriptiveSubQuestion) return docText.slice(divisionB.index);
+      }
+    }
   }
 
-  // Preserve legacy behavior for single-part documents and formats that do
-  // not explicitly distinguish objective MCQs from descriptive questions.
+  // Preserve legacy behavior for single-part documents and ambiguous top-level
+  // IDs that do not tell the lock whether MCQ or descriptive numbering is meant.
   return docText;
 }
 
