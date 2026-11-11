@@ -261,7 +261,7 @@ export const UnifiedAuthPage: React.FC<UnifiedAuthPageProps> = ({
               <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>2 Free Evaluations upon signup</span>
+                  <span>Up to 2 Free Evaluations when eligible</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -298,7 +298,7 @@ export const UnifiedAuthPage: React.FC<UnifiedAuthPageProps> = ({
                 className="w-full py-2 px-4 rounded-xl bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-semibold text-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                <span>Create Account (2 Free Checks)</span>
+                <span>Create Account</span>
               </button>
             </div>
           </div>

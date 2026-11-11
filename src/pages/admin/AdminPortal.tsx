@@ -2382,7 +2382,7 @@ export const AdminPortal: React.FC = () => {
                                             <span className="font-semibold text-amber-700">Profile pending</span>
                                           </div>
                                           <span className="text-[9px] leading-tight text-amber-700">
-                                            2 free unlock after valid ICAI Reg
+                                            Free-trial eligibility checked after valid ICAI Reg; device/IP checks apply
                                           </span>
                                         </div>
                                       ) : (
