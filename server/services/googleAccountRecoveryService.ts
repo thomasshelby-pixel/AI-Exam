@@ -63,6 +63,7 @@ function getSocialStudentId(uid: string): string {
 }
 
 export function classifyGoogleAccountRecoveryState(input: {
+  expectedEmail: string;
   localRole?: string | null;
   cloudUsers: Array<Record<string, any>>;
   cloudProfile?: Record<string, any> | null;
@@ -92,7 +93,7 @@ export function classifyGoogleAccountRecoveryState(input: {
     const profile = input.cloudProfile;
     const complete =
       cloudUserId.length > 0 &&
-      normalizeEmail(cloudUser.email) !== '' &&
+      normalizeEmail(cloudUser.email) === normalizeEmail(input.expectedEmail) &&
       String(cloudUser.role || '').toUpperCase() === 'STUDENT' &&
       typeof cloudUser.password_hash === 'string' &&
       cloudUser.password_hash.length > 0 &&
@@ -218,6 +219,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
 
       if (local) {
         const classification = classifyGoogleAccountRecoveryState({
+          expectedEmail: email,
           localRole: local.role,
           cloudUsers: cloudMatches,
         });
@@ -234,6 +236,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
           ? await isTombstoned('users', cloudUserId) || await isTombstoned('student_profiles', cloudUserId)
           : false;
         const classification = classifyGoogleAccountRecoveryState({
+          expectedEmail: email,
           cloudUsers: cloudMatches,
           cloudProfile,
           cloudTombstoned,
@@ -249,6 +252,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
         await isTombstoned('users', socialUserId) ||
         await isTombstoned('student_profiles', socialUserId);
       const classification = classifyGoogleAccountRecoveryState({
+        expectedEmail: email,
         cloudUsers: [],
         firebaseIdentityTombstoned: identityTombstoned,
       });
