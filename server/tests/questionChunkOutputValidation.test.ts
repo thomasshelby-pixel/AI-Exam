@@ -332,6 +332,11 @@ assert.equal(
   'A source note saying Rule number not required must be detected.',
 );
 assert.equal(
+  hasExplicitNonMandatoryCitationRule('SOURCE BASIS: Section and Rule numbers are not required.'),
+  true,
+  'A source note saying Section and Rule numbers are not required must be detected.',
+);
+assert.equal(
   hasExplicitNonMandatoryCitationRule('The answer should state Section 8 and Rule 11.'),
   false,
   'A source that merely names provisions does not make citation numbering optional.',
