@@ -1140,6 +1140,9 @@ router.get('/faculty-mocks/tests/:id/editability', async (req: AuthRequest, res:
   if (!testId) return res.status(400).json({ error: 'Faculty mock test ID is required.' });
 
   try {
+    const existing = await getFirestoreDoc<any>('faculty_mock_tests', testId, { failOnError: true });
+    if (!existing) return res.status(404).json({ error: 'Faculty mock test not found.' });
+
     const [sharedEvaluations, sharedFreeLedgers, sharedPaidLedgers] = await Promise.all([
       queryFirestoreDocs<any>('evaluations', [
         { field: 'faculty_mock_test_id', op: '==', value: testId },
