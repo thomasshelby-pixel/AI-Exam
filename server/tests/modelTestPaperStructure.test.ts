@@ -255,6 +255,51 @@ assert.equal(unparseableGate.passed, false);
 assert.ok(unparseableGate.failedInvariants.some((message) => message.includes('QUESTION_PAPER_NOT_PARSED')));
 
 
+// Marking Schemes may prefix the question identity with "Marks".
+// These IDs must be recognized, flattened to the scoreable parent, and included
+// in the source-to-source maximum audit without generating a false conflict.
+const marksPrefixedAllocationText = [
+  'Marks Q2(a(i)) 2 marks',
+  'Marks Q2(a(ii)) 3 marks',
+].join('\n');
+const marksPrefixedAllocations = extractSubQuestionsFromText(marksPrefixedAllocationText);
+assert.deepEqual(
+  marksPrefixedAllocations.map((question) => [question.fullQuestionCode, question.maximumMarks]),
+  [['Q2(a)', 5]],
+  'Marks-prefixed nested Roman allocations must resolve to one Q2(a) total.',
+);
+
+const marksPrefixedMaterial = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  subjectName: 'Corporate and Other Laws',
+  paper: 'Paper 2',
+  materialType: 'MTP',
+  questionPaperText: [
+    'Question Paper',
+    'Question 2(a) - 5 Marks',
+    'Explain the relevant legal provision and apply it to the facts.',
+  ].join('\n'),
+  suggestedAnswersText: [
+    'Suggested Answers',
+    'Question 2(a). The answer applies the legal provision to the given facts.',
+  ].join('\n'),
+  markingSchemeText: [
+    'Marking Scheme',
+    'Marks Q2(a(i)) 2 marks',
+    'Marks Q2(a(ii)) 3 marks',
+  ].join('\n'),
+});
+assert.equal(
+  marksPrefixedMaterial.subQuestions.find((question) => question.fullQuestionCode === 'Q2(a)')?.maximumMarks,
+  5,
+  'Marks-prefixed Roman MS lines must supply the correct consolidated parent maximum.',
+);
+assert.deepEqual(
+  marksPrefixedMaterial.markAllocationConflicts || [],
+  [],
+  'A QP total of 5 and matching MS Roman allocations totalling 5 must not trigger source-mismatch review.',
+);
+
 // Roman-numbered children beneath a lettered part are grouped into that
 // parent scoreable question. Arabic children and standalone Roman parts remain distinct.
 const universalPartSource = [
