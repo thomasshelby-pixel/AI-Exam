@@ -8,33 +8,61 @@ import {
   isEligibleFacultyMockReviewRetry,
   isExactFacultyMockReviewRetryCopy,
 } from '../services/facultyMockEntitlementService.js';
-import { deriveFacultyMockEditability } from '../services/facultyMockEditabilityService.js';
+import { deriveFacultyMockEditability, getFacultyMockEvaluationEditLocks } from '../services/facultyMockEditabilityService.js';
 
 initDatabase();
 
-// Faculty Mock editing preview and PUT guards share this exact fail-closed
-// policy. A mock without any issued student history remains editable; any
-// evaluation or entitlement locks maximum marks and all scoring references.
-const editableMockState = deriveFacultyMockEditability({
+// Completed, failed and rejected evaluations preserve their historical reports
+// but do not permanently block editing the current Faculty Mock source package.
+for (const status of ['COMPLETED', 'FAILED', 'REJECTED']) {
+  const locks = getFacultyMockEvaluationEditLocks({ status });
+  assert.equal(locks.evaluationInProgress, false, `${status} evaluations are not active runs.`);
+  assert.equal(locks.pendingReviewRetry, false, `${status} evaluations do not have a pending NEEDS_REVIEW retry.`);
+}
+
+const editableHistoricalMockState = deriveFacultyMockEditability({
   verified: true,
-  hasEvaluation: false,
-  hasFreeCopyClaim: false,
-  hasPaidCopyEntitlement: false,
+  evaluationInProgress: false,
+  hasPendingReviewRetry: false,
+  hasUnconsumedPaidCopy: false,
   hasActivePaymentOrder: false,
 });
-assert.equal(editableMockState.scoringInputsLocked, false, 'A verified mock without evaluations or entitlements can edit scoring inputs.');
-assert.equal(editableMockState.accessTypeLocked, false, 'A verified unused mock can change its student access type.');
+assert.equal(editableHistoricalMockState.scoringInputsLocked, false, 'Historical evaluations alone must not lock scoring inputs.');
+assert.equal(editableHistoricalMockState.accessTypeLocked, false, 'Historical evaluations alone must not lock student access.');
 
-for (const trigger of [
-  { hasEvaluation: true },
-  { hasFreeCopyClaim: true },
-  { hasPaidCopyEntitlement: true },
-  { hasActivePaymentOrder: true },
-]) {
-  const lockedState = deriveFacultyMockEditability({ verified: true, ...trigger });
-  assert.equal(lockedState.scoringInputsLocked, true, 'Each evaluation/entitlement trigger locks maximum marks and source files.');
-  assert.equal(lockedState.accessTypeLocked, true, 'Each evaluation/entitlement trigger locks Free/Paid access.');
-}
+const inProgressState = getFacultyMockEvaluationEditLocks({ status: 'PROCESSING' });
+assert.equal(inProgressState.evaluationInProgress, true, 'An active evaluation must be detected across app instances.');
+
+const pendingReviewRetry = getFacultyMockEvaluationEditLocks({ status: 'NEEDS_REVIEW' });
+assert.equal(pendingReviewRetry.pendingReviewRetry, true, 'An unused NEEDS_REVIEW retry must keep source inputs fixed.');
+
+const usedReviewRetry = getFacultyMockEvaluationEditLocks({
+  status: 'NEEDS_REVIEW',
+  faculty_mock_review_retry_evaluation_id: 'eval_retry_123',
+});
+assert.equal(usedReviewRetry.pendingReviewRetry, false, 'A review retry already linked to the original evaluation must not lock editing forever.');
+
+const retryResultReview = getFacultyMockEvaluationEditLocks({
+  status: 'NEEDS_REVIEW',
+  retry_of_evaluation_id: 'eval_original_123',
+});
+assert.equal(retryResultReview.pendingReviewRetry, false, 'A retry result cannot create a second pending retry lock.');
+
+const inProgressEditability = deriveFacultyMockEditability({ verified: true, evaluationInProgress: true });
+assert.equal(inProgressEditability.scoringInputsLocked, true, 'A running evaluation must lock scoring inputs.');
+assert.equal(inProgressEditability.accessTypeLocked, true, 'A running evaluation must lock student access.');
+
+const pendingReviewEditability = deriveFacultyMockEditability({ verified: true, hasPendingReviewRetry: true });
+assert.equal(pendingReviewEditability.scoringInputsLocked, true, 'An unused NEEDS_REVIEW retry must lock scoring inputs.');
+assert.equal(pendingReviewEditability.accessTypeLocked, true, 'An unused NEEDS_REVIEW retry must lock student access.');
+
+const unusedPaidCopyEditability = deriveFacultyMockEditability({ verified: true, hasUnconsumedPaidCopy: true });
+assert.equal(unusedPaidCopyEditability.scoringInputsLocked, true, 'An unused paid copy must keep its purchased paper and scoring source fixed.');
+assert.equal(unusedPaidCopyEditability.accessTypeLocked, true, 'An unused paid copy must protect the purchase access terms.');
+
+const pendingPaymentEditability = deriveFacultyMockEditability({ verified: true, hasActivePaymentOrder: true });
+assert.equal(pendingPaymentEditability.scoringInputsLocked, false, 'An unpaid order must not prevent correcting source files or maximum marks.');
+assert.equal(pendingPaymentEditability.accessTypeLocked, true, 'An active checkout must keep Free/Paid access unchanged until it settles.');
 
 const unverifiedMockState = deriveFacultyMockEditability({ verified: false });
 assert.equal(unverifiedMockState.scoringInputsLocked, true, 'Unknown shared history must fail closed for scoring inputs.');
