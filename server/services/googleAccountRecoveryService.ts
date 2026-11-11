@@ -16,6 +16,7 @@ const MAX_FIREBASE_AUTH_USERS_PER_SCAN = 50000;
 export type GoogleAccountRecoveryStatus =
   | 'FIREBASE_ONLY'
   | 'CLOUD_RECORD_RECOVERABLE'
+  | 'CLOUD_PROFILE_PENDING'
   | 'CLOUD_RECORD_INCOMPLETE'
   | 'PREVIOUSLY_DELETED'
   | 'ROLE_CONFLICT';
@@ -90,6 +91,12 @@ export function classifyGoogleAccountRecoveryState(input: {
     const cloudUser = input.cloudUsers[0];
     const cloudUserId = String(cloudUser.id || cloudUser.userId || '').trim();
     const profile = input.cloudProfile;
+    const registrationNumber = String(profile?.icai_registration_number || '').trim().toUpperCase();
+    const profileIdentityValid =
+      Boolean(profile) &&
+      String(profile?.user_id || '') === cloudUserId &&
+      Boolean(registrationNumber) &&
+      ['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(String(profile?.ca_level || '').toUpperCase());
     const complete =
       cloudUserId.length > 0 &&
       normalizeEmail(cloudUser.email) === normalizeEmail(input.expectedEmail) &&
@@ -97,11 +104,7 @@ export function classifyGoogleAccountRecoveryState(input: {
       typeof cloudUser.password_hash === 'string' &&
       cloudUser.password_hash.length > 0 &&
       String(cloudUser.full_name || '').trim().length >= 2 &&
-      Boolean(profile) &&
-      String(profile?.user_id || '') === cloudUserId &&
-      Boolean(String(profile?.icai_registration_number || '').trim()) &&
-      String(profile?.icai_registration_number || '').trim().toUpperCase() !== 'REG-PENDING' &&
-      ['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(String(profile?.ca_level || '').toUpperCase());
+      profileIdentityValid;
 
     if (!complete) {
       return {
@@ -113,6 +116,18 @@ export function classifyGoogleAccountRecoveryState(input: {
       return {
         status: 'PREVIOUSLY_DELETED',
         statusMessage: 'A deletion tombstone exists for this account. Recovery is blocked to prevent deleted-account resurrection.',
+      };
+    }
+    if (registrationNumber === 'REG-PENDING') {
+      return {
+        status: 'CLOUD_PROFILE_PENDING',
+        statusMessage: 'The existing Google student account and profile are valid, but the student has not completed their ICAI registration details yet. Restore the same account, then ask the student to sign in and finish profile completion. No free credit is granted by restoration.',
+      };
+    }
+    if (!registrationNumber) {
+      return {
+        status: 'CLOUD_RECORD_INCOMPLETE',
+        statusMessage: 'The cloud student profile is missing its registration number. Manual review is required; no record was changed.',
       };
     }
     return {
@@ -284,6 +299,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
   const counts: Record<GoogleAccountRecoveryStatus, number> = {
     FIREBASE_ONLY: 0,
     CLOUD_RECORD_RECOVERABLE: 0,
+    CLOUD_PROFILE_PENDING: 0,
     CLOUD_RECORD_INCOMPLETE: 0,
     PREVIOUSLY_DELETED: 0,
     ROLE_CONFLICT: 0,
