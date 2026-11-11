@@ -117,12 +117,17 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       if (res.ok && data.success) {
         setConsistencyFeedback({
           type: 'success',
-          message: data.message || 'Evaluation consistency successfully verified and certified! Checked copy download is now unlocked.',
+          message: [
+            data.message || 'Evaluation consistency successfully verified and certified! Checked copy download is now unlocked.',
+            autoDownloadAfter && type === 'checked-copy'
+              ? 'Your annotated checked-copy PDF download is starting now.'
+              : '',
+          ].filter(Boolean).join(' '),
         });
         if (onRefresh) onRefresh();
         if (autoDownloadAfter && type) {
           setTimeout(() => {
-            handleDownload(type, version);
+            void handleDownload(type, version);
           }, 350);
         }
       } else {
@@ -482,7 +487,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                   </button>
                 )}
               <button
-                onClick={() => handleRunConsistencyVerification(false)}
+                onClick={() => handleRunConsistencyVerification(true, 'checked-copy')}
                 disabled={isVerifyingConsistency}
                 className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 cursor-pointer shrink-0 transition"
               >
