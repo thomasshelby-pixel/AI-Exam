@@ -40,6 +40,7 @@ import { claimFreeTrialEligibility } from '../services/freeTrialAbuseService.js'
 import { getOrAssignStudentCode, generateUniqueStudentCode } from '../services/studentIdentityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
+import { recordUnlinkedGoogleAuthAttempt } from '../services/unlinkedGoogleAuthActivityService.js';
 import { getPolicyUpdateNoticeStatus, acknowledgePolicyUpdateNotice } from '../services/policyUpdateNoticeService.js';
 import {
   CURRENT_TERMS_VERSION,
@@ -1388,6 +1389,21 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
           req.body?.termsVersion !== CURRENT_TERMS_VERSION ||
           req.body?.privacyVersion !== CURRENT_PRIVACY_VERSION)
       ) {
+        if (socialProvider === 'google') {
+          try {
+            await recordUnlinkedGoogleAuthAttempt({
+              firebaseUid: identity.uid,
+              email: identity.email,
+              displayName: identity.fullName,
+              platform: getSignupPlatform(req),
+              outcome: termsAccepted === true && privacyAccepted === true
+                ? 'LEGAL_VERSION_CHANGED'
+                : 'LEGAL_CONSENT_REQUIRED',
+            });
+          } catch (activityError) {
+            console.warn('[Auth] Could not record unlinked Google sign-in metadata:', activityError);
+          }
+        }
         return res.status(400).json({
           error: 'Before creating an account with Google or Apple, please accept the current Privacy Policy and all Terms & Conditions using their separate checkboxes.',
           code: termsAccepted === true && privacyAccepted === true ? 'LEGAL_VERSION_CHANGED' : 'LEGAL_CONSENT_REQUIRED',
@@ -1420,6 +1436,19 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
             { field: 'email', op: '==', value: normalizedEmail },
           ]);
           if (matchingCloudUsers.length > 0) {
+            if (socialProvider === 'google') {
+              try {
+                await recordUnlinkedGoogleAuthAttempt({
+                  firebaseUid: identity.uid,
+                  email: identity.email,
+                  displayName: identity.fullName,
+                  platform: getSignupPlatform(req),
+                  outcome: 'SOCIAL_ACCOUNT_SYNC_PENDING',
+                });
+              } catch (activityError) {
+                console.warn('[Auth] Could not record pending Google account sync metadata:', activityError);
+              }
+            }
             return res.status(409).json({
               error: 'An account with this email already exists but is not available in the local account registry yet. Please retry shortly or contact support.',
               code: 'SOCIAL_ACCOUNT_SYNC_PENDING',

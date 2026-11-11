@@ -69,6 +69,9 @@ jobs:
       - name: Google account recovery classification safety regression
         run: node_modules/.bin/tsx server/tests/googleAccountRecoveryClassification.test.ts
 
+      - name: Student device activity privacy and platform summary regression
+        run: node_modules/.bin/tsx server/tests/userDeviceActivitySummary.test.ts
+
       - name: PYQ mode-independent marking and missed-question recovery regression
         run: node_modules/.bin/tsx server/tests/pyqCheckedCopyZeroAndCoverageRecovery.test.ts
 

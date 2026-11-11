@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -27,6 +27,11 @@ interface RecoveryCandidate {
   lastSignInAt: string | null;
   status: RecoveryStatus;
   statusMessage: string;
+  lastPlatform: 'APP' | 'WEB' | 'UNKNOWN';
+  lastPlatformAttemptAt: string | null;
+  backendAttemptCount: number;
+  appAttemptCount: number;
+  webAttemptCount: number;
 }
 
 interface RecoveryReport {
@@ -59,8 +64,9 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
   const [copiedEmail, setCopiedEmail] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const autoScanStarted = useRef(false);
 
-  async function scan(pageToken?: string) {
+  const scan = useCallback(async (pageToken?: string) => {
     setLoading(true);
     setError('');
     setNotice('');
@@ -88,7 +94,13 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (autoScanStarted.current) return;
+    autoScanStarted.current = true;
+    void scan();
+  }, [scan]);
 
   async function recoverCloudAccount(candidate: RecoveryCandidate) {
     if (candidate.status !== 'CLOUD_RECORD_RECOVERABLE' && candidate.status !== 'CLOUD_PROFILE_PENDING') return;
@@ -145,7 +157,7 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
           <div>
             <h3 className="text-sm font-bold text-slate-900">Google Account Recovery &amp; Sync</h3>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-600">
-              Find verified Google identities that are missing from the student registry or have an existing cloud record that can be restored. Scanning is read-only.
+              This section automatically scans verified Google identities when you open Students. It lists accounts without emailing users or creating student records.
             </p>
           </div>
         </div>
@@ -156,14 +168,14 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
           className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-700 px-4 py-2 text-xs font-bold text-white transition hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-          {loading ? 'Scanning Google accounts…' : 'Scan Google Accounts'}
+          {loading ? 'Scanning Google accounts…' : report ? 'Refresh scan' : 'Scan Google Accounts'}
         </button>
       </div>
 
       <div className="mt-3 flex items-start gap-2 rounded-xl border border-indigo-100 bg-white/80 p-3 text-[11px] leading-relaxed text-slate-600">
         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-indigo-600" />
         <span>
-          Scan does not create accounts or grant credits. Only an existing, complete Firestore student record can be restored by Admin. A Firebase-only identity must complete sign-in and accept current legal terms itself.
+          No email is sent. The scan is read-only: it does not create accounts or grant credits. A Firebase-only identity appears here with its Firebase creation and last sign-in timestamps. App-versus-website sign-in attempts are shown only when the backend has received and recorded them; older Firebase records may not contain that platform detail.
         </span>
       </div>
 
@@ -223,12 +235,13 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-indigo-100 bg-white">
-              <table className="w-full min-w-[720px] text-left text-xs">
+              <table className="w-full min-w-[900px] text-left text-xs">
                 <thead className="bg-slate-50 text-slate-600">
                   <tr>
                     <th className="px-3 py-2.5 font-bold">Google account</th>
                     <th className="px-3 py-2.5 font-bold">Firebase created</th>
-                    <th className="px-3 py-2.5 font-bold">Last sign-in</th>
+                    <th className="px-3 py-2.5 font-bold">Last Firebase sign-in</th>
+                    <th className="px-3 py-2.5 font-bold">App / website activity</th>
                     <th className="px-3 py-2.5 font-bold">Recovery status</th>
                     <th className="px-3 py-2.5 text-right font-bold">Action</th>
                   </tr>
@@ -245,6 +258,22 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
                       </td>
                       <td className="px-3 py-3 text-[11px] text-slate-600">
                         {candidate.lastSignInAt ? new Date(candidate.lastSignInAt).toLocaleString() : 'Never recorded'}
+                      </td>
+                      <td className="px-3 py-3 text-[11px] text-slate-600">
+                        <p className="font-semibold text-slate-800">
+                          {candidate.lastPlatform === 'APP' ? 'Android app' : candidate.lastPlatform === 'WEB' ? 'Website' : 'Platform not captured'}
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-slate-500">
+                          {candidate.backendAttemptCount.toLocaleString()} backend attempt(s)
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-slate-500">
+                          App: {candidate.appAttemptCount.toLocaleString()} · Web: {candidate.webAttemptCount.toLocaleString()}
+                        </p>
+                        {candidate.lastPlatformAttemptAt && (
+                          <p className="mt-0.5 text-[10px] text-slate-500">
+                            Last: {new Date(candidate.lastPlatformAttemptAt).toLocaleString()}
+                          </p>
+                        )}
                       </td>
                       <td className="px-3 py-3">
                         <span className={`inline-flex rounded-full border px-2 py-1 text-[10px] font-bold ${statusMeta[candidate.status].className}`}>
