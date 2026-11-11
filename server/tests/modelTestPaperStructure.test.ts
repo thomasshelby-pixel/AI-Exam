@@ -426,9 +426,9 @@ const mergedRomanEvidence = normalizeDetectedAttemptHierarchy([
 assert.equal(mergedRomanEvidence.attemptedQuestions.length, 1,
   'Roman child detections must be coalesced before hierarchy filtering.');
 assert.deepEqual(mergedRomanEvidence.attemptedQuestions[0].pages, [6, 7, 8]);
-assert.match(mergedRomanEvidence.attemptedQuestions[0].studentSnippet, /Parent answer opening/);
-assert.match(mergedRomanEvidence.attemptedQuestions[0].studentSnippet, /First Roman answer block/);
-assert.match(mergedRomanEvidence.attemptedQuestions[0].studentSnippet, /Second Roman answer block/);
+assert.match(String(mergedRomanEvidence.attemptedQuestions[0].studentSnippet || ''), /Parent answer opening/);
+assert.match(String(mergedRomanEvidence.attemptedQuestions[0].studentSnippet || ''), /First Roman answer block/);
+assert.match(String(mergedRomanEvidence.attemptedQuestions[0].studentSnippet || ''), /Second Roman answer block/);
 assert.equal(mergedRomanEvidence.attemptedQuestions[0].status, 'ATTEMPTED_PARTIALLY_READABLE',
   'The parent attempt must retain the most conservative child readability status.');
 
