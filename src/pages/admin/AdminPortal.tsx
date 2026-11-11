@@ -20,6 +20,7 @@ import { AdminEvaluationReviewPage } from './AdminEvaluationReviewPage.js';
 import { AdminParakhLearningSection } from './AdminParakhLearningSection.js';
 import { AdminMfaRecoveryRequestsSection } from '../../components/admin/AdminMfaRecoveryRequestsSection.js';
 import { AdminFeatureControlSection } from '../../components/admin/AdminFeatureControlSection.js';
+import { GoogleAccountRecoverySection } from '../../components/admin/GoogleAccountRecoverySection.js';
 import { AdminNotificationCentre } from '../../components/admin/AdminNotificationCentre.js';
 import { AdminUsageMetricsPanel } from '../../components/admin/AdminUsageMetricsPanel.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
@@ -2201,6 +2202,8 @@ export const AdminPortal: React.FC = () => {
                       </span>
                     </div>
                   </div>
+
+                  <GoogleAccountRecoverySection onRecovered={() => loadActiveSectionData()} />
 
                   {/* Search and Filters */}
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 mb-5 p-3 rounded-xl bg-slate-50 border border-slate-200">
