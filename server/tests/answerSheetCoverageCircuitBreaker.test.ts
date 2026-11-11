@@ -312,6 +312,74 @@ async function run() {
   assert.ok(missingAnswerBlockPage.mappingWarnings.some((warning) => /observed 2 attempted answer block/.test(warning)),
     'A visible answer-block count mismatch must trigger recovery/review instead of silently omitting a sub-part.');
 
+  // Continuation pages may contain only a bare Roman child label. The page
+  // auditor can represent the absent visible parent number as JSON null; this
+  // must be treated exactly like an omitted optional field, not a page warning.
+  for (const continuationCase of [
+    { code: 'Q2(a)', number: '2', roman: 'ii', snippet: 'Raghav shall have 10000 shares, out of which 6 shares have been paid up.' },
+    { code: 'Q6(a)', number: '6', roman: 'iii', snippet: 'There is no provision for condonation in delay of notice.' },
+  ]) {
+    const nullableContinuationPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+      status: 'ATTEMPTED_READABLE',
+      hasHandwriting: true,
+      answerBlocksObserved: 1,
+      unresolvedAnswerBlocks: [],
+      mcqNeedsReview: [],
+      detectedQuestions: [{
+        questionNumber: null,
+        subQuestion: continuationCase.roman,
+        parentQuestionNumberVisible: false,
+        isContinuation: true,
+        authoritativeQuestionCode: continuationCase.code,
+        mappingBasis: 'CONTINUATION',
+        readabilityStatus: 'ATTEMPTED_READABLE',
+        snippet: continuationCase.snippet,
+      }],
+      mcqSelections: {},
+    }));
+    assert.deepEqual(nullableContinuationPage.mappingWarnings, [],
+      'An absent parent label encoded as null must not turn a valid continuation page into NEEDS REVIEW.');
+    assert.equal(nullableContinuationPage.detectedQuestions.length, 1,
+      'The detected Roman child answer block must be retained.');
+    assert.equal(nullableContinuationPage.detectedQuestions[0].questionNumber, undefined,
+      'A null question number must remain absent, not be converted into a fabricated ID.');
+    assert.equal(nullableContinuationPage.detectedQuestions[0].subQuestion, continuationCase.roman);
+    assert.equal(nullableContinuationPage.detectedQuestions[0].isContinuation, true);
+
+    const continuationResolution = resolveContextualQuestionIdentity({
+      ...nullableContinuationPage.detectedQuestions[0],
+      paperSubQuestions: [{
+        fullQuestionCode: continuationCase.code,
+        questionNumber: continuationCase.number,
+        subQuestionNumber: 'a',
+        maximumMarks: 5,
+        isMcq: false,
+      }] as any,
+    });
+    assert.equal(continuationResolution.canonicalId, continuationCase.code,
+      'A source-verified Roman continuation must map to its normalized parent question.');
+    assert.equal(continuationResolution.requiresReview, false,
+      'A valid null parent label must not create a mapping-review requirement.');
+  }
+
+  const malformedQuestionNumberPage = parseAndValidatePageCoverageOutput(JSON.stringify({
+    status: 'ATTEMPTED_READABLE',
+    hasHandwriting: true,
+    answerBlocksObserved: 1,
+    detectedQuestions: [{
+      questionNumber: { value: '2' },
+      subQuestion: 'a',
+      parentQuestionNumberVisible: true,
+      isContinuation: false,
+      snippet: 'A visibly malformed question identity.',
+    }],
+    mcqSelections: {},
+  }));
+  assert.ok(malformedQuestionNumberPage.mappingWarnings.some((warning) => /non-text question number/.test(warning)),
+    'Objects and other malformed question-number values must still trigger manual review.');
+  assert.equal(malformedQuestionNumberPage.detectedQuestions.length, 0,
+    'A malformed identity must not be silently accepted as a mapped answer.');
+
   const parsedPage = parseAndValidatePageCoverageOutput(JSON.stringify({
     status: 'ATTEMPTED_PARTIALLY_READABLE',
     hasHandwriting: true,
