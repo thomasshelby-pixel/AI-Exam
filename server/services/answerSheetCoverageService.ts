@@ -76,55 +76,73 @@ function hasNestedSiblingVerificationTarget(
   return false;
 }
 
+interface DetectedAttemptHierarchyMetadata {
+  status?: PageAttemptStatus;
+  readabilityStatusExplicit?: boolean;
+  studentSnippet?: string;
+  studentSelectedOption?: string;
+  isMcq?: boolean;
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
+}
+
+type NormalizedDetectedAttempt<T> = T & DetectedAttemptHierarchyMetadata;
+
 export function normalizeDetectedAttemptHierarchy<T extends {
   fullQuestionCode: string;
   pages: number[];
-}>(detectedAttempts: T[]): { attemptedQuestions: T[]; removedParentCodes: string[] } {
+}>(
+  detectedAttempts: T[],
+): { attemptedQuestions: Array<NormalizedDetectedAttempt<T>>; removedParentCodes: string[] } {
   // Roman children normalize to the same scoreable parent ID. Group those
   // detections immediately or the same question is emitted multiple times
   // (e.g. Q1(a), Q1(a)(i), Q1(a)(ii) all become Q1(a)).
-  const grouped = new Map<string, T>();
+  const grouped = new Map<string, NormalizedDetectedAttempt<T>>();
   for (const attempt of Array.isArray(detectedAttempts) ? detectedAttempts : []) {
     const fullQuestionCode = toCanonicalQuestionId(attempt.fullQuestionCode);
     const pages = [...new Set((attempt.pages || []).filter((page) => Number.isInteger(page) && page > 0))]
       .sort((a, b) => a - b);
     const existing = grouped.get(fullQuestionCode);
+    const incoming = {
+      ...attempt,
+      fullQuestionCode,
+      pages,
+    } as NormalizedDetectedAttempt<T>;
     if (!existing) {
-      grouped.set(fullQuestionCode, { ...attempt, fullQuestionCode, pages } as T);
+      grouped.set(fullQuestionCode, incoming);
       continue;
     }
 
-    const merged = { ...existing, pages: [...new Set([...existing.pages, ...pages])].sort((a, b) => a - b) } as T;
-    const existingDetails = existing as T & Record<string, any>;
-    const incomingDetails = attempt as T & Record<string, any>;
-    const mergedDetails = merged as T & Record<string, any>;
+    const merged = {
+      ...existing,
+      pages: [...new Set([...existing.pages, ...pages])].sort((a, b) => a - b),
+    } as NormalizedDetectedAttempt<T>;
 
     // Keep text evidence from every Roman/parent occurrence. This must not
     // silently replace an earlier readable block with the last child block.
-    const snippets = [existingDetails.studentSnippet, incomingDetails.studentSnippet]
+    const snippets = [existing.studentSnippet, incoming.studentSnippet]
       .map((value) => String(value || '').trim())
       .filter(Boolean);
     if (snippets.length) {
-      mergedDetails.studentSnippet = [...new Set(snippets)].join('\n\n');
+      merged.studentSnippet = [...new Set(snippets)].join('\n\n');
     }
 
-    const reasons = [existingDetails.mappingReviewReason, incomingDetails.mappingReviewReason]
+    const reasons = [existing.mappingReviewReason, incoming.mappingReviewReason]
       .map((value) => String(value || '').trim())
       .filter(Boolean);
     if (reasons.length) {
-      mergedDetails.mappingReviewReason = [...new Set(reasons)].join(' | ');
+      merged.mappingReviewReason = [...new Set(reasons)].join(' | ');
     }
 
-    mergedDetails.readabilityStatusExplicit =
-      existingDetails.readabilityStatusExplicit === true || incomingDetails.readabilityStatusExplicit === true;
-    mergedDetails.mcqSelectionNeedsReview =
-      existingDetails.mcqSelectionNeedsReview === true || incomingDetails.mcqSelectionNeedsReview === true;
-    mergedDetails.isMcq = existingDetails.isMcq === true || incomingDetails.isMcq === true;
+    merged.readabilityStatusExplicit =
+      existing.readabilityStatusExplicit === true || incoming.readabilityStatusExplicit === true;
+    merged.mcqSelectionNeedsReview =
+      existing.mcqSelectionNeedsReview === true || incoming.mcqSelectionNeedsReview === true;
+    merged.isMcq = existing.isMcq === true || incoming.isMcq === true;
 
-    const statuses = [existingDetails.status, incomingDetails.status]
-      .map((value) => String(value || '').trim())
-      .filter(Boolean);
-    const statusPriority: Record<string, number> = {
+    const statuses = [existing.status, incoming.status]
+      .filter((value): value is PageAttemptStatus => value !== undefined);
+    const statusPriority: Record<PageAttemptStatus, number> = {
       ATTEMPTED_UNCLEAR: 5,
       ATTEMPTED_PARTIALLY_READABLE: 4,
       PAGE_UNREADABLE: 4,
@@ -132,22 +150,22 @@ export function normalizeDetectedAttemptHierarchy<T extends {
       ATTEMPTED_READABLE: 3,
       CLEARLY_UNATTEMPTED: 2,
     };
-    const mostConservativeStatus = statuses.sort(
-      (left, right) => (statusPriority[right] || 0) - (statusPriority[left] || 0),
+    const mostConservativeStatus = [...statuses].sort(
+      (left, right) => statusPriority[right] - statusPriority[left],
     )[0];
-    if (mostConservativeStatus) mergedDetails.status = mostConservativeStatus;
+    if (mostConservativeStatus) merged.status = mostConservativeStatus;
 
-    const selectedOptions = [existingDetails.studentSelectedOption, incomingDetails.studentSelectedOption]
+    const selectedOptions = [existing.studentSelectedOption, incoming.studentSelectedOption]
       .map((value) => String(value || '').trim().toUpperCase())
       .filter(Boolean);
     const uniqueSelectedOptions = [...new Set(selectedOptions)];
     if (uniqueSelectedOptions.length === 1) {
-      mergedDetails.studentSelectedOption = uniqueSelectedOptions[0];
+      merged.studentSelectedOption = uniqueSelectedOptions[0];
     } else if (uniqueSelectedOptions.length > 1) {
-      mergedDetails.studentSelectedOption = undefined;
-      mergedDetails.mcqSelectionNeedsReview = true;
-      mergedDetails.mappingReviewReason = [
-        String(mergedDetails.mappingReviewReason || '').trim(),
+      merged.studentSelectedOption = undefined;
+      merged.mcqSelectionNeedsReview = true;
+      merged.mappingReviewReason = [
+        String(merged.mappingReviewReason || '').trim(),
         'Conflicting selections were detected for the same normalized MCQ identity.',
       ].filter(Boolean).join(' | ');
     }
