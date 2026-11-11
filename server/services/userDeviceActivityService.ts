@@ -3,6 +3,8 @@ import { db } from '../db.js';
 import {
   getFirestoreDb,
   getFirestoreDoc,
+  getFirestoreDriverMode,
+  queryFirestoreDocs,
   setFirestoreDoc,
 } from './firestoreDbService.js';
 
@@ -113,4 +115,85 @@ export async function recordUserDeviceActivity(input: RecordUserDeviceActivityIn
     console.warn('[DeviceActivity] Failed to record sign-in metadata:', error);
     return false;
   }
+}
+
+
+export interface UserDeviceActivitySummary {
+  id: string;
+  device_name: string;
+  platform: DeviceActivityPlatform;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  last_login_at: string | null;
+  login_count: number;
+}
+
+/**
+ * Converts stored sign-in records into a privacy-minimized admin view.
+ * Device identifiers, IP addresses and raw user-agent strings are deliberately
+ * excluded from the returned shape.
+ */
+export function normalizeUserDeviceActivityRecords(
+  records: Array<Record<string, any>>,
+  userId: string,
+): UserDeviceActivitySummary[] {
+  const normalizedUserId = safeText(userId, 160);
+  if (!normalizedUserId) return [];
+
+  const timestamp = (value: unknown): number => {
+    const parsed = Date.parse(typeof value === 'string' ? value : '');
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  return records
+    .filter((record) => String(record.user_id || '') === normalizedUserId)
+    .map((record) => {
+      const rawPlatform = String(record.platform || '').toUpperCase();
+      const platform: DeviceActivityPlatform =
+        rawPlatform === 'APP' || rawPlatform === 'WEB' ? rawPlatform : 'UNKNOWN';
+      const rawCount = Number(record.login_count);
+      return {
+        id: safeText(record.id, 160) || 'unknown-activity',
+        device_name: safeText(record.device_name, 200) || 'Unknown device',
+        platform,
+        first_seen_at: safeText(record.first_seen_at, 64),
+        last_seen_at: safeText(record.last_seen_at, 64),
+        last_login_at: safeText(record.last_login_at, 64),
+        login_count: Number.isFinite(rawCount) && rawCount > 0
+          ? Math.min(Math.floor(rawCount), 2_147_483_647)
+          : 0,
+      };
+    })
+    .sort((left, right) => timestamp(right.last_seen_at || right.last_login_at) -
+      timestamp(left.last_seen_at || left.last_login_at))
+    .slice(0, 20);
+}
+
+/**
+ * Reads successful sign-in summaries for one student using the server's
+ * authoritative Firestore Admin SDK. This is not a page-view or clickstream.
+ */
+export async function getUserDeviceActivityForUser(
+  userId: string,
+): Promise<UserDeviceActivitySummary[]> {
+  const normalizedUserId = safeText(userId, 160);
+  if (!normalizedUserId) return [];
+
+  if (!getFirestoreDb() || getFirestoreDriverMode() !== 'ADMIN_SDK') {
+    throw new Error('Authoritative sign-in activity storage is unavailable.');
+  }
+
+  const records = await queryFirestoreDocs<Record<string, any>>(
+    'user_device_activity',
+    [{ field: 'user_id', op: '==', value: normalizedUserId }],
+    { failOnError: true },
+  );
+
+  // The query helper can switch drivers after a permission failure. Never expose
+  // this restricted collection through a client-SDK fallback.
+  if (getFirestoreDriverMode() !== 'ADMIN_SDK') {
+    throw new Error('Sign-in activity could not be read through the Firebase Admin SDK.');
+  }
+
+  return normalizeUserDeviceActivityRecords(records, normalizedUserId);
 }
