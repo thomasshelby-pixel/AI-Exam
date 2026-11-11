@@ -261,7 +261,7 @@ export const UnifiedAuthPage: React.FC<UnifiedAuthPageProps> = ({
               <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-300">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <span>2 Free Evaluations upon signup</span>
+                  <span>Up to 2 Free Evaluations when eligible</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
