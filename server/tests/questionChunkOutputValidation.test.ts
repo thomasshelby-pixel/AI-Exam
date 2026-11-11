@@ -4,6 +4,7 @@ import {
   parseAndValidateQuestionChunkOutput,
   requiresAnswerLevelReadabilityReview,
   assessQuestionReferenceTopicAlignment,
+  removeMismatchedDerivedSourceAnchor,
 } from '../services/questionChunkEvaluator.js';
 
 function makeResponse(overrides: Record<string, unknown> = {}): string {
@@ -38,9 +39,11 @@ function makeResponse(overrides: Record<string, unknown> = {}): string {
   });
 }
 
-const nestedDirective = buildQuestionChunkSubPartCompletenessDirective('Q2(a(ii))', 3);
-assert.match(nestedDirective, /exactly the authoritative leaf Q2\(a\(ii\)\)/i);
-assert.match(nestedDirective, /Do not merge this leaf with its parent/i);
+const nestedDirective = buildQuestionChunkSubPartCompletenessDirective('Q2(a(ii))', 5);
+assert.match(nestedDirective, /exactly the authoritative scoreable part Q2\(a\) for 5 marks/i);
+assert.match(nestedDirective, /Roman-numbered children under this lettered part/i);
+assert.match(nestedDirective, /Keep other lettered sibling parts/i);
+assert.doesNotMatch(nestedDirective, /Q2\(a\(ii\)\) for 3 marks/i);
 assert.match(nestedDirective, /each distinct, independently mark-bearing source criterion exactly once/i);
 assert.match(nestedDirective, /source's own component allocations/i);
 assert.match(nestedDirective, /visibly not attempted/i);
@@ -97,6 +100,102 @@ const matchedDepositReference = assessQuestionReferenceTopicAlignment({
 'Calculate the permitted deposit amount and applicable interest reduction.');
 assert.equal(matchedDepositReference.aligned, true,
   'A topic-aligned deposits reference must remain scoreable.');
+
+const safeDerivedAllocation = removeMismatchedDerivedSourceAnchor([
+  'SUBQUESTION: Q1(c)',
+  'SUBQUESTION MARKS: 4',
+  'SOURCE-DERIVED CONTENT ANCHOR:',
+  'Companies Act section 68 buy-back of equity shares by special resolution.',
+  'DERIVED EXAMINER-STYLE ALLOCATION:',
+  'STEP 1:',
+  'Requirement: Apply the buy-back provision under section 68.',
+  'Marks: 0.75',
+  'Award When: The student identifies the buy-back resolution requirement.',
+  'STEP 2:',
+  'Requirement: Explain paid-up capital and free-reserve limits for buy-back.',
+  'Marks: 1.00',
+  'Award When: The student applies the twenty-five per cent buy-back ceiling.',
+  'STEP 3:',
+  'Requirement: Apply the buy-back exceptions.',
+  'Marks: 1.50',
+  'STEP 4:',
+  'Requirement: Conclude whether the buy-back is valid.',
+  'Marks: 0.75',
+].join('\n'));
+assert.doesNotMatch(safeDerivedAllocation, /Companies Act section 68 buy-back/i,
+  'A wrong sibling source anchor must be removed from the scoring prompt.');
+assert.doesNotMatch(safeDerivedAllocation, /buy-back|paid-up capital|free-reserve|resolution requirement/i,
+  'Topic-specific Requirement/Award prose from the wrong Marking Scheme anchor must also be removed.');
+assert.match(safeDerivedAllocation, /STEP 1: Marks: 0\.75/);
+assert.match(safeDerivedAllocation, /STEP 4: Marks: 0\.75/,
+  'Only component weights must survive anchor exclusion.');
+assert.match(safeDerivedAllocation, /WEIGHTS ONLY/);
+assert.equal(
+  removeMismatchedDerivedSourceAnchor('Ordinary marking scheme without the generated allocation headings.'),
+  '',
+  'Do not preserve unverified marking-scheme content unless its derived allocation boundary is explicit.',
+);
+assert.match(
+  removeMismatchedDerivedSourceAnchor([
+    'SUBQUESTION MARKS: 5',
+    'SOURCE-DERIVED CONTENT ANCHOR:',
+    'Wrong source anchor.',
+    'DERIVED EXAMINER-STYLE ALLOCATION:',
+    'STEP 1:',
+    'Marks: 1.00',
+  ].join('\n')),
+  /component weights do not reconcile/,
+  'Do not preserve an incomplete weight allocation that fails the authoritative maximum.',
+);
+
+const crossWiredMarkingSchemeCases = [
+  {
+    id: 'Q1(c)',
+    question: {
+      topic: 'FEMA current account transactions and consultancy remittance approval for infrastructure projects',
+      provision: 'Foreign Exchange Management Act and Current Account Transactions Rules',
+      questionText: 'Alpha Infra Ltd. proposes USD 12,000,000 consultancy fees for an infrastructure project and asks whether RBI prior approval is required.',
+    },
+    suggestedAnswer: 'FEMA requires prior RBI approval for remittances exceeding USD 10,000,000 per infrastructure consultancy project.',
+    wrongMarkingScheme: 'Companies Act buy-back of equity shares, special resolution, paid-up capital and free reserves under section 68.',
+  },
+  {
+    id: 'Q4(b)',
+    question: {
+      topic: 'Appointment of internal auditor by an unlisted public company',
+      provision: 'Companies Act section 138 and Companies Accounts Rules Rule 13',
+      questionText: 'Downtown Limited is an unlisted public company. Its audited financial statements for FY 2024-25 show turnover of Rs 210 crore and outstanding public deposits of Rs 28 crore; determine whether it must appoint an internal auditor.',
+    },
+    suggestedAnswer: 'Section 138 and Rule 13 require an internal auditor where an unlisted public company has turnover of at least Rs 200 crore or outstanding deposits of at least Rs 25 crore.',
+    wrongMarkingScheme: 'Companies Act filing of financial statements with Registrar within thirty days of an adjourned annual general meeting.',
+  },
+  {
+    id: 'Q6(b)',
+    question: {
+      topic: 'Demand for a poll at an annual general meeting and voting rights of members present personally or by proxy',
+      provision: 'Companies Act section 109 and applicable poll-demand thresholds',
+      questionText: 'At Sunrise Limited AGM, 75 members present personally or through proxies and representing more than one-tenth of total voting power demand a poll. The Chairman refuses because some members are represented by proxies. Examine whether the refusal is valid.',
+    },
+    suggestedAnswer: 'A poll may be demanded by members present in person or by proxy who hold at least the prescribed voting power or paid-up share threshold. The Chairman cannot reject a valid poll demand merely because members are represented by proxies.',
+    wrongMarkingScheme: 'Foreign company registration under Chapter XXII, section 393, validity of contracts and restriction on a foreign company filing suits before compliance.',
+  },
+];
+for (const item of crossWiredMarkingSchemeCases) {
+  const result = assessQuestionReferenceTopicAlignment(item.question, item.suggestedAnswer, item.wrongMarkingScheme);
+  assert.equal(result.aligned, true,
+    item.id + ': a valid Suggested Answer must remain scoreable when only the derived Marking Scheme anchor is cross-wired.');
+  assert.ok(result.misalignedSources?.includes('MARKING_SCHEME'),
+    item.id + ': the mismatched Marking Scheme must be explicitly identified for exclusion.');
+}
+
+const singleSharedTopicTerm = assessQuestionReferenceTopicAlignment({
+  topic: 'Specific alpha beta gamma delta epsilon',
+  provision: 'Rule 42',
+  questionText: 'Explain specific alpha and its application to the facts.',
+}, 'Alpha is applied together with unrelated concepts about another statutory situation.',
+  'Completely different commercial rules with unrelated requirements and exceptions.');
+assert.equal(singleSharedTopicTerm.aligned, true,
+  'One distinctive shared term must not trigger a false reference-mismatch review.');
 
 const insufficientTopicAnchor = assessQuestionReferenceTopicAlignment({
   topic: 'General provisions',

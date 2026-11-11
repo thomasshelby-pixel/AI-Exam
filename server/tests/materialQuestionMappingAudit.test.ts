@@ -142,9 +142,9 @@ const nestedAudit = buildMaterialQuestionMappingAudit({
   markingSchemeText: nestedMarkingScheme,
 });
 assert.equal(nestedAudit.status, 'MATCHED', JSON.stringify(nestedAudit, null, 2));
-assert.deepEqual(nestedAudit.questionPaperIds, ['Q3(a(i))', 'Q3(a(ii))', 'Q3(b)']);
-assert.deepEqual(nestedAudit.suggestedAnswerIds, ['Q3(a(i))', 'Q3(a(ii))', 'Q3(b)']);
-assert.deepEqual(nestedAudit.markingSchemeIds, ['Q3(a(i))', 'Q3(a(ii))', 'Q3(b)']);
+assert.deepEqual(nestedAudit.questionPaperIds, ['Q3(a)', 'Q3(b)']);
+assert.deepEqual(nestedAudit.suggestedAnswerIds, ['Q3(a)', 'Q3(b)']);
+assert.deepEqual(nestedAudit.markingSchemeIds, ['Q3(a)', 'Q3(b)']);
 assert.deepEqual(nestedAudit.missingFromSuggestedAnswers, []);
 assert.deepEqual(nestedAudit.missingFromMarkingScheme, []);
 

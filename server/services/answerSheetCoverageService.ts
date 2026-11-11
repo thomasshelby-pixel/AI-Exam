@@ -1,10 +1,11 @@
 import { PDFDocument } from 'pdf-lib';
 import crypto from 'crypto';
 import { executeModelWithFallback, sanitizeSecretStrings } from '../models/modelRegistry.js';
-import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
+import { AuthoritativePaperStructure, consolidateRomanChildSubQuestions } from './paperStructureService.js';
 import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
+  normalizeCanonicalQuestionPartPath,
   isCanonicalQuestionDescendant,
 } from './canonicalQuestionService.js';
 
@@ -23,52 +24,155 @@ export function clearCoverageMapCache(): void {
  * request an explicit mapping rather than guessing which leaf was attempted.
  */
 /**
- * A page read that identifies one nested leaf while the authoritative paper
- * defines sibling leaves gets a bounded independent verification read. This
- * catches a confident-but-incomplete first pass that would otherwise never
- * enter the existing targeted-recovery path.
+ * A page read that identifies one source-labelled nested block while the
+ * authoritative paper defines sibling blocks gets a bounded independent
+ * verification read. The source path is used here, not the scoreable path:
+ * Roman clauses such as Q2(a)(i)/(ii) share one scoreable Q2(a), but both
+ * visible answer blocks still need coverage verification before that parent
+ * can be considered fully attempted.
  */
 function hasNestedSiblingVerificationTarget(
   analysis: PageCoverageRecord,
   paperStructure: AuthoritativePaperStructure,
 ): boolean {
   const authoritativeLeaves = (paperStructure.subQuestions || []).filter((question) => !question.isMcq);
+  const romanTokens = new Set([
+    'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+    'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx',
+    'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxx', 'xl', 'l', 'lx', 'lxx', 'xc', 'c',
+  ]);
+  const family = (token: string): 'ROMAN' | 'ARABIC' | 'ALPHA' | 'OTHER' => {
+    const value = String(token || '').toLowerCase();
+    if (romanTokens.has(value)) return 'ROMAN';
+    if (/^\d+$/.test(value)) return 'ARABIC';
+    if (/^[a-z]$/.test(value)) return 'ALPHA';
+    return 'OTHER';
+  };
+
   for (const detected of analysis.detectedQuestions || []) {
     if (detected.isMcq) continue;
-    const canonicalId = toCanonicalQuestionId(
-      detected.fullQuestionCode || detected.questionNumber,
-      detected.subQuestionNumber,
-      authoritativeLeaves,
-    );
-    const parsed = parseCanonicalQuestionIdentity(canonicalId);
-    const path = parsed.subQuestionPath || [];
-    if (path.length < 2) continue;
+    const sourceCode = detected.fullQuestionCode || detected.questionNumber;
+    const sourceIdentity = parseCanonicalQuestionIdentity(sourceCode);
+    const sourcePath = sourceIdentity.sourceSubQuestionPath || sourceIdentity.subQuestionPath || [];
+    if (sourcePath.length < 2) continue;
 
-    const parentPath = path.slice(0, -1);
-    const siblingLeaves = authoritativeLeaves.filter((question) => {
+    const sourceParentPath = sourcePath.slice(0, -1);
+    const sourceLeafFamily = family(sourcePath[sourcePath.length - 1]);
+    const siblingSourceBlocks = authoritativeLeaves.filter((question) => {
       const candidate = parseCanonicalQuestionIdentity(
-        question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
+        question.fullQuestionCode || `Q${question.questionNumber}${question.subQuestionNumber ? `(${question.subQuestionNumber})` : ''}`,
       );
-      const candidatePath = candidate.subQuestionPath || [];
+      const candidatePath = candidate.sourceSubQuestionPath || candidate.subQuestionPath || [];
       return !candidate.isMcq &&
-        candidate.questionNumber === parsed.questionNumber &&
-        candidatePath.length === path.length &&
-        parentPath.every((part, index) => candidatePath[index]?.toLowerCase() === part.toLowerCase());
+        candidate.questionNumber === sourceIdentity.questionNumber &&
+        candidatePath.length === sourcePath.length &&
+        family(candidatePath[candidatePath.length - 1]) === sourceLeafFamily &&
+        sourceParentPath.every((part, index) =>
+          candidatePath[index]?.toLowerCase() === part.toLowerCase()
+        );
     });
-    if (siblingLeaves.length > 1) return true;
+    if (siblingSourceBlocks.length > 1) return true;
   }
   return false;
 }
 
+interface DetectedAttemptHierarchyMetadata {
+  status?: PageAttemptStatus;
+  readabilityStatusExplicit?: boolean;
+  studentSnippet?: string;
+  studentSelectedOption?: string;
+  isMcq?: boolean;
+  mcqSelectionNeedsReview?: boolean;
+  mappingReviewReason?: string;
+}
+
+type NormalizedDetectedAttempt<T> = T & DetectedAttemptHierarchyMetadata;
+
 export function normalizeDetectedAttemptHierarchy<T extends {
   fullQuestionCode: string;
   pages: number[];
-}>(detectedAttempts: T[]): { attemptedQuestions: T[]; removedParentCodes: string[] } {
-  const normalized = (Array.isArray(detectedAttempts) ? detectedAttempts : []).map((attempt) => ({
-    ...attempt,
-    fullQuestionCode: toCanonicalQuestionId(attempt.fullQuestionCode),
-    pages: [...new Set((attempt.pages || []).filter((page) => Number.isInteger(page) && page > 0))].sort((a, b) => a - b),
-  }));
+}>(
+  detectedAttempts: T[],
+): { attemptedQuestions: Array<NormalizedDetectedAttempt<T>>; removedParentCodes: string[] } {
+  // Roman children normalize to the same scoreable parent ID. Group those
+  // detections immediately or the same question is emitted multiple times
+  // (e.g. Q1(a), Q1(a)(i), Q1(a)(ii) all become Q1(a)).
+  const grouped = new Map<string, NormalizedDetectedAttempt<T>>();
+  for (const attempt of Array.isArray(detectedAttempts) ? detectedAttempts : []) {
+    const fullQuestionCode = toCanonicalQuestionId(attempt.fullQuestionCode);
+    const pages = [...new Set((attempt.pages || []).filter((page) => Number.isInteger(page) && page > 0))]
+      .sort((a, b) => a - b);
+    const existing = grouped.get(fullQuestionCode);
+    const incoming = {
+      ...attempt,
+      fullQuestionCode,
+      pages,
+    } as NormalizedDetectedAttempt<T>;
+    if (!existing) {
+      grouped.set(fullQuestionCode, incoming);
+      continue;
+    }
+
+    const merged = {
+      ...existing,
+      pages: [...new Set([...existing.pages, ...pages])].sort((a, b) => a - b),
+    } as NormalizedDetectedAttempt<T>;
+
+    // Keep text evidence from every Roman/parent occurrence. This must not
+    // silently replace an earlier readable block with the last child block.
+    const snippets = [existing.studentSnippet, incoming.studentSnippet]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    if (snippets.length) {
+      merged.studentSnippet = [...new Set(snippets)].join('\n\n');
+    }
+
+    const reasons = [existing.mappingReviewReason, incoming.mappingReviewReason]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean);
+    if (reasons.length) {
+      merged.mappingReviewReason = [...new Set(reasons)].join(' | ');
+    }
+
+    merged.readabilityStatusExplicit =
+      existing.readabilityStatusExplicit === true || incoming.readabilityStatusExplicit === true;
+    merged.mcqSelectionNeedsReview =
+      existing.mcqSelectionNeedsReview === true || incoming.mcqSelectionNeedsReview === true;
+    merged.isMcq = existing.isMcq === true || incoming.isMcq === true;
+
+    const statuses = [existing.status, incoming.status]
+      .filter((value): value is PageAttemptStatus => value !== undefined);
+    const statusPriority: Record<PageAttemptStatus, number> = {
+      ATTEMPTED_UNCLEAR: 5,
+      ATTEMPTED_PARTIALLY_READABLE: 4,
+      PAGE_UNREADABLE: 4,
+      QUESTION_NOT_IDENTIFIED: 4,
+      ATTEMPTED_READABLE: 3,
+      CLEARLY_UNATTEMPTED: 2,
+    };
+    const mostConservativeStatus = [...statuses].sort(
+      (left, right) => statusPriority[right] - statusPriority[left],
+    )[0];
+    if (mostConservativeStatus) merged.status = mostConservativeStatus;
+
+    const selectedOptions = [existing.studentSelectedOption, incoming.studentSelectedOption]
+      .map((value) => String(value || '').trim().toUpperCase())
+      .filter(Boolean);
+    const uniqueSelectedOptions = [...new Set(selectedOptions)];
+    if (uniqueSelectedOptions.length === 1) {
+      merged.studentSelectedOption = uniqueSelectedOptions[0];
+    } else if (uniqueSelectedOptions.length > 1) {
+      merged.studentSelectedOption = undefined;
+      merged.mcqSelectionNeedsReview = true;
+      merged.mappingReviewReason = [
+        String(merged.mappingReviewReason || '').trim(),
+        'Conflicting selections were detected for the same normalized MCQ identity.',
+      ].filter(Boolean).join(' | ');
+    }
+
+    grouped.set(fullQuestionCode, merged);
+  }
+  const normalized = Array.from(grouped.values());
   const removedParentCodes = new Set<string>();
 
   for (const parent of normalized) {
@@ -340,10 +444,19 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
         subQuestion = inferredSubQuestion;
       } else if (typeof question.subQuestion === 'string' || typeof question.subQuestion === 'number') {
         const explicitSubQuestion = String(question.subQuestion).trim();
-        if (inferredSubQuestion && inferredSubQuestion !== 'MCQ') {
-          const normalizedFullCode = toCanonicalQuestionId(rawQuestionNumber, explicitSubQuestion);
+        if (questionNumber && inferredSubQuestion !== 'MCQ') {
+          // Normalize even when the model returns the parent question number
+          // and a nested path in separate fields (e.g. questionNumber="2",
+          // subQuestion="a(i)"). Otherwise the raw Roman child leaks into the
+          // answer map despite the canonical scoreable identity being Q2(a).
+          const normalizedFullCode = toCanonicalQuestionId(
+            rawQuestionNumber || questionNumber,
+            explicitSubQuestion,
+          );
           subQuestion = parseCanonicalQuestionIdentity(normalizedFullCode).subQuestion || explicitSubQuestion;
         } else {
+          // A truly bare child label without a visible parent remains raw so
+          // resolveContextualQuestionIdentity can validate its continuation context.
           subQuestion = explicitSubQuestion;
         }
       } else {
@@ -698,19 +811,29 @@ export function resolveContextualQuestionIdentity(options: {
   // serializer; string concatenation silently failed to match valid source leaves.
   const nestedCandidate = toCanonicalQuestionId(context.canonicalId, subPart, authoritativeLeaves).toLowerCase();
 
-  const matches = authoritativeLeaves.filter((question) => {
-    const code = question.fullQuestionCode.toLowerCase();
-    return code === siblingCandidate.toLowerCase() || code === nestedCandidate;
-  });
-  const uniqueMatches = Array.from(new Map(matches.map((question) => [question.fullQuestionCode.toLowerCase(), question])).values());
+  // Compare normalized scoreable identities, not raw source labels. A legacy
+  // structure may still contain Q2(a), Q2(a)(i) and Q2(a)(ii) rows, but all
+  // three intentionally resolve to the one scoreable parent Q2(a).
+  const matchingCanonicalIds = new Set(
+    authoritativeLeaves
+      .map((question) => toCanonicalQuestionId(
+        question.fullQuestionCode || question.questionNumber,
+        question.subQuestionNumber,
+        authoritativeLeaves,
+      ))
+      .filter((canonicalId) =>
+        canonicalId.toLowerCase() === siblingCandidate.toLowerCase() ||
+        canonicalId.toLowerCase() === nestedCandidate
+      ),
+  );
 
-  if (uniqueMatches.length === 1) {
-    return { canonicalId: uniqueMatches[0].fullQuestionCode, requiresReview: false };
+  if (matchingCanonicalIds.size === 1) {
+    return { canonicalId: Array.from(matchingCanonicalIds)[0]!, requiresReview: false };
   }
 
   return {
     requiresReview: true,
-    reason: uniqueMatches.length > 1
+    reason: matchingCanonicalIds.size > 1
       ? `The sub-question label "${subPart}" matches multiple authoritative questions under the active context.`
       : `The sub-question label "${subPart}" does not match an authoritative question under the active context.`,
   };
@@ -1311,23 +1434,26 @@ export function buildPageCoveragePrompt(params: {
   const { pageNumber, totalPages, paperStructure, previousActiveQuestion, priorQuestionContexts = [], recoveryMode = false } = params;
   const compactSourceText = (value: string | undefined, limit: number): string =>
     String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
-  const validDescriptiveList = paperStructure.subQuestions
-    .filter((s) => !s.isMcq)
-    .map((s) => {
-      const questionText = compactSourceText(s.questionText, 220);
-      const answerAnchor = compactSourceText(s.suggestedAnswerAnchor, 140);
+  // Use the same canonical source normalizer as the evaluator and scoring gates.
+  // This also protects older persisted paper structures that still contain
+  // separate Roman child rows.
+  const scoreableDescriptiveQuestions = consolidateRomanChildSubQuestions(
+    (paperStructure.subQuestions || []).filter((item) => !item.isMcq),
+  );
+  const validDescriptiveList = scoreableDescriptiveQuestions
+    .map((question) => {
+      const questionText = compactSourceText(question.questionText, 420);
+      const answerAnchor = compactSourceText(question.suggestedAnswerAnchor, 260);
       return [
-        `${s.fullQuestionCode} — ${s.maximumMarks} marks${s.topic ? ` — ${s.topic}` : ''}`,
+        `${question.fullQuestionCode} — ${question.maximumMarks} marks${question.topic ? ` — ${question.topic}` : ''}`,
         questionText ? `  EXACT QUESTION PAPER TEXT: ${questionText}` : '',
         answerAnchor ? `  SUGGESTED ANSWER REFERENCE: ${answerAnchor}` : '',
       ].filter(Boolean).join('\n');
     })
     .join('\n');
   const nestedLeafGroups = new Map<string, string[]>();
-  for (const question of (paperStructure.subQuestions || []).filter((item) => !item.isMcq)) {
-    const parsed = parseCanonicalQuestionIdentity(
-      question.fullQuestionCode || toCanonicalQuestionId(question.questionNumber, question.subQuestionNumber),
-    );
+  for (const question of scoreableDescriptiveQuestions) {
+    const parsed = parseCanonicalQuestionIdentity(question.fullQuestionCode);
     const path = parsed.subQuestionPath || [];
     if (path.length < 2) continue;
     const parentRaw = `Q${parsed.questionNumber}(${path.slice(0, -1).join(')(')})`;
@@ -1339,7 +1465,7 @@ export function buildPageCoveragePrompt(params: {
   const nestedLeafChecklist = Array.from(nestedLeafGroups.entries())
     .filter(([, leaves]) => leaves.length > 1)
     .map(([parent, leaves]) => `${parent}: ${leaves.sort().join(', ')}`)
-    .join('\\n');
+    .join('\n');
 
   const validMcqList = (paperStructure.mcqs || [])
     .map((m) => {
@@ -1378,7 +1504,7 @@ Read the visual scan of Page ${pageNumber}/${totalPages}, not extracted PDF text
 SELECTED PAPER: ${paperStructure.paperTitle || 'CA examination paper'}
 AUTHORITATIVE DESCRIPTIVE IDS:
 ${validDescriptiveList || 'None parsed'}
-AUTHORITATIVE NESTED SIBLING LEAF CHECKLIST (each listed leaf is a separate scoreable identity):
+AUTHORITATIVE NESTED ARABIC SIBLING CHECKLIST (each listed numeric child is a separate scoreable identity):
 ${nestedLeafChecklist || 'No multi-leaf nested groups in this paper.'}
 AUTHORITATIVE MCQ IDS:
 ${validMcqList || 'None parsed'}
@@ -1396,26 +1522,30 @@ QUESTION ORDER, MATERIAL MATCHING AND CONTINUATIONS:
   question label when it agrees with the material. If the label conflicts with a strong material match,
   report the material match and set labelMismatch=true; do not silently hide the conflict.
 - One page may contain multiple independent questions. Split and map each answer block separately.
-- Treat every separately labelled descriptive sub-part as its own answer block: (a), (b), (i), (ii),
-  (1), (2), and nested labels such as (a)(i), (a(i)), (5)(ii) or (5(ii)). Never collapse siblings into their parent.
-- CANONICAL NESTED-LABEL CROSSWALK: the authoritative inventory serializes the path Q2(a(i)) and Q2(a(ii)).
-  A candidate may write the same leaf as Q2(a(i)), Q2(a)(i), 2(a(i)), 2(a)(i), or may write the parent
-  once and then use bare child headings (i)/(ii) or combined headings (a(i))/(a(ii)).
-  These are formatting variants of the SAME complete hierarchical path, not different questions.
-  When the visible label is Q2(a(i)), return questionNumber="2", subQuestion="a(i)",
-  parentQuestionNumberVisible=true, and authoritativeQuestionCode="Q2(a(i))" (the exact inventory ID).
-  Never truncate the path to Q2(a) or Q2(i), and never split Q2(a(i)) into two records; preserve both levels.
-  For a bare (i)/(ii), attach it to Q2(a) only when the printed parent/answer context visibly establishes Q2(a).
-- When the nested sibling checklist shows a parent with multiple leaves, inspect the page for EACH listed
-  leaf independently. If the leaves Q2(a(i)) and Q2(a(ii)) are both attempted (even if the script writes
-  Q2(a)(i) and Q2(a)(ii)), return two detectedQuestions objects using those exact canonical inventory IDs;
-  never return only Q2 or Q2(a), and never combine both answers
-  into a single record merely because they share a parent or page.
+- Treat each independently scoreable descriptive part as an answer block. Lettered parts (a), (b)
+  and directly numbered Arabic children such as (1), (2) remain separate whenever the authoritative
+  inventory lists them separately.
+- ROMAN-CHILD NORMALIZATION: Roman-numbered headings beneath an existing parent are evidence sections
+  within that parent's scoreable question, not additional question IDs. For example, Q2(a)(i) and
+  Q2(a)(ii) both map to the authoritative scoreable ID Q2(a); Q2(1)(i) maps to Q2(1).
+  A standalone Roman part such as Q2(iv) remains Q2(iv). Details numbered below a Roman heading
+  remain evidence within the normalized parent scoreable question, for example Q2(a)(ii)(1) maps to Q2(a).
+- When a student writes separate Roman child answer blocks, preserve each block's own snippet and return
+  one detectedQuestions object per visible block, but set authoritativeQuestionCode to the exact
+  normalized parent ID for each block. The page/attempt aggregation will combine those snippets and
+  pages into one scoreable parent evaluation; never create separate Roman-child score tasks.
+- A bare Roman heading such as (i) or (ii) may map to a parent only when the parent is visible on this
+  page or the answer is an unambiguous continuation of that same parent from the full earlier-page
+  context. Do not infer a parent from page adjacency alone; leave uncertain identity for review.
+- When the nested sibling checklist lists multiple numeric child IDs, inspect EACH listed ID independently.
+  Return only visibly attempted children and map each to its exact authoritative inventory ID. Do not
+  merge distinct Arabic-numbered siblings into their parent or into each other.
 - Do not assume every listed sibling was attempted. Return only visibly attempted leaves; if a distinct
   attempted leaf is visible but its exact identity is uncertain, add it to unresolvedAnswerBlocks instead
   of merging it into a neighbouring leaf.
 - Before returning, perform a final inventory cross-check: compare every visible answer heading/label and
-  every distinct answer block against detectedQuestions. Each attempted leaf must appear exactly once.
+  every distinct answer block against detectedQuestions. Each visible attempted block must appear exactly
+  once, even when two Roman child blocks intentionally map to the same normalized parent ID.
   If the visible blocks outnumber safely mapped IDs, record the remainder as unresolved and ensure
   answerBlocksObserved reflects the full visible count.
 - Count every distinct attempted answer block in answerBlocksObserved. Count each descriptive sub-part
@@ -1508,7 +1638,7 @@ TASK:
 7. Return every visible MCQ attempt with an unreadable/ambiguous option in mcqNeedsReview.
 8. Classify: ATTEMPTED_READABLE, ATTEMPTED_PARTIALLY_READABLE, ATTEMPTED_UNCLEAR,
    CLEARLY_UNATTEMPTED or QUESTION_NOT_IDENTIFIED.
-9. Verify that every visibly attempted nested leaf is represented as its own exact authoritative ID.
+9. Verify that every visibly attempted answer block is represented exactly once and uses an exact normalized authoritative ID; Roman child blocks must map to their scoreable parent.
 
 Return valid JSON only:
 {

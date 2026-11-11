@@ -31,7 +31,7 @@ import {
   EvaluationRunPackage,
   EvaluationFinalizationStatus,
 } from '../../src/types/index.js';
-import { AuthoritativePaperStructure, PaperStructureSubQuestion } from './paperStructureService.js';
+import { AuthoritativePaperStructure, consolidateRomanChildSubQuestions } from './paperStructureService.js';
 import {
   toCanonicalQuestionId,
   parseCanonicalQuestionIdentity,
@@ -106,7 +106,9 @@ export function buildCanonicalQuestionInventory(options: {
   }
 
   // 2. Process Descriptive Sub-Questions (Division B)
-  const subQs = paperStructure.subQuestions ? paperStructure.subQuestions.filter((s) => !s.isMcq) : [];
+  const subQs = consolidateRomanChildSubQuestions(
+    paperStructure.subQuestions ? paperStructure.subQuestions.filter((s) => !s.isMcq) : [],
+  );
   for (const sq of subQs) {
     const canonicalId = toCanonicalQuestionId(sq.fullQuestionCode || sq.questionNumber, sq.subQuestionNumber, paperStructure.subQuestions);
     const parsed = parseCanonicalQuestionIdentity(canonicalId);

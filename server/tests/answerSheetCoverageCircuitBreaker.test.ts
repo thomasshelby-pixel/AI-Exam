@@ -63,7 +63,8 @@ async function run() {
   assert.match(pagePrompt, /answerBlocksObserved/i);
   assert.match(pagePrompt, /unresolvedAnswerBlocks/i);
   assert.match(pagePrompt, /mcqNeedsReview/i);
-  assert.match(pagePrompt, /every separately labelled descriptive sub-part as its own answer block/i);
+  assert.match(pagePrompt, /Treat each independently scoreable descriptive part as an answer block/i);
+  assert.match(pagePrompt, /ROMAN-CHILD NORMALIZATION/i);
   assert.match(pagePrompt, /must never be downgraded to a blank\/unattempted or wrong answer/i);
   assert.match(pagePrompt, /Students use genuinely different handwriting styles/i);
   assert.match(pagePrompt, /NO handwriting style is illegal or invalid/i);
@@ -119,17 +120,31 @@ async function run() {
     paperStructure: {
       ...paperStructure,
       subQuestions: [
-        { fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false },
-        { fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 2, isMcq: false },
+        {
+          fullQuestionCode: 'Q2(a(i))', questionNumber: '2', subQuestionNumber: 'a(i)', maximumMarks: 2, isMcq: false,
+          questionText: 'Question 2(a)(i): first legal requirement.',
+          suggestedAnswerAnchor: 'First Roman clause answer evidence.',
+        },
+        {
+          fullQuestionCode: 'Q2(a(ii))', questionNumber: '2', subQuestionNumber: 'a(ii)', maximumMarks: 2, isMcq: false,
+          questionText: 'Question 2(a)(ii): second legal requirement.',
+          suggestedAnswerAnchor: 'Second Roman clause answer evidence.',
+        },
         { fullQuestionCode: 'Q2(b)', questionNumber: '2', subQuestionNumber: 'b', maximumMarks: 3, isMcq: false },
       ],
       mcqs: [],
     } as any,
   });
-  assert.match(nestedDescriptivePrompt, /Q2\(a\): Q2\(a\(i\)\), Q2\(a\(ii\)\)/);
-  assert.match(nestedDescriptivePrompt, /each listed\s+leaf independently/i);
-  assert.match(nestedDescriptivePrompt, /never return only Q2 or Q2\(a\)/i);
-  assert.match(nestedDescriptivePrompt, /Each attempted leaf must appear exactly once/i);
+  assert.match(nestedDescriptivePrompt, /Q2\(a\) — 4 marks/,
+    'Roman child allocations must be presented as one parent scoreable question.');
+  assert.doesNotMatch(nestedDescriptivePrompt, /Q2\(a\(i\)\)|Q2\(a\(ii\)\)/,
+    'Roman child labels must not leak into the mapper inventory as separate scoreable IDs.');
+  assert.match(nestedDescriptivePrompt, /First Roman clause answer evidence/);
+  assert.match(nestedDescriptivePrompt, /Second Roman clause answer evidence/,
+    'The combined parent reference must retain both Roman child answer anchors.');
+  assert.match(nestedDescriptivePrompt, /ROMAN-CHILD NORMALIZATION/);
+  assert.match(nestedDescriptivePrompt, /one detectedQuestions object per visible block/i);
+  assert.match(nestedDescriptivePrompt, /Each visible attempted block must appear exactly\s+once/i);
 
   const nestedMcqStructure: any = [
     { fullQuestionCode: 'MCQ1', questionNumber: '1', subQuestionNumber: 'MCQ', isMcq: true, sourceQuestionLabel: 'Question 1(i)' },
@@ -459,8 +474,8 @@ async function run() {
     isContinuation: true,
     paperSubQuestions: nestedContinuationStructure.subQuestions,
   });
-  assert.equal(nestedRomanContinuation.canonicalId, 'Q2(a(i))',
-    'A bare Roman child after Q2(a) must resolve through canonical serialization, not Q2(a)(i).');
+  assert.equal(nestedRomanContinuation.canonicalId, 'Q2(a)',
+    'A bare Roman child after Q2(a) must resolve to the one scoreable parent ID.');
   assert.equal(nestedRomanContinuation.requiresReview, false);
   const nestedRomanSibling = resolveContextualQuestionIdentity({
     subQuestion: 'ii',
@@ -469,8 +484,8 @@ async function run() {
     isContinuation: true,
     paperSubQuestions: nestedContinuationStructure.subQuestions,
   });
-  assert.equal(nestedRomanSibling.canonicalId, 'Q2(a(ii))',
-    'A sibling Roman child must resolve under the authoritative parent Q2(a).');
+  assert.equal(nestedRomanSibling.canonicalId, 'Q2(a)',
+    'A sibling Roman child must resolve to the same authoritative scoreable parent Q2(a).');
   assert.equal(nestedRomanSibling.requiresReview, false);
 
   const wrappedNestedLeafStructure: any = {
@@ -507,8 +522,11 @@ async function run() {
     assert.equal(parsedNestedPage.detectedQuestions.length, 1,
       'Every compact/flat nested label variant must be retained as one answer block.');
     assert.equal(parsedNestedPage.detectedQuestions[0].questionNumber, '2');
-    assert.equal(parsedNestedPage.detectedQuestions[0].subQuestion, 'a(i)',
-      'The full hierarchical path must survive page-output normalization.');
+    assert.equal(parsedNestedPage.detectedQuestions[0].subQuestion, 'a',
+      'A visible Roman child label must normalize to its parent scoreable sub-question.');
+    assert.equal(parsedNestedPage.detectedQuestions[0].snippet,
+      'The nested Roman sub-part answer is visibly labelled and readable.',
+      'Normalizing the scoreable ID must not discard the candidate answer evidence.');
     const mappedNestedLeaf = resolveContextualQuestionIdentity({
       questionNumber: parsedNestedPage.detectedQuestions[0].questionNumber,
       subQuestion: parsedNestedPage.detectedQuestions[0].subQuestion,
@@ -516,8 +534,8 @@ async function run() {
       mappingBasis: 'VISIBLE_LABEL',
       paperSubQuestions: wrappedNestedLeafStructure.subQuestions,
     });
-    assert.equal(mappedNestedLeaf.canonicalId, 'Q2(a(i))',
-      'Q2(a(i)) formatting variants must map to the exact authoritative canonical leaf.');
+    assert.equal(mappedNestedLeaf.canonicalId, 'Q2(a)',
+      'Every Q2(a)(i) formatting variant must map to the normalized scoreable parent.');
     assert.equal(mappedNestedLeaf.requiresReview, false,
       'A clearly visible nested leaf must not enter NEEDS_REVIEW solely because of bracket formatting.');
   }
@@ -528,8 +546,8 @@ async function run() {
     isContinuation: true,
     paperSubQuestions: wrappedNestedLeafStructure.subQuestions,
   });
-  assert.equal(compactBareNestedContinuation.canonicalId, 'Q2(a(i))',
-    'A bare Roman label after a verified Q2(a) parent must map to Q2(a(i)).');
+  assert.equal(compactBareNestedContinuation.canonicalId, 'Q2(a)',
+    'A bare Roman label after a verified Q2(a) parent must map to Q2(a).');
 
   const inventory = buildCanonicalQuestionInventory({ paperStructure: arbitraryOrderStructure });
   const independentAttempts = detectIndependentAttempts({
@@ -664,11 +682,14 @@ async function run() {
   assert.deepEqual(nestedReadModes, [false, true],
     'A confident first pass on one nested leaf must still trigger one bounded sibling-verification read.');
   assert.deepEqual(
-    nestedPartCoverage.attemptedQuestions.map((attempt) => attempt.fullQuestionCode).sort(),
-    ['Q2(a(i))', 'Q2(a(ii))'],
-    'The independent read must recover and preserve each attempted nested leaf separately.',
+    nestedPartCoverage.attemptedQuestions.map((attempt) => attempt.fullQuestionCode),
+    ['Q2(a)'],
+    'Roman answer blocks must consolidate into one scoreable lettered parent after coverage verification.',
   );
-  assert.ok(nestedPartCoverage.attemptedQuestions.every((attempt) => attempt.pages.length === 1 && attempt.pages[0] === 1));
+  assert.match(nestedPartCoverage.attemptedQuestions[0].studentSnippet || '', /Visible answer work for Q2\(a\(i\)\)/);
+  assert.match(nestedPartCoverage.attemptedQuestions[0].studentSnippet || '', /Visible answer work for Q2\(a\(ii\)\)/,
+    'The single parent attempt must preserve evidence from both Roman answer blocks.');
+  assert.deepEqual(nestedPartCoverage.attemptedQuestions[0].pages, [1]);
 
   clearCoverageMapCache();
   const mcqStructure: any = {

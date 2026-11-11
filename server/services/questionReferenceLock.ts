@@ -10,7 +10,7 @@
  */
 
 import crypto from 'node:crypto';
-import { parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
+import { normalizeCanonicalQuestionPartPath, parseCanonicalQuestionIdentity } from './canonicalQuestionService.js';
 
 export interface LockedReferenceSlice {
   found: boolean;
@@ -159,7 +159,8 @@ function findSubQuestionInsideParent(
 
   const namedHeader = /^\s*(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(\d{1,2})\b/i;
   const numberedHeader = /^\s*(\d{1,2})\s*[.)]\s*(?=\(|[A-Z]|$)/;
-  // Accept flat labels (a)(i) and compact nested labels (a(i)) as separate leaves.
+  // Accept flat labels (a)(i) and compact nested labels (a(i)); Roman children
+  // normalize to their lettered parent rather than becoming separate tasks.
   const partLabel = /^\s*((?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+(?:\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+)*|(?:\(\s*[a-zA-Z0-9]+\s*(?:\(\s*[a-zA-Z0-9]+\s*\)\s*)+\))|(?:\(\s*[a-zA-Z0-9]+\s*\)|\[\s*[a-zA-Z0-9]+\s*\])+|[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)])(?=\s|[-–—:]|$)/i;
   const roman = new Set([
     'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
@@ -224,8 +225,8 @@ function findSubQuestionInsideParent(
       const parentPrefix = trimmed.match(/^(?:(?:QUESTION|Q\.?|ANSWER|ANS\.?)\s*(?:NO\.?)?\s*)?\d{1,3}\s*[.)]?\s*/i);
       const parentRemainder = parentPrefix ? trimmed.slice(parentPrefix[0].length) : '';
       const explicitIdentity = parseCanonicalQuestionIdentity('Q' + target + parentRemainder);
-      activePath = [...(explicitIdentity.subQuestionPath || [])];
-      if (samePath(activePath, targetPath)) return index;
+      activePath = [...(explicitIdentity.sourceSubQuestionPath || explicitIdentity.subQuestionPath || [])];
+      if (samePath(normalizeCanonicalQuestionPartPath(activePath), targetPath)) return index;
       continue;
     }
 
@@ -238,9 +239,9 @@ function findSubQuestionInsideParent(
       ? 'Q' + target + normalizedLabel
       : 'Q' + target + '(' + normalizedLabel.replace(/[.)]$/, '') + ')';
     const parsedLabel = parseCanonicalQuestionIdentity(labelCode);
-    const incoming = parsedLabel.subQuestionPath || [];
+    const incoming = parsedLabel.sourceSubQuestionPath || parsedLabel.subQuestionPath || [];
     activePath = combine(activePath, incoming);
-    if (samePath(activePath, targetPath)) return index;
+    if (samePath(normalizeCanonicalQuestionPartPath(activePath), targetPath)) return index;
   }
 
   return -1;
@@ -266,6 +267,63 @@ export function extractLockedQuestionSlice(
       characterCount: 0,
       checksum: '',
     };
+  }
+
+  // Generated examiner-style marking schemes use explicit section headers such
+  // as "SUBQUESTION: Q4(b)". Their source-derived answer anchor can itself
+  // contain an original question label (and, in defective schemes, the wrong
+  // sibling label). Keep that complete scheme block intact until the next
+  // SUBQUESTION header so the evaluator can independently verify its topic.
+  if (docType === 'MS' && /^\s*SUBQUESTION\s*:/im.test(docText)) {
+    const rawLines = docText.replace(/\r/g, '').split('\n');
+    const targetNumber = String(Number(qNum));
+    const schemeHeaderPattern = /^\s*SUBQUESTION\s*:\s*(?:Q\s*)?(\d{1,3})(.*)$/i;
+    const targetPath = subQ && subQ.toUpperCase() !== 'MCQ'
+      ? normalizeCanonicalQuestionPartPath(getSubQuestionPath(subQ))
+      : [];
+    const isSameScoreableSchemePart = (line: string): boolean => {
+      const match = line.match(schemeHeaderPattern);
+      if (!match || String(Number(match[1])) !== targetNumber) return false;
+      const parsedHeader = parseCanonicalQuestionIdentity('Q' + targetNumber + match[2]);
+      const headerPath = normalizeCanonicalQuestionPartPath(
+        parsedHeader.sourceSubQuestionPath || parsedHeader.subQuestionPath || [],
+      );
+      return headerPath.length === targetPath.length &&
+        headerPath.every((part, index) => part.toLowerCase() === targetPath[index]?.toLowerCase());
+    };
+    // The parent scoreable Q2(a) can be represented by separate source blocks
+    // Q2(a)(i) and Q2(a)(ii). Include every adjacent Roman child block whose
+    // normalized identity is still Q2(a); stop at a sibling such as Q2(b).
+    const start = rawLines.findIndex(isSameScoreableSchemePart);
+    if (start >= 0) {
+      let end = rawLines.length;
+      for (let index = start + 1; index < rawLines.length; index += 1) {
+        if (/^\s*SUBQUESTION\s*:/i.test(rawLines[index])) {
+          if (isSameScoreableSchemePart(rawLines[index])) continue;
+          end = index;
+          break;
+        }
+        if (
+          /^\s*QUESTION\s+MARK\s+RECONCILIATION\b/i.test(rawLines[index]) ||
+          /^\s*={3,}\s*QUESTION\s+\d+\b/i.test(rawLines[index])
+        ) {
+          end = index;
+          break;
+        }
+      }
+      const snippet = rawLines.slice(start, end).join('\n').trim();
+      const checksum = crypto.createHash('sha256').update(snippet).digest('hex');
+      const sectionHeader = rawLines[start].trim();
+      const found = snippet.length > sectionHeader.length + 10;
+      return {
+        found,
+        confidence: found ? 95 : 40,
+        sectionHeader,
+        snippet,
+        characterCount: snippet.length,
+        checksum,
+      };
+    }
   }
 
   const num = parseInt(qNum, 10);
@@ -301,7 +359,7 @@ export function extractLockedQuestionSlice(
   if (canonicalSuffixPattern) {
     startRegexes.push(new RegExp(
       '^\\s*(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*(?:NO\\.?)?\\s*)?' +
-      qNum + '\\s*\\.?\\s*' + canonicalSuffixPattern + '(?=\\s|[-–—:.)]|$)',
+      qNum + '\\s*\\.?\\s*' + canonicalSuffixPattern + '(?=\\s|[-–—:.)]|\\(|\\[|$)',
       'i',
     ));
   }
@@ -365,7 +423,7 @@ export function extractLockedQuestionSlice(
         startRegexes.push(/(?:^|\n|\b)1\.\s+Computation\s+of\s+Total\s+Income/i);
       } else if (subQ) {
         startRegexes.push(new RegExp(
-          '(?:Question\\s*' + qNum + '|Answer\\s*' + qNum + '|Ans\\.?\\s*' + qNum + '|Q\\.?\\s*' + qNum + '|' + qNum + '\\.)\\s*' + canonicalSuffixPattern,
+          '^\\s*(?:(?:Question|Answer|Ans\\.?|Q\\.?)\\s*(?:NO\\.?)?\\s*' + qNum + '|' + qNum + '\\.)\\s*' + canonicalSuffixPattern,
           'i',
         ));
       } else {
@@ -394,7 +452,7 @@ export function extractLockedQuestionSlice(
       }
     } else {
       if (subQ) {
-        startRegexes.push(new RegExp(`(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*${canonicalSuffixPattern}`, 'i'));
+        startRegexes.push(new RegExp(`^\\s*(?:Question\\s*${qNum}|Q\\.?\\s*${qNum}|${qNum}\\.)\\s*${canonicalSuffixPattern}`, 'i'));
       } else {
         // Match standalone numeric QP headings at line start. A word boundary
         // after a literal period never matches (both '.' and the following
@@ -470,13 +528,18 @@ export function extractLockedQuestionSlice(
     };
   }
 
-  // Determine stop boundary using the complete numbering path, not only
-  // the first alphabetic letter. For Q1(a)(i), the next (ii) must stop the
-  // current reference slice even though both share the same top-level (a).
+  // Determine the stop boundary using the normalized scoreable path. Roman
+  // headings (i), (ii), etc. below Q1(a) remain inside the same reference slice;
+  // the next top-level lettered sibling (b) ends the slice.
   const firstLine = lineOffset > 0 ? lines[startIndex].slice(lineOffset).trim() : lines[startIndex];
   const capturedLines: string[] = [firstLine];
   const targetSubPath = subQ && subQ.toUpperCase() !== 'MCQ' ? getSubQuestionPath(subQ) : [];
-  let activeBoundaryPath = [...targetSubPath];
+  const firstExplicitQuestion = firstLine.trim().match(/^(?:(?:QUESTION|Q\\.?|ANSWER|ANS\\.?)\\s*(?:NO\\.?)?\\s*)?(\\d{1,3})\\s*(.*)$/i);
+  const initialSourcePath = firstExplicitQuestion &&
+    String(Number(firstExplicitQuestion[1])) === String(Number(qNum))
+      ? (parseCanonicalQuestionIdentity('Q' + qNum + firstExplicitQuestion[2]).sourceSubQuestionPath || [])
+      : [];
+  let activeBoundaryPath = initialSourcePath.length ? initialSourcePath : [...targetSubPath];
   const nextQ = String(num + 1);
   const romanTokens = new Set(['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx']);
   const pathFamily = (token: string, depth: number): string => {
@@ -529,7 +592,8 @@ export function extractLockedQuestionSlice(
       let candidatePath: string[] = [];
       if (explicitQuestion && String(Number(explicitQuestion[1])) === String(Number(qNum))) {
         const tail = explicitQuestion[2].replace(/^[-–—:]\s*/, '').replace(/^\.(?=\s*[\(\[])/, '');
-        candidatePath = parseCanonicalQuestionIdentity('Q' + qNum + tail).subQuestionPath || [];
+        const parsedCandidate = parseCanonicalQuestionIdentity('Q' + qNum + tail);
+        candidatePath = parsedCandidate.sourceSubQuestionPath || parsedCandidate.subQuestionPath || [];
         if (candidatePath.length === 0 && /^(?:QUESTION|Q\.?|ANSWER|ANS\.?)/i.test(trimmed)) {
           isStop = true;
         }
@@ -539,18 +603,20 @@ export function extractLockedQuestionSlice(
           const bareLabelCode = /^[([{]/.test(barePart[1])
             ? 'Q' + qNum + barePart[1]
             : 'Q' + qNum + '(' + barePart[1].replace(/[.)]$/, '') + ')';
-          const incoming = parseCanonicalQuestionIdentity(bareLabelCode).subQuestionPath || [];
+          const parsedIncoming = parseCanonicalQuestionIdentity(bareLabelCode);
+          const incoming = parsedIncoming.sourceSubQuestionPath || parsedIncoming.subQuestionPath || [];
           candidatePath = mergeBoundaryPath(activeBoundaryPath, incoming);
           activeBoundaryPath = candidatePath;
         }
       }
 
       if (candidatePath.length > 0) {
+        const normalizedCandidatePath = normalizeCanonicalQuestionPartPath(candidatePath);
         const targetIsPrefix = targetSubPath.every((part, index) =>
-          candidatePath[index]?.toLowerCase() === part.toLowerCase()
+          normalizedCandidatePath[index]?.toLowerCase() === part.toLowerCase()
         );
-        const exactTarget = targetIsPrefix && candidatePath.length === targetSubPath.length;
-        const descendantOfTarget = targetIsPrefix && candidatePath.length > targetSubPath.length;
+        const exactTarget = targetIsPrefix && normalizedCandidatePath.length === targetSubPath.length;
+        const descendantOfTarget = targetIsPrefix && normalizedCandidatePath.length > targetSubPath.length;
         if (!exactTarget && !descendantOfTarget) isStop = true;
       }
     } else if (subQ === 'a') {

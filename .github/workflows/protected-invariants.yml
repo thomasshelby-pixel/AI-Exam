@@ -57,6 +57,9 @@ jobs:
       - name: Valid nested canonical question ID integrity regression
         run: node_modules/.bin/tsx server/tests/nestedCanonicalQuestionGate.test.ts
 
+      - name: Roman sub-part consolidation and locked-reference regression
+        run: node_modules/.bin/tsx server/tests/questionReferenceLockParentContext.test.ts
+
       - name: Handwriting-style tolerant document validation regression
         run: node_modules/.bin/tsx server/tests/answerSheetDocumentPolicy.test.ts
 
