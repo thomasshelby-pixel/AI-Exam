@@ -8,7 +8,7 @@ export interface FacultyMockEvaluationEditLockSource {
 
 export interface FacultyMockEvaluationEditLocks {
   evaluationInProgress: boolean;
-  pendingReviewRetry: boolean;
+  reviewRetryCandidate: boolean;
 }
 
 /**
@@ -32,7 +32,7 @@ export function getFacultyMockEvaluationEditLocks(
 
   return {
     evaluationInProgress: ['PROCESSING', 'QUEUED', 'PENDING'].includes(status),
-    pendingReviewRetry: status === 'NEEDS_REVIEW' && !retryOfId && !reviewRetryId,
+    reviewRetryCandidate: status === 'NEEDS_REVIEW' && !retryOfId && !reviewRetryId,
   };
 }
 
