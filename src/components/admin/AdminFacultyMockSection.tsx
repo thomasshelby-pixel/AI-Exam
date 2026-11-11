@@ -25,6 +25,8 @@ type FacultyMockEditability = {
   scoringInputsLocked: boolean;
   accessTypeLocked: boolean;
   evaluationInProgress: boolean;
+  hasPendingReviewRetry: boolean;
+  hasUnconsumedPaidCopy: boolean;
 };
 
 
@@ -276,6 +278,8 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
         verified: false,
         hasEvaluation: false,
         hasIssuedStudentEntitlement: false,
+        hasPendingReviewRetry: false,
+        hasUnconsumedPaidCopy: false,
         scoringInputsLocked: true,
         accessTypeLocked: true,
         evaluationInProgress: false,
@@ -481,10 +485,16 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
                 : !editability?.verified
                   ? 'Student history could not be verified. Maximum marks, student access and all source files remain locked for safety. You can still edit the test title; retry by cancelling and opening Edit again.'
                   : editability.evaluationInProgress
-                    ? 'An evaluation is currently in progress. Wait for it to finish before saving changes.'
-                    : editability.scoringInputsLocked
-                      ? 'This mock already has a student evaluation or an issued student-copy entitlement. Maximum marks and all source files are locked, and Free/Paid access cannot be changed. The test title remains editable. Publish a new mock for corrected scoring inputs.'
-                      : 'No student evaluation or copy entitlement exists for this mock. Maximum marks, source files and Free/Paid access can still be changed.'}
+                    ? 'An evaluation is currently in progress. Wait for it to finish before changing maximum marks or source files.'
+                    : editability.hasPendingReviewRetry
+                      ? 'A student copy is marked NEEDS_REVIEW and its one-time retry is still available. Keep the current marking references unchanged until that retry is completed.'
+                      : editability.hasUnconsumedPaidCopy
+                        ? 'A student has an unused paid copy. Keep the Question Paper and scoring references unchanged until that purchased copy is used or refunded.'
+                        : editability.scoringInputsLocked
+                          ? 'Student history could not be verified. Maximum marks and source files remain locked for safety; retry Edit after the shared database is available.'
+                          : editability.accessTypeLocked
+                            ? 'A payment checkout is still pending. You can correct maximum marks and source files, but Free/Paid access must remain unchanged until the order settles.'
+                            : 'Completed, failed or already-retried evaluations do not permanently lock this mock. Historical source files are retained with their evaluation records; maximum marks, references and student access can be edited.'}
             </div>
           )}
           <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[10px] leading-5 text-slate-600">
