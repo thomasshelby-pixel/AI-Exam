@@ -1,13 +1,12 @@
 import crypto from 'node:crypto';
 import { initializeApp, getApps, App } from 'firebase-admin/app';
 import { getAuth, UserRecord } from 'firebase-admin/auth';
-import { db } from '../db.js';
+import { db, getAllLocalTombstoneSet } from '../db.js';
 import { loadAndValidateFirebaseConfig } from '../config/firebaseConfigValidator.js';
 import {
   getAllFirestoreDocs,
   getFirestoreDb,
   getFirestoreDriverMode,
-  isTombstoned,
 } from './firestoreDbService.js';
 
 const RECOVERY_AUTH_APP_NAME = 'ca-exam-checker-google-account-recovery';
@@ -172,9 +171,10 @@ export async function scanUnlinkedGoogleAccounts(options: {
     Math.max(FIREBASE_AUTH_PAGE_SIZE, Number(options.maxUsers) || MAX_FIREBASE_AUTH_USERS_PER_SCAN),
   );
 
-  const [cloudUsers, cloudProfiles] = await Promise.all([
+  const [cloudUsers, cloudProfiles, cloudTombstones] = await Promise.all([
     getAllFirestoreDocs<Record<string, any>>('users', { failOnError: true }),
     getAllFirestoreDocs<Record<string, any>>('student_profiles', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('tombstones', { failOnError: true }),
   ]);
 
   if (getFirestoreDriverMode() !== 'ADMIN_SDK') {
@@ -199,6 +199,21 @@ export async function scanUnlinkedGoogleAccounts(options: {
     const userId = String(profile.user_id || profile.id || '').trim();
     if (userId) profilesByUserId.set(userId, profile);
   }
+
+  // Load deletion markers once for the entire scan instead of issuing one or two
+  // Firestore reads for every Firebase identity.
+  const localTombstones = getAllLocalTombstoneSet();
+  const cloudTombstoneIds = new Set(cloudTombstones.map((record) => String(record.id || '').trim()).filter(Boolean));
+  const hasAccountTombstone = (userId: string): boolean => {
+    const ids = [
+      userId,
+      `users_${userId}`,
+      `student_profiles_${userId}`,
+      `users:${userId}`,
+      `student_profiles:${userId}`,
+    ];
+    return ids.some((id) => localTombstones.has(id) || cloudTombstoneIds.has(id));
+  };
 
   const candidates: GoogleAccountRecoveryCandidate[] = [];
   let pageToken = options.pageToken;
@@ -233,9 +248,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
       if (cloudMatches.length > 0) {
         const cloudUserId = String(cloudMatches[0]?.id || cloudMatches[0]?.userId || '').trim();
         const cloudProfile = cloudUserId ? profilesByUserId.get(cloudUserId) : undefined;
-        const cloudTombstoned = cloudUserId
-          ? await isTombstoned('users', cloudUserId) || await isTombstoned('student_profiles', cloudUserId)
-          : false;
+        const cloudTombstoned = cloudUserId ? hasAccountTombstone(cloudUserId) : false;
         const classification = classifyGoogleAccountRecoveryState({
           expectedEmail: email,
           cloudUsers: cloudMatches,
@@ -249,9 +262,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
       }
 
       const socialUserId = getSocialStudentId(authUser.uid);
-      const identityTombstoned =
-        await isTombstoned('users', socialUserId) ||
-        await isTombstoned('student_profiles', socialUserId);
+      const identityTombstoned = hasAccountTombstone(socialUserId);
       const classification = classifyGoogleAccountRecoveryState({
         expectedEmail: email,
         cloudUsers: [],
