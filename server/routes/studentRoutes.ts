@@ -2644,6 +2644,15 @@ router.post(
 
       const realEvaluationId = record.id;
       const verificationResult = await verifyEvaluationConsistency(realEvaluationId);
+
+      // Certification changes are authoritative evaluation updates. Persist them
+      // to shared Firestore so the website admin queue and other app instances
+      // observe the same completed/review state.
+      const verifiedEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(realEvaluationId) as any;
+      if (verifiedEvaluation) {
+        await syncRecordToFirestore('evaluations', realEvaluationId, verifiedEvaluation);
+      }
+
       if (verificationResult.success) {
         return res.status(200).json(verificationResult);
       } else {
@@ -3307,7 +3316,7 @@ router.get(
 });
 
 // 4.5. Student Rechecking & Review Escalation Routes
-router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
+router.post('/evaluations/:id/recheck', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const evaluationId = req.params.id;
@@ -3400,7 +3409,7 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
     `).run(
       requestId,
-      evaluationId,
+      realEvaluationId,
       studentId,
       studentEmail,
       evaluation.subject_name,
@@ -3440,7 +3449,21 @@ router.post('/evaluations/:id/recheck', (req: AuthRequest, res: Response) => {
       `Student requested recheck for ${questionNumber} (${requestType}): ${finalReason}`
     );
 
-    const createdRecord = db.prepare('SELECT * FROM recheck_requests WHERE id = ?').get(requestId);
+    const createdRecord = db.prepare('SELECT * FROM recheck_requests WHERE id = ?').get(requestId) as any;
+    const createdNotification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notifId) as any;
+    const createdAuditLog = db.prepare(
+      "SELECT * FROM audit_logs WHERE entity_id = ? AND action = 'REQUEST_EVALUATION_RECHECK' ORDER BY created_at DESC LIMIT 1"
+    ).get(realEvaluationId) as any;
+
+    // Persist the request, its notification and audit trail to shared storage.
+    // Otherwise a request accepted on one instance can disappear from the
+    // examiner/admin queue when another instance handles the next request.
+    await Promise.all([
+      createdRecord ? syncRecordToFirestore('recheck_requests', requestId, createdRecord) : Promise.resolve(),
+      createdNotification ? syncRecordToFirestore('notifications', notifId, createdNotification) : Promise.resolve(),
+      createdAuditLog ? syncRecordToFirestore('audit_logs', String(createdAuditLog.id), createdAuditLog) : Promise.resolve(),
+    ]);
+
     return res.status(201).json({
       success: true,
       message: 'Recheck request logged successfully. Review is in progress.',
