@@ -432,7 +432,12 @@ export function parseAndValidatePageCoverageOutput(rawText: string): PageCoverag
         warnings.push('A detected answer contained a question label that could not be safely normalized.');
         continue;
       }
+      // JSON null is an explicit absence marker for an optional visible parent label.
+      // This is common on continuation pages where only a bare child label such as
+      // "(ii)" is written. Identity must still be resolved through continuation
+      // context or a verified authoritative question code below.
       if (question.questionNumber !== undefined &&
+          question.questionNumber !== null &&
           typeof question.questionNumber !== 'string' &&
           typeof question.questionNumber !== 'number') {
         warnings.push('A detected answer contained a non-text question number and was left for manual mapping.');
@@ -1610,8 +1615,10 @@ HANDWRITING AND MAPPING:
 - Return every identifiable answer block on a mixed-question page. Keep visible label fields separate
   from authoritativeQuestionCode, which must be one exact ID from the supplied inventory.
 - questionNumber and subQuestion must record only labels visibly written by the student on THIS page.
-  Do not fill them with a guessed question ID. For continuation or content-only matches, omit absent labels
-  and set authoritativeQuestionCode plus mappingBasis instead.
+  When the parent question number is not visible on this page, questionNumber may be null or omitted;
+  null means the label is absent, not malformed. Keep a visible bare child label (for example, "(ii)")
+  in subQuestion. Do not fill either field with a guessed question ID. For continuation or content-only
+  matches, set isContinuation / authoritativeQuestionCode plus mappingBasis only when supported.
 - Use mappingBasis: VISIBLE_LABEL when the visible label agrees with the question, MATERIAL_CONTENT
   when exact material content establishes identity, CONTINUATION for a verified continuation, or
   UNCERTAIN when the identity cannot be safely established.
