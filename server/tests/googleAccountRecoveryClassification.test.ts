@@ -49,10 +49,17 @@ const duplicateCloudRecords = classifyGoogleAccountRecoveryState({
 });
 assert.equal(duplicateCloudRecords.status, 'CLOUD_RECORD_INCOMPLETE');
 
-const incompleteProfile = classifyGoogleAccountRecoveryState({
+const profilePending = classifyGoogleAccountRecoveryState({
   expectedEmail: email,
   cloudUsers: [cloudUser],
   cloudProfile: { ...cloudProfile, icai_registration_number: 'REG-PENDING' },
+});
+assert.equal(profilePending.status, 'CLOUD_PROFILE_PENDING');
+
+const incompleteProfile = classifyGoogleAccountRecoveryState({
+  expectedEmail: email,
+  cloudUsers: [cloudUser],
+  cloudProfile: { ...cloudProfile, icai_registration_number: '' },
 });
 assert.equal(incompleteProfile.status, 'CLOUD_RECORD_INCOMPLETE');
 
