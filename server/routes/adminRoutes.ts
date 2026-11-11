@@ -90,6 +90,7 @@ import { enqueueEvaluation, isEvaluationJobActive } from '../services/asyncEvalu
 import { generateDetailedReportPdf, isEvaluationPendingReview } from '../services/detailedReportPdfService.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
 import { getVerifiedFirebaseGoogleAccountByEmail, scanUnlinkedGoogleAccounts } from '../services/googleAccountRecoveryService.js';
+import { getUserDeviceActivityForUser } from '../services/userDeviceActivityService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } from '../services/parakhLearningService.js';
 import { getParakhConversationLearningMetrics } from '../services/parakhConversationLearningService.js';
@@ -3976,7 +3977,7 @@ router.get('/students', (req: AuthRequest, res: Response) => {
 });
 
 // Get detailed student profile for Super Admin inspection
-router.get('/students/:id', (req: AuthRequest, res: Response) => {
+router.get('/students/:id', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.params.id;
     const studentRaw = db.prepare(`
@@ -4118,11 +4119,24 @@ router.get('/students/:id', (req: AuthRequest, res: Response) => {
             : 'PENDING',
     };
 
+    let deviceActivityAvailable = true;
+    let deviceActivity: Awaited<ReturnType<typeof getUserDeviceActivityForUser>> = [];
+    try {
+      deviceActivity = await getUserDeviceActivityForUser(studentId);
+    } catch (activityError) {
+      // Student profile and evaluation details remain available if the optional
+      // activity collection is temporarily unavailable.
+      deviceActivityAvailable = false;
+      console.warn('[StudentActivity] Could not load sign-in history:', activityError);
+    }
+
     return res.json({
       student,
       recentEvaluations: recentEvals,
       creditLedger,
       promoRedemptions,
+      deviceActivity,
+      deviceActivityAvailable,
     });
   } catch (error: unknown) {
     console.error('Get student details error:', error);
