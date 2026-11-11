@@ -533,7 +533,7 @@ router.get('/google-account-recovery', async (req: AuthRequest, res: Response) =
 
 router.post('/google-account-recovery/recover-cloud-account', async (req: AuthRequest, res: Response) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
-  if (!email || email.length > 254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ error: 'Enter a valid Google account email address.' });
   }
 
