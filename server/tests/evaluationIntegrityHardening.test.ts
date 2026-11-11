@@ -159,13 +159,22 @@ console.log('\n--- TEST B: Malformed Question IDs ---');
   assert(parsed4.canonicalId === 'Q6(a(1))', `TEST B.4: Valid nested sub-question Q6(a(1)) preserved (got ${parsed4.canonicalId})`);
 
   const parsed5 = parseCanonicalQuestionIdentity('1(a)(i)');
-  assert(parsed5.canonicalId === 'Q1(a(i))', `TEST B.5: Letter-to-Roman nested numbering 1(a)(i) preserved (got ${parsed5.canonicalId})`);
+  assert(parsed5.canonicalId === 'Q1(a)', `TEST B.5: Roman child under lettered parent is consolidated to Q1(a) (got ${parsed5.canonicalId})`);
+  assert.deepEqual(parsed5.sourceSubQuestionPath, ['a', 'i'],
+    'TEST B.5: Original Roman child identity remains available as source evidence.');
 
   const parsed6 = parseCanonicalQuestionIdentity('Q3.1.1');
   assert(parsed6.canonicalId === 'Q3(1(1))', `TEST B.6: Repeated numeric levels in dotted numbering are preserved (got ${parsed6.canonicalId})`);
 
   const parsed7 = parseCanonicalQuestionIdentity('Q4(iv(iv))');
   assert(parsed7.canonicalId === 'Q4(iv(iv))', `TEST B.7: Repeated Roman levels remain separate hierarchical identities (got ${parsed7.canonicalId})`);
+
+  const parsed8 = parseCanonicalQuestionIdentity('Q5(iv(a)(i))');
+  assert(parsed8.canonicalId === 'Q5(iv(a))',
+    `TEST B.8: Roman child beneath an intervening lettered parent is consolidated locally (got ${parsed8.canonicalId})`);
+  assert.deepEqual(parsed8.sourceSubQuestionPath, ['iv', 'a', 'i'],
+    'TEST B.8: Intervening source hierarchy remains recoverable.');
+
 }
 
 // --------------------------------------------------------------------------
