@@ -100,12 +100,13 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
           body: JSON.stringify({ email: candidate.email }),
         }
       );
-      setNotice(result.message || `Existing account recovered for ${candidate.email}.`);
       await scan();
+      setNotice(result.message || `Existing account recovered for ${candidate.email}.`);
       await onRecovered?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not recover the existing cloud account.');
+      const message = err instanceof Error ? err.message : 'Could not recover the existing cloud account.';
       await scan();
+      setError(message);
     } finally {
       setRecoveringEmail('');
     }
