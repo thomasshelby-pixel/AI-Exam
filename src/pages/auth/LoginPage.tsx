@@ -262,7 +262,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           <p className="mt-2 text-sm leading-6 text-slate-400">
             {mode === 'login'
               ? 'Access your CA answer sheet evaluations and step-marking reports'
-              : 'Sign up today and get your first 2 answer sheets evaluated free'}
+              : 'Complete your profile to receive up to 2 free evaluations when eligible'}
           </p>
         </div>
 
@@ -273,7 +273,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               FREE
             </div>
             <div className="text-xs">
-              <p className="font-bold text-cyan-100">2 Free Answer Sheet Checks</p>
+              <p className="font-bold text-cyan-100">Up to 2 Free Answer Sheet Checks when eligible</p>
               <p className="text-slate-600 dark:text-slate-300">Full paper evaluation with ICAI step marking & working notes check.</p>
             </div>
           </div>
@@ -565,7 +565,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                     including the rules against abusing any free or paid facility and possible account suspension, termination or closure/deletion after notice and a reasonable opportunity to respond, as applicable.
                   </span>
                 </label>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400">Current policy version: 2.0 · Effective 27 October 2026</p>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">Terms & Conditions: version 2.0 (27 October 2026) · Privacy Policy: version 3.0 (08 November 2026)</p>
               </div>
 
               <button
