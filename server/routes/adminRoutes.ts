@@ -67,6 +67,8 @@ import {
   permanentlyDeleteFromFirestore,
   syncRecordToFirestore,
   rebuildLocalCacheFromFirestore,
+  recoverStudentAccountFromFirestoreByEmail,
+  persistStudentAccountToFirestore,
 } from '../services/firestoreSyncService.js';
 import {
   savePersistentFile,
@@ -88,6 +90,7 @@ import { generateCheckedCopyPdf, generateOriginalSubmissionPdf } from '../servic
 import { enqueueEvaluation, isEvaluationJobActive } from '../services/asyncEvaluationService.js';
 import { generateDetailedReportPdf, isEvaluationPendingReview } from '../services/detailedReportPdfService.js';
 import { verifyEvaluationConsistency } from '../services/evaluationConsistencyService.js';
+import { getVerifiedFirebaseGoogleAccountByEmail, scanUnlinkedGoogleAccounts } from '../services/googleAccountRecoveryService.js';
 import { extractRelevantReferenceSnippets } from '../services/questionChunkEvaluator.js';
 import { getParakhLearningDashboardMetrics, markParakhEvaluationAdminReviewed } from '../services/parakhLearningService.js';
 import { getParakhConversationLearningMetrics } from '../services/parakhConversationLearningService.js';
@@ -510,6 +513,161 @@ router.use((req: AuthRequest, res: Response, next: NextFunction) => {
   next();
 });
 router.use(requireRole('SUPER_ADMIN'));
+
+// Google Account Recovery — read-only diagnostics plus guarded cloud-record recovery.
+// This is Super Admin only (the router's authorization middleware runs above).
+router.get('/google-account-recovery', async (req: AuthRequest, res: Response) => {
+  try {
+    const pageToken = typeof req.query.pageToken === 'string' ? req.query.pageToken : undefined;
+    const report = await scanUnlinkedGoogleAccounts({ pageToken });
+    return res.json(report);
+  } catch (error: unknown) {
+    console.error('[GoogleAccountRecovery] Scan failed:', error);
+    return res.status(503).json({
+      success: false,
+      code: 'GOOGLE_ACCOUNT_SCAN_UNAVAILABLE',
+      error: error instanceof Error ? error.message : 'Could not safely scan Firebase Google accounts.',
+      retryable: true,
+    });
+  }
+});
+
+router.post('/google-account-recovery/recover-cloud-account', async (req: AuthRequest, res: Response) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email || email.length > 254 || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Enter a valid Google account email address.' });
+  }
+
+  try {
+    // An Admin action may restore an existing cloud record, but it cannot create
+    // a new student account on behalf of a user or bypass legal consent.
+    const firebaseIdentity = await getVerifiedFirebaseGoogleAccountByEmail(email);
+    if (!firebaseIdentity) {
+      return res.status(404).json({
+        success: false,
+        code: 'VERIFIED_GOOGLE_IDENTITY_NOT_FOUND',
+        error: 'No active, verified Google identity was found for this email.',
+      });
+    }
+
+    const localAccount = db.prepare(
+      'SELECT id, email, role FROM users WHERE lower(email) = ?'
+    ).get(email) as { id: string; email: string; role: string } | undefined;
+
+    if (localAccount) {
+      if (String(localAccount.role || '').toUpperCase() !== 'STUDENT') {
+        return res.status(409).json({
+          success: false,
+          code: 'ACCOUNT_ROLE_CONFLICT',
+          error: 'A non-student account already uses this email. No account was changed.',
+        });
+      }
+      const profile = db.prepare('SELECT user_id FROM student_profiles WHERE user_id = ?').get(localAccount.id);
+      if (!profile) {
+        return res.status(409).json({
+          success: false,
+          code: 'LOCAL_PROFILE_INCOMPLETE',
+          error: 'The student account already exists locally but its profile is incomplete. Manual review is required; no duplicate account was created.',
+        });
+      }
+      const persisted = await persistStudentAccountToFirestore(localAccount.id);
+      if (persisted !== 'persisted') {
+        return res.status(503).json({
+          success: false,
+          code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+          error: 'The existing student account was found, but its durable cloud save could not be confirmed. Please retry.',
+          retryable: true,
+        });
+      }
+      return res.json({
+        success: true,
+        alreadyLinked: true,
+        email,
+        studentId: localAccount.id,
+        message: 'The existing student account and profile are already present and have been verified in shared storage. No new account or credits were created.',
+      });
+    }
+
+    const recoveryResult = await recoverStudentAccountFromFirestoreByEmail(email);
+    if (recoveryResult !== 'recovered') {
+      const status = recoveryResult === 'not-found' ? 404 : recoveryResult === 'conflict' || recoveryResult === 'incomplete' ? 409 : 503;
+      return res.status(status).json({
+        success: false,
+        code: recoveryResult === 'not-found'
+          ? 'FIRESTORE_STUDENT_RECORD_NOT_FOUND'
+          : recoveryResult === 'conflict'
+            ? 'FIRESTORE_STUDENT_RECORD_CONFLICT'
+            : recoveryResult === 'incomplete'
+              ? 'FIRESTORE_STUDENT_RECORD_INCOMPLETE'
+              : 'FIRESTORE_STUDENT_RECOVERY_UNAVAILABLE',
+        error: recoveryResult === 'not-found'
+          ? 'Firebase Authentication has this Google identity, but no existing student record was found in shared Firestore. The student must complete Google sign-in and current legal consent to create the platform profile.'
+          : recoveryResult === 'conflict'
+            ? 'Multiple, mismatched, or tombstoned account records were found. Recovery was blocked to prevent duplicate or deleted-account resurrection.'
+            : recoveryResult === 'incomplete'
+              ? 'A cloud record exists but does not contain a complete student profile. Manual review is required; no new account was created.'
+              : 'The shared student account store could not be read safely. Please retry after storage connectivity is restored.',
+        retryable: recoveryResult === 'failed' || recoveryResult === 'unconfigured',
+      });
+    }
+
+    const recoveredAccount = db.prepare(
+      'SELECT id, email, role FROM users WHERE lower(email) = ?'
+    ).get(email) as { id: string; email: string; role: string } | undefined;
+
+    if (!recoveredAccount || String(recoveredAccount.role || '').toUpperCase() !== 'STUDENT') {
+      return res.status(503).json({
+        success: false,
+        code: 'RECOVERED_ACCOUNT_READBACK_FAILED',
+        error: 'The cloud recovery ran but local read-back did not confirm a student account. Please inspect before retrying.',
+        retryable: true,
+      });
+    }
+
+    const persisted = await persistStudentAccountToFirestore(recoveredAccount.id);
+    if (persisted !== 'persisted') {
+      return res.status(503).json({
+        success: false,
+        code: 'ACCOUNT_PERSISTENCE_UNCONFIRMED',
+        error: 'The existing student data was recovered locally, but a durable cloud read-back could not be confirmed. Do not create another account; retry this recovery.',
+        retryable: true,
+        studentId: recoveredAccount.id,
+      });
+    }
+
+    const auditId = `log_${crypto.randomBytes(8).toString('hex')}`;
+    const audit = {
+      id: auditId,
+      user_id: req.user!.id,
+      action: 'ADMIN_RECOVER_GOOGLE_STUDENT_ACCOUNT',
+      entity_type: 'STUDENT',
+      entity_id: recoveredAccount.id,
+      details: `Super Admin restored the existing Google student account for ${email} from Firestore. No new account or credits were created.`,
+    };
+    db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(audit.id, audit.user_id, audit.action, audit.entity_type, audit.entity_id, audit.details);
+    const auditSaved = await syncRecordToFirestore('audit_logs', auditId, audit);
+
+    return res.json({
+      success: true,
+      alreadyLinked: false,
+      email,
+      studentId: recoveredAccount.id,
+      auditPersisted: auditSaved,
+      message: 'The existing Firestore student account and profile were restored and verified. Existing account identity, profile values and credit fields were preserved; no new credits or evaluation records were created.',
+    });
+  } catch (error: unknown) {
+    console.error('[GoogleAccountRecovery] Cloud recovery failed:', error);
+    return res.status(503).json({
+      success: false,
+      code: 'GOOGLE_ACCOUNT_RECOVERY_FAILED',
+      error: error instanceof Error ? error.message : 'Could not safely recover the existing Google student account.',
+      retryable: true,
+    });
+  }
+});
 
 // PARAKH Learning Engine — consented learning readiness and review metrics.
 // No training, model routing, or production evaluation controls are exposed here.
