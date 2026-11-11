@@ -161,11 +161,9 @@ const ROMAN_QUESTION_PART_TOKENS = new Set([
 ]);
 
 /**
- * CA descriptive evaluation treats Roman-numbered children below a non-Roman
- * parent as sections of that SAME scoreable question (Q2(a)(i) -> Q2(a)).
- * Once a scoreable Roman parent exists (Q2(iv)), however, a nested Roman level
- * remains distinct (Q2(iv)(iv)); the child is not flattened just because its
- * label is Roman. This preserves unusual but valid source hierarchies.
+ * Roman-numbered child clauses are evidence sections of their parent scoreable
+ * question (Q2(a)(i) -> Q2(a), Q2(iv)(i) -> Q2(iv)). Repeated identical Roman
+ * tokens are preserved as a distinct nested source identity (Q4(iv)(iv)).
  */
 export function normalizeCanonicalQuestionPartPath(parts: string[]): string[] {
   const path = (Array.isArray(parts) ? parts : [])
@@ -174,11 +172,13 @@ export function normalizeCanonicalQuestionPartPath(parts: string[]): string[] {
   if (path.length > 1 && !ROMAN_QUESTION_PART_TOKENS.has(path[0]) && ROMAN_QUESTION_PART_TOKENS.has(path[1])) {
     return [path[0]];
   }
-  return path.filter((part, index) =>
-    index === 0 ||
-    !ROMAN_QUESTION_PART_TOKENS.has(part) ||
-    ROMAN_QUESTION_PART_TOKENS.has(path[index - 1] || ''),
-  );
+  return path.filter((part, index) => {
+    if (index === 0 || !ROMAN_QUESTION_PART_TOKENS.has(part)) return true;
+    const parent = path[index - 1] || '';
+    // Only the exact same repeated Roman token is kept as a deeper identity.
+    // A different Roman child under any parent label is folded into that parent.
+    return ROMAN_QUESTION_PART_TOKENS.has(parent) && parent === part;
+  });
 }
 
 /**
