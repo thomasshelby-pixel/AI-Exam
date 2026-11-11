@@ -155,10 +155,12 @@ export function assessQuestionReferenceTopicAlignment(
       return { sufficientlySpecific: false, aligned: true, shared: [] as string[] };
     }
     const shared = [...questionTerms].filter((word) => referenceTerms.has(word));
-    const minimumShared = Math.max(2, Math.ceil(Math.min(questionTerms.size, referenceTerms.size) * 0.12));
     return {
       sufficientlySpecific: true,
-      aligned: shared.length >= minimumShared,
+      // With generic legal language excluded above, even one distinctive
+      // shared topic term is enough to avoid blocking a valid alternate wording.
+      // Treat a source as mismatched only when no meaningful topic overlap exists.
+      aligned: shared.length > 0,
       shared,
     };
   };
