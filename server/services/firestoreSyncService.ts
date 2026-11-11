@@ -344,7 +344,6 @@ export async function recoverStudentAccountFromFirestoreByEmail(
       !profile ||
       String(profile.user_id || '') !== userId ||
       !String(profile.icai_registration_number || '').trim() ||
-      String(profile.icai_registration_number || '').trim().toUpperCase() === 'REG-PENDING' ||
       !['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(String(profile.ca_level || '').toUpperCase())
     ) {
       return 'incomplete';
