@@ -4622,6 +4622,65 @@ export const AdminPortal: React.FC = () => {
               </div>
             </div>
 
+            {/* Successful app/website sign-ins recorded by the shared backend. This is not a page-view or clickstream. */}
+            <div className="mb-5">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-xs font-bold text-slate-800">App &amp; Website Sign-in Activity</h4>
+                <span className="text-[10px] text-slate-400">Successful sign-ins by device</span>
+              </div>
+              {viewStudentModal.loading ? (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-center text-xs text-slate-400">
+                  Loading sign-in activity...
+                </div>
+              ) : viewStudentModal.details?.deviceActivityAvailable === false ? (
+                <div className="rounded-xl border border-amber-100 bg-amber-50 p-3 text-xs text-amber-800">
+                  Sign-in history is temporarily unavailable. Student details and evaluation records are still available.
+                </div>
+              ) : Array.isArray(viewStudentModal.details?.deviceActivity) && viewStudentModal.details.deviceActivity.length > 0 ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200">
+                  <table className="w-full min-w-[640px] text-left text-[11px]">
+                    <thead className="bg-slate-50 text-slate-600">
+                      <tr className="border-b border-slate-200">
+                        <th className="px-3 py-2 font-bold">Platform</th>
+                        <th className="px-3 py-2 font-bold">Device</th>
+                        <th className="px-3 py-2 text-right font-bold">Successful logins</th>
+                        <th className="px-3 py-2 font-bold">First seen</th>
+                        <th className="px-3 py-2 font-bold">Last seen</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {viewStudentModal.details.deviceActivity.map((activity: any) => (
+                        <tr key={activity.id}>
+                          <td className="px-3 py-2 font-semibold text-slate-800">
+                            {activity.platform === 'APP' ? 'Android app' : activity.platform === 'WEB' ? 'Website' : 'Unknown'}
+                          </td>
+                          <td className="px-3 py-2 text-slate-600">{activity.device_name || 'Unknown device'}</td>
+                          <td className="px-3 py-2 text-right font-mono font-bold text-slate-800">
+                            {Number(activity.login_count || 0).toLocaleString()}
+                          </td>
+                          <td className="px-3 py-2 text-slate-600">
+                            {activity.first_seen_at ? formatDateTimeIST(activity.first_seen_at) : '—'}
+                          </td>
+                          <td className="px-3 py-2 text-slate-600">
+                            {(activity.last_login_at || activity.last_seen_at)
+                              ? formatDateTimeIST(activity.last_login_at || activity.last_seen_at)
+                              : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
+                  No successful sign-in records are available for this account yet. Older sign-ins may predate the activity tracker.
+                </div>
+              )}
+              <p className="mt-2 text-[10px] leading-relaxed text-slate-400">
+                This records successful app/website sign-ins and device summaries, not every screen visit, tap or typed action. Recent evaluations and credit changes are listed separately below.
+              </p>
+            </div>
+
             {/* Promo Redemptions History */}
             {viewStudentModal.details?.promoRedemptions?.length ? (
               <div className="mb-5">
