@@ -2430,7 +2430,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
 
     const recheckRequests = db.prepare(`
       SELECT * FROM recheck_requests WHERE evaluation_id = ? ORDER BY created_at DESC
-    `).all(evaluationId);
+    `).all(String(record.id));
 
     if (record.result_json) {
       try {
