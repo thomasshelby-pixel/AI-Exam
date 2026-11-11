@@ -25,7 +25,7 @@ import {
 } from '../services/studentCreditService.js';
 import { requireActiveInstituteEnrollmentMiddleware } from '../services/firestoreEnrollmentService.js';
 import { savePersistentFile, getPersistentFile } from '../services/persistentStorageService.js';
-import { getFirestoreDoc, getAllFirestoreDocs } from '../services/firestoreDbService.js';
+import { getFirestoreDoc, getAllFirestoreDocs, setFirestoreDocsAtomically } from '../services/firestoreDbService.js';
 import { permanentlyDeleteFromFirestore, persistStudentProfileEditToFirestore, syncRecordToFirestore } from '../services/firestoreSyncService.js';
 import { revokeAllDeviceTrust } from '../services/trustService.js';
 import { validateAuthoritativeConsistency } from '../services/evaluationIntegrityEngine.js';
@@ -3438,12 +3438,14 @@ router.post('/evaluations/:id/recheck', async (req: AuthRequest, res: Response) 
       `Your recheck request for ${evaluation.subject_name} (${questionNumber}) has been submitted for review. No credits were deducted.`
     );
 
-    // Audit log
+    // Create a deterministic local audit row so the three records can be
+    // committed to the shared database as one atomic batch.
+    const auditLogId = `log_${crypto.randomBytes(8).toString('hex')}`;
     db.prepare(`
       INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
       VALUES (?, ?, 'REQUEST_EVALUATION_RECHECK', 'EVALUATION', ?, ?)
     `).run(
-      `log_${crypto.randomBytes(8).toString('hex')}`,
+      auditLogId,
       studentId,
       realEvaluationId,
       `Student requested recheck for ${questionNumber} (${requestType}): ${finalReason}`
@@ -3451,18 +3453,34 @@ router.post('/evaluations/:id/recheck', async (req: AuthRequest, res: Response) 
 
     const createdRecord = db.prepare('SELECT * FROM recheck_requests WHERE id = ?').get(requestId) as any;
     const createdNotification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notifId) as any;
-    const createdAuditLog = db.prepare(
-      "SELECT * FROM audit_logs WHERE entity_id = ? AND action = 'REQUEST_EVALUATION_RECHECK' ORDER BY created_at DESC LIMIT 1"
-    ).get(realEvaluationId) as any;
+    const createdAuditLog = db.prepare('SELECT * FROM audit_logs WHERE id = ?').get(auditLogId) as any;
 
-    // Persist the request, its notification and audit trail to shared storage.
-    // Otherwise a request accepted on one instance can disappear from the
-    // examiner/admin queue when another instance handles the next request.
-    await Promise.all([
-      createdRecord ? syncRecordToFirestore('recheck_requests', requestId, createdRecord) : Promise.resolve(),
-      createdNotification ? syncRecordToFirestore('notifications', notifId, createdNotification) : Promise.resolve(),
-      createdAuditLog ? syncRecordToFirestore('audit_logs', String(createdAuditLog.id), createdAuditLog) : Promise.resolve(),
-    ]);
+    // Keep the student request, notification and audit trail together in
+    // shared Firestore. Do not tell the student the request was registered if
+    // production could not durably store it for the examiner/admin queue.
+    if (isProductionSharedDataRuntime()) {
+      const persisted = await setFirestoreDocsAtomically([
+        { collectionName: 'recheck_requests', docId: requestId, data: createdRecord },
+        { collectionName: 'notifications', docId: notifId, data: createdNotification },
+        { collectionName: 'audit_logs', docId: auditLogId, data: createdAuditLog },
+      ]);
+      if (!persisted) {
+        db.prepare('DELETE FROM recheck_requests WHERE id = ?').run(requestId);
+        db.prepare('DELETE FROM notifications WHERE id = ?').run(notifId);
+        db.prepare('DELETE FROM audit_logs WHERE id = ?').run(auditLogId);
+        return res.status(503).json({
+          error: 'Your rechecking request could not be saved to the shared review system. No request was registered; please retry shortly.',
+          code: 'RECHECK_PERSISTENCE_UNCONFIRMED',
+          retryable: true,
+        });
+      }
+    } else {
+      await Promise.all([
+        createdRecord ? syncRecordToFirestore('recheck_requests', requestId, createdRecord) : Promise.resolve(),
+        createdNotification ? syncRecordToFirestore('notifications', notifId, createdNotification) : Promise.resolve(),
+        createdAuditLog ? syncRecordToFirestore('audit_logs', auditLogId, createdAuditLog) : Promise.resolve(),
+      ]);
+    }
 
     return res.status(201).json({
       success: true,
