@@ -15,6 +15,7 @@ import { apiRequest } from '../../api/client.js';
 type RecoveryStatus =
   | 'FIREBASE_ONLY'
   | 'CLOUD_RECORD_RECOVERABLE'
+  | 'CLOUD_PROFILE_PENDING'
   | 'CLOUD_RECORD_INCOMPLETE'
   | 'PREVIOUSLY_DELETED'
   | 'ROLE_CONFLICT';
@@ -45,6 +46,7 @@ interface GoogleAccountRecoverySectionProps {
 const statusMeta: Record<RecoveryStatus, { label: string; className: string }> = {
   FIREBASE_ONLY: { label: 'Firebase only', className: 'bg-amber-50 text-amber-800 border-amber-200' },
   CLOUD_RECORD_RECOVERABLE: { label: 'Cloud record recoverable', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  CLOUD_PROFILE_PENDING: { label: 'Profile pending — recoverable', className: 'bg-sky-50 text-sky-800 border-sky-200' },
   CLOUD_RECORD_INCOMPLETE: { label: 'Cloud record incomplete', className: 'bg-rose-50 text-rose-800 border-rose-200' },
   PREVIOUSLY_DELETED: { label: 'Previously deleted', className: 'bg-slate-100 text-slate-700 border-slate-200' },
   ROLE_CONFLICT: { label: 'Role conflict', className: 'bg-violet-50 text-violet-800 border-violet-200' },
@@ -74,6 +76,7 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
             counts: {
               FIREBASE_ONLY: previous.counts.FIREBASE_ONLY + result.counts.FIREBASE_ONLY,
               CLOUD_RECORD_RECOVERABLE: previous.counts.CLOUD_RECORD_RECOVERABLE + result.counts.CLOUD_RECORD_RECOVERABLE,
+              CLOUD_PROFILE_PENDING: previous.counts.CLOUD_PROFILE_PENDING + result.counts.CLOUD_PROFILE_PENDING,
               CLOUD_RECORD_INCOMPLETE: previous.counts.CLOUD_RECORD_INCOMPLETE + result.counts.CLOUD_RECORD_INCOMPLETE,
               PREVIOUSLY_DELETED: previous.counts.PREVIOUSLY_DELETED + result.counts.PREVIOUSLY_DELETED,
               ROLE_CONFLICT: previous.counts.ROLE_CONFLICT + result.counts.ROLE_CONFLICT,
@@ -88,7 +91,7 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
   }
 
   async function recoverCloudAccount(candidate: RecoveryCandidate) {
-    if (candidate.status !== 'CLOUD_RECORD_RECOVERABLE') return;
+    if (candidate.status !== 'CLOUD_RECORD_RECOVERABLE' && candidate.status !== 'CLOUD_PROFILE_PENDING') return;
     setRecoveringEmail(candidate.email);
     setError('');
     setNotice('');
@@ -250,7 +253,7 @@ export function GoogleAccountRecoverySection({ onRecovered }: GoogleAccountRecov
                         <p className="mt-1.5 max-w-sm text-[10px] leading-relaxed text-slate-500">{candidate.statusMessage}</p>
                       </td>
                       <td className="px-3 py-3 text-right">
-                        {candidate.status === 'CLOUD_RECORD_RECOVERABLE' ? (
+                        {candidate.status === 'CLOUD_RECORD_RECOVERABLE' || candidate.status === 'CLOUD_PROFILE_PENDING' ? (
                           <button
                             type="button"
                             onClick={() => void recoverCloudAccount(candidate)}
