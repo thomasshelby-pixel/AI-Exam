@@ -28,6 +28,11 @@ export interface GoogleAccountRecoveryCandidate {
   lastSignInAt: string | null;
   status: GoogleAccountRecoveryStatus;
   statusMessage: string;
+  lastPlatform: 'APP' | 'WEB' | 'UNKNOWN';
+  lastPlatformAttemptAt: string | null;
+  backendAttemptCount: number;
+  appAttemptCount: number;
+  webAttemptCount: number;
 }
 
 export interface GoogleAccountRecoveryReport {
@@ -152,7 +157,15 @@ function toCandidate(
   authUser: UserRecord,
   status: GoogleAccountRecoveryStatus,
   statusMessage: string,
+  authActivity?: Record<string, any>,
 ): GoogleAccountRecoveryCandidate {
+  const rawPlatform = String(authActivity?.last_platform || '').toUpperCase();
+  const lastPlatform: 'APP' | 'WEB' | 'UNKNOWN' =
+    rawPlatform === 'APP' || rawPlatform === 'WEB' ? rawPlatform : 'UNKNOWN';
+  const safeCount = (value: unknown): number => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.min(Math.floor(parsed), 2_147_483_647) : 0;
+  };
   return {
     email: normalizeEmail(authUser.email),
     displayName: String(authUser.displayName || 'CA Student').trim() || 'CA Student',
@@ -160,6 +173,11 @@ function toCandidate(
     lastSignInAt: authUser.metadata?.lastSignInTime || null,
     status,
     statusMessage,
+    lastPlatform,
+    lastPlatformAttemptAt: typeof authActivity?.last_attempt_at === 'string' ? authActivity.last_attempt_at : null,
+    backendAttemptCount: safeCount(authActivity?.attempt_count),
+    appAttemptCount: safeCount(authActivity?.app_attempt_count),
+    webAttemptCount: safeCount(authActivity?.web_attempt_count),
   };
 }
 
@@ -186,10 +204,11 @@ export async function scanUnlinkedGoogleAccounts(options: {
     Math.max(FIREBASE_AUTH_PAGE_SIZE, Number(options.maxUsers) || MAX_FIREBASE_AUTH_USERS_PER_SCAN),
   );
 
-  const [cloudUsers, cloudProfiles, cloudTombstones] = await Promise.all([
+  const [cloudUsers, cloudProfiles, cloudTombstones, unlinkedAuthActivity] = await Promise.all([
     getAllFirestoreDocs<Record<string, any>>('users', { failOnError: true }),
     getAllFirestoreDocs<Record<string, any>>('student_profiles', { failOnError: true }),
     getAllFirestoreDocs<Record<string, any>>('tombstones', { failOnError: true }),
+    getAllFirestoreDocs<Record<string, any>>('unlinked_google_auth_activity', { failOnError: true }),
   ]);
 
   if (getFirestoreDriverMode() !== 'ADMIN_SDK') {
@@ -213,6 +232,11 @@ export async function scanUnlinkedGoogleAccounts(options: {
   for (const profile of cloudProfiles) {
     const userId = String(profile.user_id || profile.id || '').trim();
     if (userId) profilesByUserId.set(userId, profile);
+  }
+  const authActivityByUid = new Map<string, Record<string, any>>();
+  for (const activity of unlinkedAuthActivity) {
+    const uid = String(activity.firebase_uid || '').trim();
+    if (uid) authActivityByUid.set(uid, activity);
   }
 
   // Load deletion markers once for the entire scan instead of issuing one or two
@@ -255,7 +279,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
           cloudUsers: cloudMatches,
         });
         if (classification.status) {
-          candidates.push(toCandidate(authUser, classification.status, classification.statusMessage));
+          candidates.push(toCandidate(authUser, classification.status, classification.statusMessage, authActivityByUid.get(authUser.uid)));
         }
         continue;
       }
@@ -271,7 +295,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
           cloudTombstoned,
         });
         if (classification.status) {
-          candidates.push(toCandidate(authUser, classification.status, classification.statusMessage));
+          candidates.push(toCandidate(authUser, classification.status, classification.statusMessage, authActivityByUid.get(authUser.uid)));
         }
         continue;
       }
@@ -284,7 +308,7 @@ export async function scanUnlinkedGoogleAccounts(options: {
         firebaseIdentityTombstoned: identityTombstoned,
       });
       if (classification.status) {
-        candidates.push(toCandidate(authUser, classification.status, classification.statusMessage));
+        candidates.push(toCandidate(authUser, classification.status, classification.statusMessage, authActivityByUid.get(authUser.uid)));
       }
     }
 
