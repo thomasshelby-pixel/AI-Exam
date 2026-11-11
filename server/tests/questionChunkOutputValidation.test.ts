@@ -5,6 +5,8 @@ import {
   requiresAnswerLevelReadabilityReview,
   assessQuestionReferenceTopicAlignment,
   removeMismatchedDerivedSourceAnchor,
+  hasExplicitNonMandatoryCitationRule,
+  buildSourceSpecificCitationInstruction,
 } from '../services/questionChunkEvaluator.js';
 
 function makeResponse(overrides: Record<string, unknown> = {}): string {
@@ -317,6 +319,88 @@ assert.throws(
   }), 5),
   /CONTRADICTORY_ASSESSMENT/,
   'An INCORRECT component cannot carry full marks and be normalized into CORRECT.',
+);
+
+assert.equal(
+  hasExplicitNonMandatoryCitationRule('SOURCE BASIS: Section/rule numbers are not required.'),
+  true,
+  'A source note explicitly making section/rule numbers optional must be detected.',
+);
+assert.equal(
+  hasExplicitNonMandatoryCitationRule('Suggested Answer: Rule number not required.'),
+  true,
+  'A source note saying Rule number not required must be detected.',
+);
+assert.equal(
+  hasExplicitNonMandatoryCitationRule('SOURCE BASIS: Section and Rule numbers are not required.'),
+  true,
+  'A source note saying Section and Rule numbers are not required must be detected.',
+);
+assert.equal(
+  hasExplicitNonMandatoryCitationRule('The answer should state Section 8 and Rule 11.'),
+  false,
+  'A source that merely names provisions does not make citation numbering optional.',
+);
+assert.match(
+  buildSourceSpecificCitationInstruction(
+    'Section 2(52) defines a listed company. Rule number not required.',
+    'Section and Rule numbers are not required.',
+  ),
+  /Do not deduct marks for an omitted, abbreviated, or imprecise section\/rule number/i,
+);
+
+// Q4(b)/Q6(b) source notes explicitly say section/rule numbers are not required.
+// A model that gives every component zero solely because the candidate's
+// otherwise on-topic answer omitted/mis-cited a provision number must be
+// rejected and re-evaluated, not accepted as an academic zero.
+const optionalCitationOnlyZero = makeResponse({
+  status: 'incorrect',
+  marksAwarded: 0,
+  markingComponents: [{
+    componentId: 'citation-and-substance',
+    componentType: 'PROVISION',
+    expectedRequirement: 'Explain the listed-company definition and specified exclusions, and classify the named entities.',
+    studentEvidence: 'The candidate cited Section 2(52) and Rule 2A and stated that Arya Limited, Chirag Limited and Prism Limited are unlisted companies.',
+    assessment: 'INCORRECT',
+    marksAvailable: 5,
+    marksAwarded: 0,
+    marksDeducted: 5,
+    deductionReason: 'The exact section/rule number was not written.',
+  }],
+});
+assert.throws(
+  () => parseAndValidateQuestionChunkOutput(optionalCitationOnlyZero, 5, {
+    questionPaperSnippet: 'Classify Arya Limited, Chirag Limited and Prism Limited as listed or unlisted companies.',
+    suggestedAnswerSnippet: 'Arya Limited, Chirag Limited and Prism Limited are unlisted companies. Rule number not required.',
+    markingSchemeSnippet: 'The listed-company definition and exclusions apply. Section and Rule numbers are not required.',
+  }),
+  /QUESTION_CHUNK_NON_MANDATORY_CITATION_ZERO/,
+  'An on-topic attempted answer cannot be certified as zero solely because optional section/rule numbering is missing or imprecise.',
+);
+
+// This safeguard is deliberately narrow: it must not turn an actually blank
+// answer or a materially unrelated answer into provisional marks.
+assert.equal(
+  parseAndValidateQuestionChunkOutput(makeResponse({
+    status: 'incorrect',
+    marksAwarded: 0,
+    markingComponents: [{
+      componentId: 'blank',
+      componentType: 'APPLICATION',
+      expectedRequirement: 'Apply the rule to the facts.',
+      studentEvidence: 'No answer written for this requirement.',
+      assessment: 'OMITTED',
+      marksAvailable: 5,
+      marksAwarded: 0,
+      marksDeducted: 5,
+    }],
+  }), 5, {
+    questionPaperSnippet: 'Classify Arya Limited as listed or unlisted.',
+    suggestedAnswerSnippet: 'Rule number not required. Arya Limited is unlisted.',
+    markingSchemeSnippet: 'Section and Rule numbers are not required.',
+  }).marksAwarded,
+  0,
+  'A genuinely omitted answer remains an academic zero.',
 );
 
 console.log('Question chunk output validation tests passed.');

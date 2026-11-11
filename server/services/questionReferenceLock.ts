@@ -142,6 +142,90 @@ function splitIntoSections(docText: string): { sectionA: string; sectionB: strin
 }
 
 /**
+ * Many CA reference packs restart their numbering in PART I MCQs and PART II
+ * descriptive answers. A lookup for Q1(c), Q4(b), etc. must never match the
+ * earlier MCQ row such as "1. (C) Section 91". Scope the search to the
+ * descriptive part before applying any question-number/sub-part regex.
+ *
+ * Division A/B is supported as the equivalent convention. Existing taxation
+ * Section A/B handling remains separate because those are subject sections,
+ * not necessarily MCQ/descriptive divisions.
+ */
+function selectObjectiveOrDescriptivePart(docText: string, subQuestion?: string): string {
+  const isMcq = String(subQuestion || '').trim().toUpperCase() === 'MCQ';
+  const headingPattern = /^\s*(PART|DIVISION)\s*[–—:-]?\s*(I{1,2}|A|B)\b[^\r\n]*$/gim;
+  const headingMatches = [...docText.matchAll(headingPattern)];
+  const headings = headingMatches.map((match, index) => {
+    const headingStart = match.index ?? 0;
+    const nextHeadingStart = headingMatches[index + 1]?.index ?? docText.length;
+    // In ICAI answer booklets, the part title often sits on the next line:
+    // "PART – II 70 Marks" followed by "Descriptive Portion". Include the
+    // next non-empty line(s) as heading context, but never scan into answers.
+    const headingContext = docText
+      .slice(headingStart, nextHeadingStart)
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .slice(0, 2)
+      .join(' ');
+    return {
+      family: String(match[1] || '').toUpperCase(),
+      label: String(match[2] || '').toUpperCase(),
+      text: headingContext,
+      index: headingStart,
+    };
+  });
+
+  // Require explicit objective/descriptive wording on the headings. PART I/II
+  // may also be used for two unrelated subject divisions in other materials;
+  // numbering alone is not enough evidence that numbering restarts here.
+  const objectivePattern = /\b(?:MCQ|MCQS|MULTIPLE[\s-]+CHOICE|OBJECTIVE)\b/i;
+  const descriptivePattern = /\b(?:DESCRIPTIVE|SUBJECTIVE|LONG[\s-]+ANSWER|THEORY)\b/i;
+
+  const isDescriptiveSubQuestion = !isMcq && Boolean(String(subQuestion || '').trim());
+
+  for (const family of ['PART', 'DIVISION']) {
+    const familyHeadings = headings.filter((heading) => heading.family === family);
+    const objective = familyHeadings.find((heading) =>
+      (family === 'PART' ? heading.label === 'I' : heading.label === 'A') &&
+      objectivePattern.test(heading.text)
+    );
+    const descriptive = familyHeadings.find((heading) =>
+      (family === 'PART' ? heading.label === 'II' : heading.label === 'B') &&
+      descriptivePattern.test(heading.text)
+    );
+
+    // Explicit objective/descriptive labels take precedence. Bare numeric
+    // questions remain ambiguous, so leave them to the existing QP/SA matcher.
+    if (objective && descriptive && descriptive.index > objective.index) {
+      if (isMcq) return docText.slice(objective.index, descriptive.index);
+      if (isDescriptiveSubQuestion) return docText.slice(descriptive.index);
+      return docText;
+    }
+
+    // Legacy Model Test structure: "Division A (30 Marks)" contains MCQs and
+    // "Division B" starts the descriptive answers, but the word DESCRIPTIVE
+    // is not printed. Keep this narrow fallback for nested descriptive IDs.
+    if (family === 'DIVISION') {
+      const divisionA = familyHeadings.find((heading) => heading.label === 'A');
+      const divisionB = familyHeadings.find((heading) => heading.label === 'B');
+      if (
+        divisionA &&
+        divisionB &&
+        divisionB.index > divisionA.index &&
+        /\b30\s*Marks?\b/i.test(divisionA.text)
+      ) {
+        if (isMcq) return docText.slice(divisionA.index, divisionB.index);
+        if (isDescriptiveSubQuestion) return docText.slice(divisionB.index);
+      }
+    }
+  }
+
+  // Preserve legacy behavior for single-part documents and ambiguous top-level
+  // IDs that do not tell the lock whether MCQ or descriptive numbering is meant.
+  return docText;
+}
+
+/**
  * Finds a lettered sub-question only inside its own numbered parent question.
  * This deliberately refuses a bare "(d) ..." found elsewhere in the document:
  * such a match can otherwise lock Q6(d) to an unrelated Q2(d) table row.
@@ -327,12 +411,13 @@ export function extractLockedQuestionSlice(
   }
 
   const num = parseInt(qNum, 10);
-  const { sectionA, sectionB } = splitIntoSections(docText);
+  const partScopedText = selectObjectiveOrDescriptivePart(docText, subQ);
+  const { sectionA, sectionB } = splitIntoSections(partScopedText);
   // Q5-Q8 restart under Section B only for Taxation papers. Other CA papers
   // (e.g. Advanced Accounting) also number descriptive questions 5-8.
-  const isTaxationMaterial = /income\s*tax\s+law|goods\s+and\s+services\s+tax|\bGST\b/i.test(docText);
+  const isTaxationMaterial = /income\s*tax\s+law|goods\s+and\s+services\s+tax|\bGST\b/i.test(partScopedText);
   const isSectionB = isTaxationMaterial && num >= 5 && num <= 8;
-  let targetText = docText;
+  let targetText = partScopedText;
   if (!isFallback) {
     if (sectionB && isSectionB) {
       targetText = sectionB;
@@ -513,8 +598,8 @@ export function extractLockedQuestionSlice(
   }
 
   // If not found with strict regexes in section, check whole docText as fallback
-  if (startIndex === -1 && !isFallback && targetText !== docText) {
-    return extractLockedQuestionSlice(docText, qNum, subQ, docType, true);
+  if (startIndex === -1 && !isFallback && targetText !== partScopedText) {
+    return extractLockedQuestionSlice(partScopedText, qNum, subQ, docType, true);
   }
 
   if (startIndex === -1) {

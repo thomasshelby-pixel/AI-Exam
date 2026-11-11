@@ -301,6 +301,74 @@ export function assessQuestionReferenceForEvaluation(
 
 
 /**
+ * Read the selected source slices for an explicit statement that statutory
+ * section/rule numbers are not required. This is activated only when the
+ * matched source says so.
+ */
+export function hasExplicitNonMandatoryCitationRule(...sources: string[]): boolean {
+  const text = sources.map((source) => String(source || '')).join('\n');
+  return /\b(?:section(?:\s*\/\s*rule)?|rule)\s+numbers?\s+(?:are\s+)?not\s+required\b/i.test(text) ||
+    /\bsection\s+and\s+rule\s+numbers?\s+(?:are\s+)?not\s+required\b/i.test(text) ||
+    /\b(?:section|rule)\s+number\s+not\s+required\b/i.test(text) ||
+    /\bno\s+deduction\s+if\s+(?:the\s+)?(?:section|rule)\s+numbers?\s+(?:are\s+)?missing\b/i.test(text);
+}
+
+/**
+ * Emit a rubric override when the selected source itself says section/rule
+ * numbers are optional. Models must mark the legal substance, not the citation.
+ */
+export function buildSourceSpecificCitationInstruction(
+  suggestedAnswerSnippet: string,
+  markingSchemeSnippet: string,
+): string {
+  if (!hasExplicitNonMandatoryCitationRule(suggestedAnswerSnippet, markingSchemeSnippet)) return '';
+  return [
+    'SOURCE-EXPLICIT NON-MANDATORY CITATION RULE:',
+    'The matched Suggested Answer / Marking Scheme explicitly says section and/or rule numbers are not required.',
+    '- Do not deduct marks for an omitted, abbreviated, or imprecise section/rule number.',
+    '- Assess the substantive legal rule, exception, application, and conclusion independently.',
+    '- Do not treat a correct statutory principle as incorrect merely because its section/rule number is missing or differently cited.',
+    '- A whole-question zero MUST NOT be based on section/rule numbering when the source says those numbers are not required.',
+  ].join('\n');
+}
+
+function meaningfulEvidenceTerms(value: string): Set<string> {
+  const stopWords = new Set([
+    'section', 'sections', 'rule', 'rules', 'number', 'numbers', 'required',
+    'provision', 'provisions', 'candidate', 'student', 'answer', 'question',
+    'marks', 'mark', 'awarded', 'available', 'correct', 'incorrect',
+    'application', 'conclusion', 'explain', 'state', 'identify', 'given',
+    'company', 'companies', 'public', 'private', 'limited', 'under',
+    'according', 'following', 'must', 'shall', 'should', 'would', 'could',
+    'this', 'that', 'with', 'from', 'into', 'their', 'there', 'them',
+  ]);
+  return new Set(
+    String(value || '').toLowerCase().match(/[a-z]{4,}/g)?.filter((word) => !stopWords.has(word)) || [],
+  );
+}
+
+function hasRelevantCitedEvidence(
+  components: any[],
+  questionPaperSnippet: string,
+  suggestedAnswerSnippet: string,
+  markingSchemeSnippet: string,
+): boolean {
+  const sourceTerms = meaningfulEvidenceTerms(
+    [questionPaperSnippet, suggestedAnswerSnippet, markingSchemeSnippet].join('\n'),
+  );
+  return components.some((component) => {
+    const evidence = String(component?.studentEvidence || '').trim();
+    if (!evidence || /\b(?:left\s+blank|no\s+answer|did\s+not\s+attempt|not\s+attempted|no\s+response)\b/i.test(evidence)) {
+      return false;
+    }
+    if (!/\b(?:section|sec\.?|rule)\s*\d+(?:\s*\([0-9a-z]+\))?/i.test(evidence)) return false;
+    const evidenceTerms = meaningfulEvidenceTerms(evidence);
+    const shared = [...evidenceTerms].filter((word) => sourceTerms.has(word));
+    return shared.length >= 2;
+  });
+}
+
+/**
  * Parse and validate a single-question model response before it can be scored.
  * Invalid or internally inconsistent output is rejected so the provider fallback
  * chain can try another model instead of silently converting it into an academic zero.
@@ -308,7 +376,12 @@ export function assessQuestionReferenceForEvaluation(
 export function parseAndValidateQuestionChunkOutput(
   rawText: string,
   maxMarks: number,
-  _options: { materialType?: string } = {}
+  options: {
+    materialType?: string;
+    questionPaperSnippet?: string;
+    suggestedAnswerSnippet?: string;
+    markingSchemeSnippet?: string;
+  } = {}
 ): Record<string, any> {
   let clean = String(rawText || '').trim();
   clean = clean.replace(/^`{3}(?:json)?[ \t\r\n]*/i, '').replace(/[ \t\r\n]*`{3}$/, '');
@@ -430,6 +503,30 @@ export function parseAndValidateQuestionChunkOutput(
 
   if (Math.abs(availableTotal - maxMarks) > 0.05) {
     throw new Error(`QUESTION_CHUNK_ALLOCATION_MISMATCH: component allocations total ${availableTotal}, but the authoritative maximum is ${maxMarks}.`);
+  }
+
+  // If a matched source explicitly waives section/rule-number requirements,
+  // do not accept an all-zero answer where the candidate actually wrote a
+  // citation plus topic-relevant content. Reject this provider response so the
+  // fallback model re-evaluates substance; never silently certify a citation-only
+  // zero. Blank answers and genuinely off-topic answers remain unaffected.
+  const nonMandatoryCitationRule = hasExplicitNonMandatoryCitationRule(
+    options.suggestedAnswerSnippet || '',
+    options.markingSchemeSnippet || '',
+  );
+  if (
+    nonMandatoryCitationRule &&
+    awardedTotal <= 0.01 &&
+    hasRelevantCitedEvidence(
+      components,
+      options.questionPaperSnippet || '',
+      options.suggestedAnswerSnippet || '',
+      options.markingSchemeSnippet || '',
+    )
+  ) {
+    throw new Error(
+      'QUESTION_CHUNK_NON_MANDATORY_CITATION_ZERO: the matched source says section/rule numbers are not required, but the model assigned zero despite citation and topic-relevant candidate evidence. Re-evaluate the substantive answer.',
+    );
   }
 
   // Component awards are the auditable score source. A separately generated
@@ -655,6 +752,16 @@ export async function evaluateQuestionChunk(
       + (snippets.msSnippet ? '\n\n' + snippets.msSnippet : '\nNo safe derived step allocation remained; use the matched Suggested Answer and authoritative maximum only.')
     : (snippets.msSnippet || 'No question-specific Marking Scheme extract was available. Use the matched Suggested Answer as the substantive source and the authoritative maximum only; do not invent section-number or presentation requirements.');
   const sourceInstructions = buildChunkReferenceSourceInstructions(snippets.referenceTrace);
+  const sourceSpecificCitationInstruction = buildSourceSpecificCitationInstruction(
+    snippets.saSnippet,
+    snippets.msSnippet,
+  );
+  const chunkValidationOptions = {
+    materialType: ctx.referenceMetadata?.materialType,
+    questionPaperSnippet: snippets.qpSnippet,
+    suggestedAnswerSnippet: snippets.saSnippet,
+    markingSchemeSnippet: snippets.msSnippet,
+  };
   const referenceDisposition = assessQuestionReferenceForEvaluation({
     ...snippets,
     materialType: ctx.referenceMetadata?.materialType,
@@ -801,6 +908,7 @@ STRICT QUESTION-IDENTITY LOCK:
   order, expected sequence or subject assumptions. If the answer block identity is ambiguous,
   preserve it for review rather than scoring another question.
 ${buildQuestionChunkSubPartCompletenessDirective(fullCode, maxMarks)}
+${sourceSpecificCitationInstruction}
 
 CRITICAL ICAI EVALUATION RULES:
 1. Examine the candidate's handwritten answer on the attached page(s).
@@ -878,7 +986,7 @@ Return strictly valid JSON with this schema:
       maxTokens: 8192,
       thinkingLevel: 'MEDIUM',
       validateOutput: (rawText) => {
-        parseAndValidateQuestionChunkOutput(rawText, maxMarks, { materialType: ctx.referenceMetadata?.materialType });
+        parseAndValidateQuestionChunkOutput(rawText, maxMarks, chunkValidationOptions);
       },
       context: {
         level,
@@ -890,7 +998,7 @@ Return strictly valid JSON with this schema:
     });
     console.info(`[QuestionChunkEvaluator] ${fullCode} evaluated with ${res.modelUsed} (${res.provider}); fallback=${res.fallbackOccurred}.`);
 
-    const raw = parseAndValidateQuestionChunkOutput(res.rawText, maxMarks, { materialType: ctx.referenceMetadata?.materialType });
+    const raw = parseAndValidateQuestionChunkOutput(res.rawText, maxMarks, chunkValidationOptions);
     const components: MarkingComponent[] = raw.markingComponents as MarkingComponent[];
 
     // Do not invent or proportionally rescale step allocations. The model output has
