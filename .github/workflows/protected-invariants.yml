@@ -66,6 +66,9 @@ jobs:
       - name: Permanent-free founder evaluation entitlement regression
         run: node_modules/.bin/tsx server/tests/permanentFreeEvaluationAccess.test.ts
 
+      - name: Google account recovery classification safety regression
+        run: node_modules/.bin/tsx server/tests/googleAccountRecoveryClassification.test.ts
+
       - name: PYQ mode-independent marking and missed-question recovery regression
         run: node_modules/.bin/tsx server/tests/pyqCheckedCopyZeroAndCoverageRecovery.test.ts
 
