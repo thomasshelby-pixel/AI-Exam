@@ -308,6 +308,7 @@ export function assessQuestionReferenceForEvaluation(
 export function hasExplicitNonMandatoryCitationRule(...sources: string[]): boolean {
   const text = sources.map((source) => String(source || '')).join('\n');
   return /\b(?:section(?:\s*\/\s*rule)?|rule)\s+numbers?\s+(?:are\s+)?not\s+required\b/i.test(text) ||
+    /\bsection\s+and\s+rule\s+numbers?\s+(?:are\s+)?not\s+required\b/i.test(text) ||
     /\b(?:section|rule)\s+number\s+not\s+required\b/i.test(text) ||
     /\bno\s+deduction\s+if\s+(?:the\s+)?(?:section|rule)\s+numbers?\s+(?:are\s+)?missing\b/i.test(text);
 }
