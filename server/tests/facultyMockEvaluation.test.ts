@@ -8,8 +8,38 @@ import {
   isEligibleFacultyMockReviewRetry,
   isExactFacultyMockReviewRetryCopy,
 } from '../services/facultyMockEntitlementService.js';
+import { deriveFacultyMockEditability } from '../services/facultyMockEditabilityService.js';
 
 initDatabase();
+
+// Faculty Mock editing preview and PUT guards share this exact fail-closed
+// policy. A mock without any issued student history remains editable; any
+// evaluation or entitlement locks maximum marks and all scoring references.
+const editableMockState = deriveFacultyMockEditability({
+  verified: true,
+  hasEvaluation: false,
+  hasFreeCopyClaim: false,
+  hasPaidCopyEntitlement: false,
+  hasActivePaymentOrder: false,
+});
+assert.equal(editableMockState.scoringInputsLocked, false, 'A verified mock without evaluations or entitlements can edit scoring inputs.');
+assert.equal(editableMockState.accessTypeLocked, false, 'A verified unused mock can change its student access type.');
+
+for (const trigger of [
+  { hasEvaluation: true },
+  { hasFreeCopyClaim: true },
+  { hasPaidCopyEntitlement: true },
+  { hasActivePaymentOrder: true },
+]) {
+  const lockedState = deriveFacultyMockEditability({ verified: true, ...trigger });
+  assert.equal(lockedState.scoringInputsLocked, true, 'Each evaluation/entitlement trigger locks maximum marks and source files.');
+  assert.equal(lockedState.accessTypeLocked, true, 'Each evaluation/entitlement trigger locks Free/Paid access.');
+}
+
+const unverifiedMockState = deriveFacultyMockEditability({ verified: false });
+assert.equal(unverifiedMockState.scoringInputsLocked, true, 'Unknown shared history must fail closed for scoring inputs.');
+assert.equal(unverifiedMockState.accessTypeLocked, true, 'Unknown shared history must fail closed for access changes.');
+
 
 const eligibleRetrySource = {
   id: 'eval_review_original',

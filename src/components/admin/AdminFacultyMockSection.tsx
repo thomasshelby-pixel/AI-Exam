@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../../api/client.js';
 import { CA_CURRICULUM } from '../../data/caCurriculum.js';
 import { CALevel } from '../../types/index.js';
@@ -18,6 +18,15 @@ type MockTest = {
 };
 type StoredPdf = { name: string; type: string; size: number; base64: string };
 type StoredText = { name: string; type: 'text/plain'; size: number; base64: string; text: string };
+type FacultyMockEditability = {
+  verified: boolean;
+  hasEvaluation: boolean;
+  hasIssuedStudentEntitlement: boolean;
+  scoringInputsLocked: boolean;
+  accessTypeLocked: boolean;
+  evaluationInProgress: boolean;
+};
+
 
 
 async function fileToBase64(file: File): Promise<string> {
@@ -36,6 +45,10 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
   const [savingFaculty, setSavingFaculty] = useState(false);
   const [savingTest, setSavingTest] = useState(false);
   const [editingTestId, setEditingTestId] = useState<string | null>(null);
+  const [editingMockRecord, setEditingMockRecord] = useState<MockTest | null>(null);
+  const [editability, setEditability] = useState<FacultyMockEditability | null>(null);
+  const [checkingEditability, setCheckingEditability] = useState(false);
+  const editabilityRequestRef = useRef(0);
   const [deletingFacultyId, setDeletingFacultyId] = useState<string | null>(null);
   const [unlockPriceINR, setUnlockPriceINR] = useState(35);
   const [facultyName, setFacultyName] = useState('');
@@ -76,7 +89,6 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not load faculty mock data.';
       setError(message);
-      onNotify?.(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -103,6 +115,13 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     }
   }, [subjectKey, editingTestId]);
 
+  const scoringInputsLocked = Boolean(editingTestId && (
+    checkingEditability || !editability?.verified || editability.scoringInputsLocked
+  ));
+  const accessTypeLocked = Boolean(editingTestId && (
+    checkingEditability || !editability?.verified || editability.accessTypeLocked
+  ));
+
   const filteredTests = useMemo(() => tests.filter((test) =>
     (filterFaculty === 'ALL' || test.faculty_id === filterFaculty) &&
     (filterLevel === 'ALL' || test.course_level === filterLevel)
@@ -125,7 +144,6 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not add faculty.';
       setError(message);
-      onNotify?.(message, 'error');
     } finally {
       setSavingFaculty(false);
     }
@@ -153,7 +171,6 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not read the Question Paper PDF.';
       setError(message);
-      onNotify?.(message, 'error');
     } finally {
       setReadingFile(null);
     }
@@ -200,14 +217,17 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     } catch (err) {
       const message = err instanceof Error ? err.message : `Could not read ${config.label} TXT.`;
       setError(message);
-      onNotify?.(message, 'error');
     } finally {
       setReadingFile(null);
     }
   };
 
   const resetMockForm = () => {
+    editabilityRequestRef.current += 1;
     setEditingTestId(null);
+    setEditingMockRecord(null);
+    setEditability(null);
+    setCheckingEditability(false);
     setMockNumber('');
     setTitle('');
     setAccessType('FREE');
@@ -217,9 +237,14 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     setMarkingSchemeReference(null);
   };
 
-  const startEditingMock = (test: MockTest) => {
+  const startEditingMock = async (test: MockTest) => {
+    const requestId = editabilityRequestRef.current + 1;
+    editabilityRequestRef.current = requestId;
     setError('');
     setEditingTestId(test.id);
+    setEditingMockRecord(test);
+    setEditability(null);
+    setCheckingEditability(true);
     setFacultyId(test.faculty_id);
     setCourseLevel(test.course_level);
     setAttempt(test.attempt);
@@ -234,6 +259,31 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     setSuggestedAnswersReference(null);
     setMarkingSchemeReference(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    try {
+      const result = await apiRequest<{ editability: FacultyMockEditability }>(
+        `/api/admin/faculty-mocks/tests/${encodeURIComponent(test.id)}/editability`,
+      );
+      if (editabilityRequestRef.current !== requestId) return;
+      setEditability(result.editability);
+      if (result.editability.evaluationInProgress) {
+        setError('An evaluation is in progress for this mock. Wait for it to finish before saving any changes.');
+      }
+    } catch (err) {
+      if (editabilityRequestRef.current !== requestId) return;
+      const message = err instanceof Error ? err.message : 'Could not verify student evaluation and entitlement history.';
+      setEditability({
+        verified: false,
+        hasEvaluation: false,
+        hasIssuedStudentEntitlement: false,
+        scoringInputsLocked: true,
+        accessTypeLocked: true,
+        evaluationInProgress: false,
+      });
+      setError(message + ' Maximum marks, student access and source files are locked until verification succeeds. You can still edit the title.');
+    } finally {
+      if (editabilityRequestRef.current === requestId) setCheckingEditability(false);
+    }
   };
 
   const publishMock = async (event: React.FormEvent) => {
@@ -264,7 +314,6 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     } catch (err) {
       const message = err instanceof Error ? err.message : (editingTestId ? 'Could not update mock test.' : 'Could not publish mock test.');
       setError(message);
-      onNotify?.(message, 'error');
     } finally {
       setSavingTest(false);
     }
@@ -275,7 +324,7 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
         method: 'PUT', body: JSON.stringify({ status: faculty.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' }),
       });
       await loadData();
-    } catch (err) { onNotify?.(err instanceof Error ? err.message : 'Failed to update faculty.', 'error'); }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to update faculty.'); }
   };
 
   const deleteFaculty = async (faculty: Faculty) => {
@@ -295,7 +344,6 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not delete faculty and its mocks.';
       setError(message);
-      onNotify?.(message, 'error');
       await loadData();
     } finally {
       setDeletingFacultyId(null);
@@ -308,15 +356,15 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
         method: 'PUT', body: JSON.stringify({ status: test.status === 'PUBLISHED' ? 'UNPUBLISHED' : 'PUBLISHED' }),
       });
       await loadData();
-    } catch (err) { onNotify?.(err instanceof Error ? err.message : 'Failed to update mock test.', 'error'); }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to update mock test.'); }
   };
 
-  const renderPdfInput = (label: string, value: StoredPdf | null) => (
-    <label className="block rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition">
-      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-blue-600" />{label}{editingTestId ? ' (optional replacement)' : ' *'}</span>
-      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : editingTestId ? 'No replacement selected — the currently stored PDF will be kept.' : 'Choose original PDF (max 20 MB). It will be stored without conversion.'}</span>
+  const renderPdfInput = (label: string, value: StoredPdf | null, disabled = false, existingName = '') => (
+    <label className={`block rounded-xl border border-dashed p-3 transition ${disabled ? 'cursor-not-allowed border-slate-200 bg-slate-100 opacity-75' : 'cursor-pointer border-slate-300 bg-slate-50 hover:border-blue-400 hover:bg-blue-50/40'}`}>
+      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-blue-600" />{label}{disabled ? ' (locked)' : editingTestId ? ' (optional replacement)' : ' *'}</span>
+      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : disabled ? `Locked — stored file: ${existingName || 'current Question Paper PDF'}.` : editingTestId ? `No replacement selected — ${existingName || 'the currently stored PDF'} will be kept.` : 'Choose original PDF (max 20 MB). It will be stored without conversion.'}</span>
       {value && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Stored unchanged for student download only · not sent for AI extraction</span>}
-      <input className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { void choosePdf(event.target.files?.[0]); event.currentTarget.value = ''; }} />
+      <input disabled={disabled} className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { void choosePdf(event.target.files?.[0]); event.currentTarget.value = ''; }} />
     </label>
   );
 
@@ -325,12 +373,14 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
     kind: 'QUESTION_PAPER_TEXT' | 'SUGGESTED_ANSWERS' | 'MARKING_SCHEME',
     value: StoredText | null,
     description: string,
+    disabled = false,
+    existingName = '',
   ) => (
-    <label className="block rounded-xl border border-dashed border-violet-300 bg-violet-50/60 p-3 cursor-pointer hover:border-violet-500 hover:bg-violet-50 transition">
-      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />{label}{editingTestId ? ' (optional replacement)' : ' *'}</span>
-      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : editingTestId ? 'No replacement selected — the currently stored private TXT will be kept.' : description}</span>
+    <label className={`block rounded-xl border border-dashed p-3 transition ${disabled ? 'cursor-not-allowed border-slate-200 bg-slate-100 opacity-75' : 'cursor-pointer border-violet-300 bg-violet-50/60 hover:border-violet-500 hover:bg-violet-50'}`}>
+      <span className="flex items-center gap-2 text-xs font-bold text-slate-700"><UploadCloud className="h-4 w-4 text-violet-600" />{label}{disabled ? ' (locked)' : editingTestId ? ' (optional replacement)' : ' *'}</span>
+      <span className="mt-1 block text-[11px] text-slate-500">{value ? value.name : disabled ? `Locked — stored file: ${existingName || 'current private TXT reference'}.` : editingTestId ? `No replacement selected — ${existingName || 'the currently stored private TXT'} will be kept.` : description}</span>
       {value && <span className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />{value.text.length.toLocaleString()} characters · private · separate source</span>}
-      <input className="hidden" type="file" accept=".txt,text/plain" onChange={(event) => { void chooseReferenceText(kind, event.target.files?.[0]); event.currentTarget.value = ''; }} />
+      <input disabled={disabled} className="hidden" type="file" accept=".txt,text/plain" onChange={(event) => { void chooseReferenceText(kind, event.target.files?.[0]); event.currentTarget.value = ''; }} />
     </label>
   );
 
@@ -405,30 +455,42 @@ export const AdminFacultyMockSection: React.FC<{ onNotify?: (message: string, ty
             <label className="text-[11px] font-semibold text-slate-600">Mock Number
               <input type="number" min="1" max="99" value={mockNumber} onChange={(e) => setMockNumber(e.target.value)} placeholder="Auto next number" disabled={!!editingTestId} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs disabled:bg-slate-100 disabled:text-slate-500" />
             </label>
-            <label className="text-[11px] font-semibold text-slate-600">Maximum Marks
-              <input type="number" min="1" max="500" value={maximumMarks} onChange={(e) => setMaximumMarks(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" required />
+            <label className="text-[11px] font-semibold text-slate-600">{scoringInputsLocked ? 'Maximum Marks (locked)' : 'Maximum Marks'}
+              <input type="number" min="1" max="500" value={maximumMarks} onChange={(e) => setMaximumMarks(e.target.value)} disabled={scoringInputsLocked} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500" required />
             </label>
             <label className="text-[11px] font-semibold text-slate-600">Test Title
               <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Auto-generated if blank" maxLength={160} className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs" />
             </label>
-            <label className="text-[11px] font-semibold text-slate-600">Student Access
-              <select value={accessType} onChange={(e) => setAccessType(e.target.value as 'FREE' | 'PAID')} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs">
+            <label className="text-[11px] font-semibold text-slate-600">{accessTypeLocked ? 'Student Access (locked)' : 'Student Access'}
+              <select value={accessType} onChange={(e) => setAccessType(e.target.value as 'FREE' | 'PAID')} disabled={accessTypeLocked} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500">
                 <option value="FREE">Free — first copy free, repeats ₹{unlockPriceINR}</option>
                 <option value="PAID">Unlock by Paying — ₹{unlockPriceINR} per copy</option>
               </select>
             </label>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {renderPdfInput('Downloadable Question Paper PDF', questionPaper)}
-            {renderTextInput('Private Question Paper Text TXT', 'QUESTION_PAPER_TEXT', questionPaperReference, 'Upload the exact question text matching the downloadable PDF (max 4 MB).')}
-            {renderTextInput('Private Suggested Answers TXT', 'SUGGESTED_ANSWERS', suggestedAnswersReference, 'Upload model answers, workings and conclusions (max 4 MB).')}
-            {renderTextInput('Private Marking Scheme TXT', 'MARKING_SCHEME', markingSchemeReference, 'Upload step-wise marks, criteria and partial-credit rules (max 4 MB).')}
+            {renderPdfInput('Downloadable Question Paper PDF', questionPaper, scoringInputsLocked, editingMockRecord?.question_paper_file_name)}
+            {renderTextInput('Private Question Paper Text TXT', 'QUESTION_PAPER_TEXT', questionPaperReference, 'Upload the exact question text matching the downloadable PDF (max 4 MB).', scoringInputsLocked, editingMockRecord?.question_paper_reference_file_name || '')}
+            {renderTextInput('Private Suggested Answers TXT', 'SUGGESTED_ANSWERS', suggestedAnswersReference, 'Upload model answers, workings and conclusions (max 4 MB).', scoringInputsLocked, editingMockRecord?.suggested_answer_file_name || '')}
+            {renderTextInput('Private Marking Scheme TXT', 'MARKING_SCHEME', markingSchemeReference, 'Upload step-wise marks, criteria and partial-credit rules (max 4 MB).', scoringInputsLocked, editingMockRecord?.marking_scheme_file_name || '')}
           </div>
-          {editingTestId && <div className="rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-2.5 text-[10px] leading-5 text-amber-900">Previously issued Free/Paid student entitlements are preserved. Access type can only be changed before any claim, purchase or evaluation exists. Once a student evaluation exists, maximum marks and source files are locked to protect earlier reports and future rechecks; you can still edit the title. For a corrected question paper or marking scheme, publish a new mock.</div>}
+          {editingTestId && (
+            <div className={`rounded-lg border px-3 py-2.5 text-[10px] leading-5 ${checkingEditability || !editability?.verified || editability.scoringInputsLocked ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+              {checkingEditability
+                ? 'Checking shared evaluation and student-copy entitlement history. Maximum marks, student access and all source files remain disabled until verification completes.'
+                : !editability?.verified
+                  ? 'Student history could not be verified. Maximum marks, student access and all source files remain locked for safety. You can still edit the test title; retry by cancelling and opening Edit again.'
+                  : editability.evaluationInProgress
+                    ? 'An evaluation is currently in progress. Wait for it to finish before saving changes.'
+                    : editability.scoringInputsLocked
+                      ? 'This mock already has a student evaluation or an issued student-copy entitlement. Maximum marks and all source files are locked, and Free/Paid access cannot be changed. The test title remains editable. Publish a new mock for corrected scoring inputs.'
+                      : 'No student evaluation or copy entitlement exists for this mock. Maximum marks, source files and Free/Paid access can still be changed.'}
+            </div>
+          )}
           <div className="rounded-lg border border-blue-100 bg-blue-50/60 px-3 py-2.5 text-[10px] leading-5 text-slate-600">
             <strong className="text-slate-800">Reference separation:</strong> The original PDF is stored unchanged for student download only and is never extracted or sent to AI. The three private TXT files are stored independently and supply the exact Question Paper text, Suggested Answers and Marking Scheme to the existing evaluator. Keep the Question Paper TXT identical to the downloadable PDF; verify all three references before publishing.
           </div>
-          <button disabled={savingTest || !!readingFile || !facultyId || !attempt.trim() || (!editingTestId && (!questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference))} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
+          <button disabled={savingTest || !!readingFile || checkingEditability || Boolean(editability?.evaluationInProgress) || !facultyId || !attempt.trim() || (!editingTestId && (!questionPaper || !questionPaperReference || !suggestedAnswersReference || !markingSchemeReference))} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
             {savingTest ? <RefreshCw className="h-4 w-4 animate-spin" /> : editingTestId ? <CheckCircle2 className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
             {savingTest ? (editingTestId ? 'Saving changes…' : 'Publishing mock…') : readingFile ? 'Reading ' + readingFile.replace('_', ' ').toLowerCase() + '…' : editingTestId ? 'Save Changes' : 'Publish Faculty Mock'}
           </button>
