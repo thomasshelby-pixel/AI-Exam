@@ -728,6 +728,622 @@ export function extractSubQuestionsFromText(text: string): PaperStructureSubQues
     addQuestion(match[1], match[2] || match[3], Number(match[4] ?? match[3]));
   }
 
+  // Alternate Marking Scheme layout: "Marks Q2(a(i)) 2 marks".
+  // This is an explicit source allocation, not unlabelled prose. Keep it
+  // line-anchored and total-only so component criteria cannot become maxima.
+  const marksPrefixedQuestionRegex = new RegExp(
+    '^' + horizontalSpace + '*MARKS?' + horizontalSpace + '*[:=–—-]?' + horizontalSpace + '*' +
+    '(?:QUESTION' + horizontalSpace + '*(?:NO\\.?'+ horizontalSpace + '*)?|Q\\.?)' +
+    horizontalSpace + '*([0-9]+)' + horizontalSpace + '*' +
+    '(?:(' + namedPrefixPath + ')|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]))?' +
+    horizontalSpace + '*(?:[-–—:=]' + horizontalSpace + '*)?' +
+    '([0-9]+(?:\\.[0-9]+)?)' + horizontalSpace + '*(?:Marks?|M)\\b' + horizontalSpace + '*[.]?  const explicitPartRegex = new RegExp(
+    '(?:QUESTION' + horizontalSpace + '*(?:NO\\.?'+ horizontalSpace + '*)?|Q\\.?|Ans(?:wer)?\\.?)' +
+    horizontalSpace + '*([0-9]+)' + horizontalSpace + '*' +
+    '(' + namedPrefixPath + '|' + labelledPartPrefix + '(' + bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)]))([^\\r\\n]*)',
+    'gi',
+  );
+  while ((match = explicitPartRegex.exec(text)) !== null) {
+    const marks = extractMarks(match[4]);
+    if (marks !== undefined) addQuestion(match[1], match[2], marks);
+  }
+
+  // Numeric question labels without a Q/Question prefix, including nested,
+  // dotted and Roman-numbered paths: 1(a)(ii), 2.1.3, 4(IV).
+  const numericRegex = new RegExp(
+    '(?:^|\\n)' + horizontalSpace + '*([0-9]+)' + horizontalSpace + '*(' +
+    bracketPath + '|(?:\\.[a-zA-Z0-9]+){1,4}|[a-zA-Z0-9]+[.)])' +
+    horizontalSpace + '*[-–—:]?' + horizontalSpace + '*(?:\\[' + horizontalSpace + '*|\\(' + horizontalSpace + '*)?([0-9]+(?:\\.[0-9]+)?)' +
+    horizontalSpace + '*(?:Marks?|M)\\b',
+    'gi',
+  );
+  while ((match = numericRegex.exec(text)) !== null) {
+    const suffix = match[2].startsWith('.') ? match[2].replace(/\./g, ')(').replace(/^/, '(').concat(')') : match[2];
+    addQuestion(match[1], suffix, Number(match[3]));
+  }
+
+  const lines = text.split(/\r?\n/);
+  let activeParentQNum: string | null = null;
+  let activeSubQuestionPath: string[] = [];
+  const parentHeaderRegex = /^\s*(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?|Ans(?:wer)?\.?)\s*([0-9]+)\b([\s\S]*)$/i;
+  const childSubQRegex = new RegExp(
+    '^\\s*(' + namedPrefixPath + '|' +
+    '(?:' + labelledPrefixName + '\\s*)?' + bracketPath + '|' +
+    '(?:\\.?[a-zA-Z0-9]+)(?:\\.[a-zA-Z0-9]+){1,4}|' +
+    '(?:' + labelledPrefixName + '\\s*)?[a-zA-Z0-9]+[.)]|' +
+    '[a-zA-Z0-9]+[.)])' +
+    '(?:\\s*[-–—:]\\s*|\\s+|$)',
+    'i',
+  );
+  const romanNumerals = new Set([
+    'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
+    'xi', 'xii', 'xiii', 'xiv', 'xv', 'xvi', 'xvii', 'xviii', 'xix', 'xx',
+    'xxi', 'xxii', 'xxiii', 'xxiv', 'xxv', 'xxx', 'xl', 'l', 'lx', 'lxx', 'xc', 'c',
+  ]);
+  const numberingFamily = (token: string, depth: number): string => {
+    const value = String(token || '').toLowerCase();
+    if (/^\d+$/.test(value)) return 'numeric';
+    if (romanNumerals.has(value)) return 'roman';
+    if (/^[a-z]$/.test(value)) return 'alphabetic';
+    if (romanNumerals.has(value)) return 'roman';
+    return 'other:' + value;
+  };
+  const combineContextPath = (current: string[], incoming: string[]): string[] => {
+    if (!incoming.length) return current;
+    if (!current.length) return incoming;
+    if (incoming.length > 1) {
+      if (incoming[0].toLowerCase() === current[0]?.toLowerCase()) return incoming;
+      let overlap = Math.min(current.length, incoming.length);
+      while (overlap > 0 && !current.slice(-overlap).every((part, index) =>
+        part.toLowerCase() === incoming[index].toLowerCase()
+      )) overlap -= 1;
+      return current.concat(incoming.slice(overlap));
+    }
+    const token = incoming[0];
+    const last = current[current.length - 1];
+    const first = current[0];
+    const nextFamily = numberingFamily(token, current.length);
+    const lastFamily = numberingFamily(last, current.length - 1);
+    const firstFamily = numberingFamily(first, 0);
+
+    // Same numbering family means a sibling at that level. Preserve the raw
+    // hierarchy here; scoreable-path normalization happens only when allocating.
+    if (nextFamily === lastFamily || (last === 'i' && romanNumerals.has(token))) {
+      return current.slice(0, -1).concat(token);
+    }
+    if (current.length > 1 && (nextFamily === firstFamily || (first === 'i' && romanNumerals.has(token)))) {
+      return [token];
+    }
+    return current.concat(token);
+  };
+
+  for (const line of lines) {
+    if (/^\s*(?:SUGGESTED\s+ANSWERS?|MODEL\s+ANSWERS?|ANSWER\s+KEY|MARKING\s+SCHEME|QUESTION\s+PAPER|MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\s*[-–—:]?\s*(?:MCQ|OBJECTIVE))\b/i.test(line)) {
+      activeParentQNum = null;
+      activeSubQuestionPath = [];
+    }
+
+    const parentMatch = line.match(parentHeaderRegex);
+    if (parentMatch) {
+      activeParentQNum = parentMatch[1];
+      const parentSuffix = String(parentMatch[2] || '')
+        .trim()
+        .replace(/^[-–—:]\s*/, '')
+        .replace(/^\.(?=\s*[\(\[])/, '');
+      const startsWithExplicitPartPath =
+        /^[([{]/.test(parentSuffix) ||
+        /^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\b/i.test(parentSuffix) ||
+        /^\.[a-zA-Z0-9]+/.test(parentSuffix);
+      const parsedParentIdentity = startsWithExplicitPartPath
+        ? parseCanonicalQuestionIdentity('Q' + activeParentQNum + ' ' + parentSuffix)
+        : undefined;
+      activeSubQuestionPath = parsedParentIdentity
+        ? (parsedParentIdentity.sourceSubQuestionPath || parsedParentIdentity.subQuestionPath || [])
+        : [];
+    }
+
+    if (!activeParentQNum) continue;
+    const childMatch = line.match(childSubQRegex);
+    if (!childMatch) continue;
+
+    const label = childMatch[1];
+    const cleanLabel = String(label || '').trim();
+    const isNamedPartLabel =
+      /^(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\b/i.test(cleanLabel);
+    const labelSuffix = /^[([{]/.test(cleanLabel) || isNamedPartLabel
+      ? cleanLabel
+      : '(' + cleanLabel.replace(/[.)]$/, '') + ')';
+    const parsedLabel = parseCanonicalQuestionIdentity(
+      'Q' + activeParentQNum + ' ' + labelSuffix
+    );
+    const incomingPath = parsedLabel.sourceSubQuestionPath || parsedLabel.subQuestionPath || [];
+    activeSubQuestionPath = combineContextPath(activeSubQuestionPath, incomingPath);
+    const remainder = line.slice(childMatch[0].length);
+    const marks = extractMarks(remainder);
+    if (marks !== undefined) {
+      const suffix = activeSubQuestionPath.map((part) => '(' + part + ')').join('');
+      addQuestion(activeParentQNum, suffix, marks);
+    }
+  }
+
+  const subQuestions: PaperStructureSubQuestion[] = Array.from(allocations.values()).map((allocation) => {
+    const parsed = parseCanonicalQuestionIdentity(allocation.canonicalId);
+    return {
+      fullQuestionCode: parsed.canonicalId,
+      questionNumber: parsed.questionNumber,
+      subQuestionNumber: parsed.subQuestion,
+      maximumMarks: resolvedQuestionMaximumMarks(allocation),
+      // Generic paper parts are required by default. Only an explicit, parsed
+      // optional-selection rule may mark a parent and its leaf parts optional.
+      compulsory: true,
+      isMcq: false,
+      section: parseInt(parsed.questionNumber, 10) > 4 ? 'B' : 'A',
+      division: 'B',
+    };
+  });
+  return deduplicateQuestionList(subQuestions);
+}
+
+interface OptionalAttemptSelectionRule {
+  allowedCount: number;
+  questionNumbers: string[];
+  choiceRule: string;
+}
+
+const ATTEMPT_COUNT_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+};
+
+function parseAttemptCount(value: string): number {
+  const normalized = String(value || '').trim().toLowerCase();
+  return /^\d+$/.test(normalized) ? Number(normalized) : (ATTEMPT_COUNT_WORDS[normalized] || 0);
+}
+
+/**
+ * Read optional-question selection only from explicit Question Paper / Marking
+ * Scheme wording. If the source does not identify an unambiguous allowed set,
+ * return null rather than guessing from conventional CA paper layouts.
+ */
+export function extractOptionalAttemptSelectionRule(
+  questionPaperText: string,
+  markingSchemeText: string,
+  availableQuestionNumbers: string[],
+): OptionalAttemptSelectionRule | null {
+  const sourceText = `${questionPaperText || ''}\n${markingSchemeText || ''}`;
+  if (!sourceText.trim()) return null;
+
+  const available = [...new Set(availableQuestionNumbers.map((value) => String(Number(value))))]
+    .filter((value) => /^\d+$/.test(value))
+    .sort((left, right) => Number(left) - Number(right));
+  if (!available.length) return null;
+
+  const directPattern = /\b(?:attempt|answer|choose|select)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+(?:questions?\s+)?(?:of|from)\s+(?:questions?\s*)?((?:Q\s*)?\d{1,2}(?:(?:\s*,\s*|\s+and\s+|\s+to\s+|\s*-\s*)(?:Q\s*)?\d{1,2})*)/i;
+  const directMatch = sourceText.match(directPattern);
+
+  let allowedCount = 0;
+  let allowedNumbers: string[] = [];
+  let expectedRangeLength = 0;
+
+  if (directMatch) {
+    allowedCount = parseAttemptCount(directMatch[1]);
+    const tail = directMatch[2];
+    const numbers = (tail.match(/\d{1,2}/g) || []).map((value) => Number(value));
+    if (/\bto\b|\s-\s/i.test(tail) && numbers.length >= 2) {
+      const from = Math.min(numbers[0], numbers[1]);
+      const to = Math.max(numbers[0], numbers[1]);
+      if (to - from <= 20) {
+        expectedRangeLength = to - from + 1;
+        allowedNumbers = Array.from({ length: expectedRangeLength }, (_, index) => String(from + index));
+      }
+    } else {
+      allowedNumbers = [...new Set(numbers.map(String))];
+    }
+  } else {
+    // Example: "Question No. 1 is compulsory. Answer any four questions
+    // from the remaining five." Derive the remaining parent IDs only when
+    // the explicit compulsory IDs and the stated remaining count reconcile.
+    const remainingMatch = sourceText.match(
+      /\b(?:attempt|answer|choose|select)\s+any\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\s+questions?\s+from\s+(?:the\s+)?remaining\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d{1,2})\b/i,
+    );
+    if (!remainingMatch) return null;
+
+    allowedCount = parseAttemptCount(remainingMatch[1]);
+    const statedRemainingCount = parseAttemptCount(remainingMatch[2]);
+    const compulsoryMatches = Array.from(sourceText.matchAll(
+      /\b(?:question\s*(?:no\.?\s*)?|q\.?\s*)(\d{1,2})\s*(?:is|shall\s+be)\s+compulsory\b/gi,
+    ));
+    const compulsoryNumbers = new Set(compulsoryMatches.map((match) => String(Number(match[1]))));
+    allowedNumbers = available.filter((number) => !compulsoryNumbers.has(number));
+    if (!compulsoryNumbers.size || allowedNumbers.length !== statedRemainingCount) return null;
+  }
+
+  allowedNumbers = [...new Set(allowedNumbers)]
+    .filter((number) => available.includes(number))
+    .sort((left, right) => Number(left) - Number(right));
+  if (!Number.isInteger(allowedCount) || allowedCount < 1 ||
+      allowedNumbers.length < 2 || allowedNumbers.some((number) => !available.includes(number)) ||
+      (expectedRangeLength > 0 && allowedNumbers.length !== expectedRangeLength)) {
+    return null;
+  }
+  if (directMatch) {
+    const rawNumbers = (directMatch[2].match(/\d{1,2}/g) || []).map((value) => Number(value));
+    if (rawNumbers.some((number) => !available.includes(String(number)))) return null;
+  }
+  if (allowedCount >= allowedNumbers.length) return null;
+
+  const choiceRule = `Attempt any ${allowedCount} of ${allowedNumbers.map((number) => `Q${number}`).join(', ')}`;
+  return { allowedCount, questionNumbers: allowedNumbers, choiceRule };
+}
+
+function getSourceBackedMcqMaximumMarks(
+  questionNumber: string,
+  options: { questionPaperText?: string; markingSchemeText?: string },
+): number {
+  const qNum = String(Number(questionNumber));
+  if (!qNum || qNum === 'NaN') return 0;
+
+  const sources = [options.questionPaperText, options.markingSchemeText]
+    .map((value) => String(value || '').replace(/\r/g, ''))
+    .filter((value) => value.trim().length > 0);
+
+  const objectiveHeading = /(?:MULTIPLE\s+CHOICE\s+QUESTIONS?|OBJECTIVE(?:\s+TYPE)?\s+QUESTIONS?|DIVISION\s+A\b|SECTION\s+A\b)/i;
+  const descriptiveHeading = /(?:DIVISION\s+B\b|SECTION\s+B\b|DESCRIPTIVE\s+QUESTIONS?)/i;
+  const labelFor = (number: string) => new RegExp(
+    '^\\s*(?:(?:MCQ|QUESTION|Q\\.?)\\s*(?:NO\\.?\\s*)?)?' +
+      number + '\\s*(?:[).:]|[-–—])',
+    'i',
+  );
+  const marksPattern = /(?:\[\s*|\(\s*)?([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i;
+
+  // First look only inside an explicitly-labelled objective section. This avoids
+  // confusing descriptive Q1's maximum with MCQ 1's maximum on the same paper.
+  for (const source of sources) {
+    const heading = objectiveHeading.exec(source);
+    if (!heading) continue;
+
+    const objectiveText = source.slice(heading.index);
+    const endMatch = descriptiveHeading.exec(objectiveText.slice(heading[0].length));
+    const block = endMatch
+      ? objectiveText.slice(0, heading[0].length + endMatch.index)
+      : objectiveText;
+    const lines = block.split('\n');
+
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!labelFor(qNum).test(lines[index])) continue;
+
+      let end = Math.min(lines.length, index + 7);
+      for (let next = index + 1; next < end; next += 1) {
+        if (labelFor('\\d{1,2}').test(lines[next])) {
+          end = next;
+          break;
+        }
+      }
+      const match = lines.slice(index, end).join(' ').match(marksPattern);
+      const marks = match ? Number(match[1]) : 0;
+      if (Number.isFinite(marks) && marks > 0) return marks;
+    }
+  }
+
+  // Explicit per-question MCQ allocations may also be recorded in the marking
+  // scheme without a separate Division/Section heading.
+  const explicitMcqLabel = new RegExp(
+    '^\\s*(?:MCQ|MULTIPLE\\s+CHOICE\\s+QUESTION)\\s*(?:NO\\.?\\s*)?' +
+      qNum + '\\b([^\\r\\n]*)',
+    'im',
+  );
+  for (const source of sources) {
+    const match = source.match(explicitMcqLabel);
+    const localMarks = match?.[1]?.match(marksPattern);
+    const marks = localMarks ? Number(localMarks[1]) : 0;
+    if (Number.isFinite(marks) && marks > 0) return marks;
+  }
+
+  // Source-backed rules can define a uniform allocation for all MCQs.
+  const combined = sources.join('\n');
+  const sharedRules = [
+    /\b(?:each|every)\s+(?:MCQs?|multiple[- ]choice|objective)\s*(?:(?:question|item)s?\s*)?(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
+    /\b(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\b[^\n.]{0,60}\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per\s+question)\b/i,
+    /\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per)\s+(?:MCQ|multiple[- ]choice|objective)\b/i,
+  ];
+  for (const rule of sharedRules) {
+    const match = combined.match(rule);
+    const marks = match ? Number(match[1]) : 0;
+    if (Number.isFinite(marks) && marks > 0) return marks;
+  }
+
+  // Missing MCQ allocation must fail the pre-evaluation gate; never guess 1 or 2 marks.
+  return 0;
+}
+
+/**
+ * Read only standalone question-total lines for source-to-source mark checks.
+ * A rubric sentence such as "Question 1(a) - award 2 marks for the provision"
+ * is deliberately not treated as the question maximum. The selected QP remains
+ * the primary allocation source; an explicit standalone disagreement with the
+ * Marking Scheme blocks scoring rather than silently choosing either value.
+ */
+/**
+ * A question-part suffix must be visibly numbered, not ordinary prose.
+ * Accepted forms include (a), [ii], a), .1.2 and Part IV Clause 2.
+ */
+function isExplicitQuestionPartSuffix(value: string): boolean {
+  const suffix = String(value || '').trim();
+  if (!suffix) return true;
+
+  const namedPath = /^(?:(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+)(?:\s+(?:PART|SUB[- ]?PART|SUBQUESTION|SUB[- ]?QUESTION|CLAUSE|SUB[- ]?CLAUSE|ITEM|PARAGRAPH|PARA)\s+[a-zA-Z0-9]+)*$/i;
+  const bracketPath = /^(?:\(\s*[a-zA-Z0-9]+(?:\s*\(\s*[a-zA-Z0-9]+\s*\))*\s*\)|\[\s*[a-zA-Z0-9]+(?:\s*\[\s*[a-zA-Z0-9]+\s*\])*\s*\])+$/i;
+  const dottedPath = /^(?:\.[a-zA-Z0-9]+){1,4}$/;
+  const punctuatedLabel = /^[a-zA-Z0-9]+[.)]$/;
+  return namedPath.test(suffix) || bracketPath.test(suffix) || dottedPath.test(suffix) || punctuatedLabel.test(suffix);
+}
+
+function extractStandaloneQuestionMarkAllocations(sourceText: string): Map<string, number> {
+  const accumulated = new Map<string, QuestionMarkAllocationAccumulator>();
+  const linePattern = /^\s*(?:MARKS?\s*[:=–—-]?\s*)?(?:QUESTION\s*(?:NO\.?\s*)?|Q\.?)\s*(\d{1,3})\s*(.*?)\s*(?:(?:[-–—:]|carries?|carrying|worth|allotted|is|for)\s*)?(?:[\[(]\s*)?(\d+(?:\.\d+)?)\s*(?:Marks?|M)\s*[\])]?\s*[\s.]*$/i;
+  for (const line of String(sourceText || '').replace(/\r/g, '').split('\n')) {
+    const match = line.match(linePattern);
+    if (!match) continue;
+    const questionNumber = match[1];
+    const suffix = String(match[2] || '').trim();
+    if (!isExplicitQuestionPartSuffix(suffix)) continue;
+    const rawQuestionCode = 'Q' + questionNumber + suffix;
+    const marks = Number(match[3]);
+    if (!Number.isFinite(marks) || marks <= 0) continue;
+    addQuestionMarkAllocation(accumulated, rawQuestionCode, marks);
+  }
+  return new Map(Array.from(accumulated.entries()).map(([canonicalId, allocation]) => [
+    canonicalId,
+    resolvedQuestionMaximumMarks(allocation),
+  ]));
+}
+
+/**
+ * Source-backed marking references may state a question total with a short
+ * criterion description on the same line. Accept that format only when the
+ * line contains exactly one numeric marks allocation. A line containing
+ * multiple mark values is a component rubric, not a safe question maximum,
+ * and is deliberately excluded so the pre-evaluation gate requests review.
+ */
+function extractUnambiguousDescriptiveQuestionMarkAllocations(sourceText: string): PaperStructureSubQuestion[] {
+  const filteredSource = String(sourceText || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => {
+      const allocations = line.match(/\b\d+(?:\.\d+)?\s*(?:Marks?|M)\b/gi) || [];
+      const explicitComponentAward =
+        /\b(?:award|allow|give)\s+(?:up to\s+)?\d+(?:\.\d+)?\s*(?:Marks?|M)\b/i.test(line);
+      // Multiple mark values or an explicit criterion-award instruction is
+      // component-level rubric text, not a safe question maximum.
+      return allocations.length > 1 || explicitComponentAward ? '' : line;
+    })
+    .join('\n');
+  return extractSubQuestionsFromText(filteredSource);
+}
+
+function isSourceDrivenMaterialType(materialType: unknown): boolean {
+  return new Set(['PYQ', 'MTP', 'MODEL_TEST_PAPER', 'FACULTY_MOCK_TEST'])
+    .has(String(materialType || '').trim().toUpperCase());
+}
+
+function auditSourceMarkAllocations(options: {
+  questionPaperText?: string;
+  markingSchemeText?: string;
+  suggestedAnswersText?: string;
+  materialType?: string;
+}): string[] {
+  const questionPaperAllocations = extractStandaloneQuestionMarkAllocations(options.questionPaperText || '');
+  const markingSchemeAllocations = extractStandaloneQuestionMarkAllocations(options.markingSchemeText || '');
+  const suggestedAnswerAllocations = extractStandaloneQuestionMarkAllocations(options.suggestedAnswersText || '');
+  if (isSourceDrivenMaterialType(options.materialType)) {
+    for (const [source, allocations] of [
+      [options.questionPaperText, questionPaperAllocations],
+      [options.markingSchemeText, markingSchemeAllocations],
+      [options.suggestedAnswersText, suggestedAnswerAllocations],
+    ] as Array<[string | undefined, Map<string, number>]>) {
+      for (const question of extractUnambiguousDescriptiveQuestionMarkAllocations(String(source || ''))) {
+        const canonicalId = toCanonicalQuestionId(
+          question.fullQuestionCode || question.questionNumber,
+          question.subQuestionNumber,
+        );
+        if (!allocations.has(canonicalId)) allocations.set(canonicalId, question.maximumMarks);
+      }
+    }
+  }
+
+  const conflicts: string[] = [];
+
+  const compareAllocations = (
+    left: Map<string, number>,
+    right: Map<string, number>,
+    leftLabel: string,
+    rightLabel: string,
+  ) => {
+    for (const [questionId, leftMarks] of left) {
+      const rightMarks = right.get(questionId);
+      if (rightMarks !== undefined && Math.abs(leftMarks - rightMarks) > 0.01) {
+        conflicts.push(
+          'MARK_ALLOCATION_SOURCE_CONFLICT: ' + questionId + ' is ' + leftMarks +
+          ' marks in the selected ' + leftLabel + ' but ' + rightMarks +
+          ' marks in the selected ' + rightLabel + '.'
+        );
+      }
+    }
+  };
+
+  compareAllocations(questionPaperAllocations, markingSchemeAllocations, 'Question Paper', 'Marking Scheme');
+  compareAllocations(questionPaperAllocations, suggestedAnswerAllocations, 'Question Paper', 'Suggested Answers');
+  compareAllocations(markingSchemeAllocations, suggestedAnswerAllocations, 'Marking Scheme', 'Suggested Answers');
+
+  const mcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  for (const questionNumber of mcqKeys.keys()) {
+    const questionPaperMarks = getSourceBackedMcqMaximumMarks(questionNumber, {
+      questionPaperText: options.questionPaperText,
+    });
+    const markingSchemeMarks = getSourceBackedMcqMaximumMarks(questionNumber, {
+      markingSchemeText: options.markingSchemeText,
+    });
+    if (
+      questionPaperMarks > 0 &&
+      markingSchemeMarks > 0 &&
+      Math.abs(questionPaperMarks - markingSchemeMarks) > 0.01
+    ) {
+      conflicts.push(
+        'MCQ_MARK_ALLOCATION_SOURCE_CONFLICT: MCQ' + questionNumber + ' is ' + questionPaperMarks +
+        ' marks in the selected Question Paper but ' + markingSchemeMarks + ' marks in the selected Marking Scheme.'
+      );
+    }
+  }
+
+  return Array.from(new Set(conflicts));
+}
+
+function buildGenericPaperStructure(options: {
+  markingSchemeText?: string;
+  questionPaperText?: string;
+  suggestedAnswersText?: string;
+  officialPaperMaxMarks?: number;
+  materialType?: string;
+}): AuthoritativePaperStructure {
+  // Question Paper allocations take precedence over any repeated mark amounts
+  // inside a marking-scheme explanation. The Marking Scheme and Suggested
+  // Answers may fill identities/maxima that the QP omits, but they must never
+  // silently overwrite a maximum already stated by the selected QP.
+  const subQuestions: PaperStructureSubQuestion[] = [];
+  const seenSourceQuestionIds = new Set<string>();
+  const addQuestionOnce = (question: PaperStructureSubQuestion) => {
+    const canonicalId = toCanonicalQuestionId(
+      question.fullQuestionCode || question.questionNumber,
+      question.subQuestionNumber,
+    );
+    if (seenSourceQuestionIds.has(canonicalId)) return;
+    seenSourceQuestionIds.add(canonicalId);
+    subQuestions.push(question);
+  };
+
+  // The Question Paper is the primary inventory and maximum-mark source.
+  // Do not run the generic "first marks number on the line" extractor over an
+  // entire Marking Scheme: component awards (e.g. 2 + 3 marks) are not the
+  // question's maximum. MS / SA may fill a missing maximum only when they
+  // contain an explicit standalone question-total line.
+  for (const question of extractSubQuestionsFromText(String(options.questionPaperText || ''))) {
+    addQuestionOnce(question);
+  }
+
+  for (const sourceText of [options.markingSchemeText, options.suggestedAnswersText]) {
+    for (const [canonicalId, maximumMarks] of extractStandaloneQuestionMarkAllocations(String(sourceText || ''))) {
+      if (seenSourceQuestionIds.has(canonicalId)) continue;
+      const parsed = parseCanonicalQuestionIdentity(canonicalId);
+      addQuestionOnce({
+        fullQuestionCode: canonicalId,
+        questionNumber: parsed.questionNumber,
+        subQuestionNumber: parsed.subQuestion,
+        maximumMarks,
+        compulsory: true,
+        isMcq: false,
+        section: Number(parsed.questionNumber) > 4 ? 'B' : 'A',
+        division: 'B',
+      });
+    }
+  }
+
+  // All source-backed materials use the same fallback for an omitted QP
+  // maximum: a single unambiguous question-total line in the selected MS/SA
+  // may fill it. Multiple mark values on one line are treated as component
+  // rubrics and never promoted to a question maximum.
+  if (isSourceDrivenMaterialType(options.materialType)) {
+    for (const sourceText of [options.markingSchemeText, options.suggestedAnswersText]) {
+      for (const question of extractUnambiguousDescriptiveQuestionMarkAllocations(String(sourceText || ''))) {
+        addQuestionOnce(question);
+      }
+    }
+  }
+
+  // Never fabricate question identities or maximum marks for PYQ, MTP,
+  // Model Test, or Faculty Mock papers. If the selected source cannot be
+  // parsed, the deterministic pre-evaluation gate must stop scoring.
+  const normalizedSubQuestions = deduplicateQuestionList(subQuestions);
+
+  const questionsMap = new Map<string, PaperStructureQuestion>();
+  for (const sq of normalizedSubQuestions) {
+    const key = `Q${sq.questionNumber}`;
+    if (!questionsMap.has(key)) {
+      questionsMap.set(key, {
+        questionNumber: sq.questionNumber,
+        section: sq.section,
+        division: sq.division || 'B',
+        compulsory: sq.compulsory,
+        maximumMarks: 0,
+        subQuestions: [],
+      });
+    }
+    const q = questionsMap.get(key)!;
+    q.maximumMarks += sq.maximumMarks;
+    q.subQuestions.push(sq);
+  }
+
+  // Check if any MCQs are in the suggested answers
+  const parsedMcqs = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const mcqs: PaperStructureSubQuestion[] = [];
+  for (const [qNum, data] of parsedMcqs.entries()) {
+    mcqs.push({
+      fullQuestionCode: `MCQ${qNum}`,
+      questionNumber: qNum,
+      subQuestionNumber: 'MCQ',
+      // MCQ maxima must be explicit in the selected QP / marking scheme.
+      // Zero is deliberate: pre-evaluation validation blocks guessed allocations.
+      maximumMarks: getSourceBackedMcqMaximumMarks(qNum, options),
+      compulsory: true,
+      isMcq: true,
+      officialKey: data.officialKey,
+      officialExplanation: data.explanation,
+      sourceQuestionLabel: data.sourceQuestionLabel,
+      topic: `Multiple Choice Question ${qNum}`,
+      section: parseInt(qNum, 10) > 8 ? 'B' : 'A',
+      division: 'A',
+    });
+  }
+
+  const baseQuestions = Array.from(questionsMap.values());
+  const attemptRule = extractOptionalAttemptSelectionRule(
+    String(options.questionPaperText || ''),
+    String(options.markingSchemeText || ''),
+    baseQuestions.map((question) => question.questionNumber),
+  );
+  const optionalQuestionNumbers = new Set(attemptRule?.questionNumbers || []);
+  const finalSubQuestions = normalizedSubQuestions.map((subQuestion) => ({
+    ...subQuestion,
+    compulsory: !optionalQuestionNumbers.has(String(Number(subQuestion.questionNumber))),
+  }));
+  const questions = baseQuestions.map((question) => {
+    const isOptional = optionalQuestionNumbers.has(String(Number(question.questionNumber)));
+    return {
+      ...question,
+      compulsory: !isOptional,
+      ...(isOptional && attemptRule ? { choiceRule: attemptRule.choiceRule } : {}),
+      // Keep parent and leaf required/optional metadata in sync. The canonical
+      // score ledger consumes leaf entries, not only this parent summary.
+      subQuestions: finalSubQuestions.filter(
+        (subQuestion) => subQuestion.questionNumber === question.questionNumber,
+      ),
+    };
+  });
+
+  return {
+    paperTitle: 'Chartered Accountancy Examination',
+    totalPaperMaxMarks: options.officialPaperMaxMarks || 100,
+    questions,
+    subQuestions: finalSubQuestions,
+    mcqs,
+  };
+}
+,
+    'gim',
+  );
+  while ((match = marksPrefixedQuestionRegex.exec(text)) !== null) {
+    addQuestion(match[1], match[2] || match[3], Number(match[4]));
+  }
+
   // Explicit labels with descriptive text before the marks allocation.
   const explicitPartRegex = new RegExp(
     '(?:QUESTION' + horizontalSpace + '*(?:NO\\.?'+ horizontalSpace + '*)?|Q\\.?|Ans(?:wer)?\\.?)' +
