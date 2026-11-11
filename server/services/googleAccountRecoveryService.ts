@@ -62,6 +62,76 @@ function getSocialStudentId(uid: string): string {
   return `usr_social_${crypto.createHash('sha256').update(uid).digest('hex').slice(0, 24)}`;
 }
 
+export function classifyGoogleAccountRecoveryState(input: {
+  localRole?: string | null;
+  cloudUsers: Array<Record<string, any>>;
+  cloudProfile?: Record<string, any> | null;
+  cloudTombstoned?: boolean;
+  firebaseIdentityTombstoned?: boolean;
+}): { status: GoogleAccountRecoveryStatus | null; statusMessage: string } {
+  if (input.localRole) {
+    if (String(input.localRole).toUpperCase() !== 'STUDENT') {
+      return {
+        status: 'ROLE_CONFLICT',
+        statusMessage: 'A platform account already exists for this email with a non-student role. No automatic recovery is allowed.',
+      };
+    }
+    return { status: null, statusMessage: 'The student is already present in the platform registry.' };
+  }
+
+  if (input.cloudUsers.length > 1) {
+    return {
+      status: 'CLOUD_RECORD_INCOMPLETE',
+      statusMessage: 'Multiple cloud student records match this email. Manual identity review is required; no record was changed.',
+    };
+  }
+
+  if (input.cloudUsers.length === 1) {
+    const cloudUser = input.cloudUsers[0];
+    const cloudUserId = String(cloudUser.id || cloudUser.userId || '').trim();
+    const profile = input.cloudProfile;
+    const complete =
+      cloudUserId.length > 0 &&
+      normalizeEmail(cloudUser.email) !== '' &&
+      String(cloudUser.role || '').toUpperCase() === 'STUDENT' &&
+      typeof cloudUser.password_hash === 'string' &&
+      cloudUser.password_hash.length > 0 &&
+      String(cloudUser.full_name || '').trim().length >= 2 &&
+      Boolean(profile) &&
+      String(profile?.user_id || '') === cloudUserId &&
+      Boolean(String(profile?.icai_registration_number || '').trim()) &&
+      ['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(String(profile?.ca_level || '').toUpperCase());
+
+    if (!complete) {
+      return {
+        status: 'CLOUD_RECORD_INCOMPLETE',
+        statusMessage: 'A cloud record exists, but its student/profile data is incomplete or inconsistent. Automatic recovery is blocked to protect existing account data.',
+      };
+    }
+    if (input.cloudTombstoned) {
+      return {
+        status: 'PREVIOUSLY_DELETED',
+        statusMessage: 'A deletion tombstone exists for this account. Recovery is blocked to prevent deleted-account resurrection.',
+      };
+    }
+    return {
+      status: 'CLOUD_RECORD_RECOVERABLE',
+      statusMessage: 'A complete student account already exists in Firestore and can be restored into the Admin account registry without creating a new identity.',
+    };
+  }
+
+  if (input.firebaseIdentityTombstoned) {
+    return {
+      status: 'PREVIOUSLY_DELETED',
+      statusMessage: 'This Firebase identity maps to a previously deleted platform account. It must not be recreated automatically.',
+    };
+  }
+  return {
+    status: 'FIREBASE_ONLY',
+    statusMessage: 'Google Authentication has this verified identity, but no platform user or cloud student record exists. The student must sign in again with this same Google account and accept the current legal documents before a platform profile can be created.',
+  };
+}
+
 function toCandidate(
   authUser: UserRecord,
   status: GoogleAccountRecoveryStatus,
@@ -144,76 +214,47 @@ export async function scanUnlinkedGoogleAccounts(options: {
       googleAccountsFound += 1;
       const email = normalizeEmail(authUser.email);
       const local = localByEmail.get(email);
+      const cloudMatches = cloudUsersByEmail.get(email) || [];
 
       if (local) {
-        if (String(local.role || '').toUpperCase() !== 'STUDENT') {
-          candidates.push(toCandidate(
-            authUser,
-            'ROLE_CONFLICT',
-            'A platform account already exists for this email with a non-student role. No automatic recovery is allowed.',
-          ));
+        const classification = classifyGoogleAccountRecoveryState({
+          localRole: local.role,
+          cloudUsers: cloudMatches,
+        });
+        if (classification.status) {
+          candidates.push(toCandidate(authUser, classification.status, classification.statusMessage));
         }
-        // A student already present in the platform registry is not an orphan.
         continue;
       }
 
-      const cloudMatches = cloudUsersByEmail.get(email) || [];
-      if (cloudMatches.length > 1) {
-        candidates.push(toCandidate(
-          authUser,
-          'CLOUD_RECORD_INCOMPLETE',
-          'Multiple cloud student records match this email. Manual identity review is required; no record was changed.',
-        ));
-        continue;
-      }
-
-      if (cloudMatches.length === 1) {
-        const cloudUser = cloudMatches[0];
-        const cloudUserId = String(cloudUser.id || cloudUser.userId || '').trim();
-        const cloudProfile = profilesByUserId.get(cloudUserId);
-        const isComplete =
-          cloudUserId.length > 0 &&
-          normalizeEmail(cloudUser.email) === email &&
-          String(cloudUser.role || '').toUpperCase() === 'STUDENT' &&
-          typeof cloudUser.password_hash === 'string' &&
-          cloudUser.password_hash.length > 0 &&
-          String(cloudUser.full_name || '').trim().length >= 2 &&
-          Boolean(cloudProfile) &&
-          String(cloudProfile?.user_id || '') === cloudUserId &&
-          Boolean(String(cloudProfile?.icai_registration_number || '').trim()) &&
-          ['FOUNDATION', 'INTERMEDIATE', 'FINAL'].includes(String(cloudProfile?.ca_level || '').toUpperCase());
-
-        if (!isComplete) {
-          candidates.push(toCandidate(
-            authUser,
-            'CLOUD_RECORD_INCOMPLETE',
-            'A cloud record exists, but its student/profile data is incomplete or inconsistent. Automatic recovery is blocked to protect existing account data.',
-          ));
-          continue;
+      if (cloudMatches.length > 0) {
+        const cloudUserId = String(cloudMatches[0]?.id || cloudMatches[0]?.userId || '').trim();
+        const cloudProfile = cloudUserId ? profilesByUserId.get(cloudUserId) : undefined;
+        const cloudTombstoned = cloudUserId
+          ? await isTombstoned('users', cloudUserId) || await isTombstoned('student_profiles', cloudUserId)
+          : false;
+        const classification = classifyGoogleAccountRecoveryState({
+          cloudUsers: cloudMatches,
+          cloudProfile,
+          cloudTombstoned,
+        });
+        if (classification.status) {
+          candidates.push(toCandidate(authUser, classification.status, classification.statusMessage));
         }
-
-        const tombstoned =
-          await isTombstoned('users', cloudUserId) ||
-          await isTombstoned('student_profiles', cloudUserId);
-        candidates.push(toCandidate(
-          authUser,
-          tombstoned ? 'PREVIOUSLY_DELETED' : 'CLOUD_RECORD_RECOVERABLE',
-          tombstoned
-            ? 'A deletion tombstone exists for this account. Recovery is blocked to prevent deleted-account resurrection.'
-            : 'A complete student account already exists in Firestore and can be restored into the Admin account registry without creating a new identity.',
-        ));
         continue;
       }
 
       const socialUserId = getSocialStudentId(authUser.uid);
-      const deleted = await isTombstoned('users', socialUserId) || await isTombstoned('student_profiles', socialUserId);
-      candidates.push(toCandidate(
-        authUser,
-        deleted ? 'PREVIOUSLY_DELETED' : 'FIREBASE_ONLY',
-        deleted
-          ? 'This Firebase identity maps to a previously deleted platform account. It must not be recreated automatically.'
-          : 'Google Authentication has this verified identity, but no platform user or cloud student record exists. The student must sign in again with this same Google account and accept the current legal documents before a platform profile can be created.',
-      ));
+      const identityTombstoned =
+        await isTombstoned('users', socialUserId) ||
+        await isTombstoned('student_profiles', socialUserId);
+      const classification = classifyGoogleAccountRecoveryState({
+        cloudUsers: [],
+        firebaseIdentityTombstoned: identityTombstoned,
+      });
+      if (classification.status) {
+        candidates.push(toCandidate(authUser, classification.status, classification.statusMessage));
+      }
     }
 
     if (!page.nextPageToken) {
