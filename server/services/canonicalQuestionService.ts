@@ -161,12 +161,11 @@ const ROMAN_QUESTION_PART_TOKENS = new Set([
 ]);
 
 /**
- * CA descriptive evaluation treats a parent part as the scoreable unit.
- * Roman-numbered children below a non-Roman parent (for example Q2(a)(i),
- * Q2(1)(ii), or compact Q2(a(ii))) are sections of that SAME question.
- * A first Roman child collapses its complete child branch into the parent;
- * later Roman levels are removed while preserving intervening Arabic parts.
- * A standalone Roman part such as Q2(iv) remains distinct.
+ * CA descriptive evaluation treats Roman-numbered children below a non-Roman
+ * parent as sections of that SAME scoreable question (Q2(a)(i) -> Q2(a)).
+ * Once a scoreable Roman parent exists (Q2(iv)), however, a nested Roman level
+ * remains distinct (Q2(iv)(iv)); the child is not flattened just because its
+ * label is Roman. This preserves unusual but valid source hierarchies.
  */
 export function normalizeCanonicalQuestionPartPath(parts: string[]): string[] {
   const path = (Array.isArray(parts) ? parts : [])
@@ -175,7 +174,11 @@ export function normalizeCanonicalQuestionPartPath(parts: string[]): string[] {
   if (path.length > 1 && !ROMAN_QUESTION_PART_TOKENS.has(path[0]) && ROMAN_QUESTION_PART_TOKENS.has(path[1])) {
     return [path[0]];
   }
-  return path.filter((part, index) => index === 0 || !ROMAN_QUESTION_PART_TOKENS.has(part));
+  return path.filter((part, index) =>
+    index === 0 ||
+    !ROMAN_QUESTION_PART_TOKENS.has(part) ||
+    ROMAN_QUESTION_PART_TOKENS.has(path[index - 1] || ''),
+  );
 }
 
 /**
