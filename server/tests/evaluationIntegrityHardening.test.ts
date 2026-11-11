@@ -160,7 +160,7 @@ console.log('\n--- TEST B: Malformed Question IDs ---');
 
   const parsed5 = parseCanonicalQuestionIdentity('1(a)(i)');
   assert(parsed5.canonicalId === 'Q1(a)', `TEST B.5: Roman child under lettered parent is consolidated to Q1(a) (got ${parsed5.canonicalId})`);
-  assert.deepEqual(parsed5.sourceSubQuestionPath, ['a', 'i'],
+  assert(JSON.stringify(parsed5.sourceSubQuestionPath) === JSON.stringify(['a', 'i']),
     'TEST B.5: Original Roman child identity remains available as source evidence.');
 
   const parsed6 = parseCanonicalQuestionIdentity('Q3.1.1');
@@ -172,7 +172,7 @@ console.log('\n--- TEST B: Malformed Question IDs ---');
   const parsed8 = parseCanonicalQuestionIdentity('Q5(iv(a)(i))');
   assert(parsed8.canonicalId === 'Q5(iv(a))',
     `TEST B.8: Roman child beneath an intervening lettered parent is consolidated locally (got ${parsed8.canonicalId})`);
-  assert.deepEqual(parsed8.sourceSubQuestionPath, ['iv', 'a', 'i'],
+  assert(JSON.stringify(parsed8.sourceSubQuestionPath) === JSON.stringify(['iv', 'a', 'i']),
     'TEST B.8: Intervening source hierarchy remains recoverable.');
 
 }
