@@ -3,25 +3,25 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --app-bg: #f1f5f9;
+  --app-bg: #f8fafc;
   --app-card-bg: #ffffff;
-  --app-card-border: #e2e8f0;
-  --app-text-primary: #0f172a;
-  --app-text-secondary: #334155;
+  --app-card-border: #e5eaf1;
+  --app-text-primary: #111827;
+  --app-text-secondary: #475569;
   --app-text-muted: #64748b;
-  --app-accent: #2563eb;
-  --app-accent-hover: #1d4ed8;
+  --app-accent: #1d4ed8;
+  --app-accent-hover: #1e40af;
 }
 
 html.dark {
-  --app-bg: #0b1120;
-  --app-card-bg: #1e293b;
-  --app-card-border: #334155;
+  --app-bg: #101827;
+  --app-card-bg: #172235;
+  --app-card-border: #29384d;
   --app-text-primary: #f8fafc;
   --app-text-secondary: #cbd5e1;
   --app-text-muted: #94a3b8;
-  --app-accent: #3b82f6;
-  --app-accent-hover: #60a5fa;
+  --app-accent: #60a5fa;
+  --app-accent-hover: #93c5fd;
 }
 
 /* Ensure smooth background transition */
@@ -118,159 +118,424 @@ textarea {
   animation: fadeIn 0.18s ease-out forwards;
 }
 
-/* Student workspace — locked dark glassmorphism visual system */
+/* ==========================================================================
+   CA Exam Checker AI — restrained, product-first visual system
+   Shared by public pages and every authenticated student workspace route.
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  min-width: 320px;
+  background: var(--app-bg);
+  color: var(--app-text-primary);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.18);
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--app-accent);
+  outline-offset: 2px;
+}
+
+.site-shell {
+  background: var(--app-bg);
+  color: var(--app-text-primary);
+}
+
+/* Remove decorative ambient glow and glass effects from the student workspace. */
 .student-glass-workspace {
   isolation: isolate;
-  background:
-    radial-gradient(ellipse at 78% -12%, rgba(91, 78, 255, 0.18), transparent 35%),
-    radial-gradient(ellipse at 12% 64%, rgba(25, 124, 255, 0.13), transparent 36%),
-    linear-gradient(135deg, #050b1b 0%, #08132d 46%, #090d24 100%);
+  background: #f8fafc;
+  color: #111827;
 }
+
 .student-glass-ambient {
-  position: fixed;
-  z-index: -1;
-  width: 36rem;
-  height: 36rem;
-  pointer-events: none;
-  border-radius: 9999px;
-  filter: blur(90px);
-  opacity: 0.22;
+  display: none !important;
 }
-.student-glass-ambient-one {
-  top: -19rem;
-  right: 4%;
-  background: radial-gradient(circle, #874dff 0%, #365cf4 34%, transparent 70%);
-}
-.student-glass-ambient-two {
-  bottom: -24rem;
-  left: 18%;
-  background: radial-gradient(circle, #0ea5e9 0%, #4338ca 38%, transparent 70%);
-}
+
 .student-glass-sidebar {
-  background: linear-gradient(180deg, rgba(7, 17, 43, 0.94), rgba(7, 14, 37, 0.84));
-  border-right: 1px solid rgba(148, 184, 255, 0.13);
-  box-shadow: 18px 0 70px rgba(1, 6, 24, 0.18);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  background: #ffffff;
+  border-right: 1px solid #e5eaf1;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
+
 .student-glass-topbar {
-  border-bottom: 1px solid rgba(148, 184, 255, 0.12);
-  background: rgba(5, 12, 31, 0.7);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  border-bottom: 1px solid #e5eaf1;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
+
 .student-glass-search {
-  background: rgba(13, 29, 64, 0.66);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  background: #f8fafc;
+  border-color: #dbe3ed;
+  color: #111827;
+  box-shadow: none;
 }
-.student-glass-page {
-  position: relative;
+
+.student-glass-search::placeholder {
+  color: #64748b;
 }
-.student-glass-workspace .student-glass-hero {
-  border: 1px solid rgba(94, 174, 255, 0.35) !important;
-  background:
-    radial-gradient(ellipse at 76% 0%, rgba(217, 70, 239, 0.19), transparent 38%),
-    radial-gradient(ellipse at 12% 100%, rgba(14, 165, 233, 0.19), transparent 42%),
-    linear-gradient(122deg, rgba(11, 31, 72, 0.9), rgba(15, 26, 60, 0.8) 60%, rgba(20, 22, 65, 0.72)) !important;
-  box-shadow: 0 18px 50px rgba(3, 9, 30, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-}
-.student-glass-workspace .student-glass-panel {
-  border: 1px solid rgba(142, 174, 255, 0.18) !important;
-  background: linear-gradient(145deg, rgba(15, 31, 67, 0.76), rgba(8, 19, 45, 0.72)) !important;
-  box-shadow: 0 14px 38px rgba(1, 7, 24, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-}
-.student-glass-workspace .student-glass-kpi {
-  position: relative;
-  overflow: hidden;
-  border-color: rgba(100, 160, 255, 0.24) !important;
-  background: linear-gradient(142deg, rgba(17, 51, 100, 0.55), rgba(10, 22, 52, 0.76)) !important;
-  box-shadow: 0 10px 32px rgba(1, 7, 24, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-}
-.student-glass-workspace .student-glass-kpi:nth-child(2) {
-  background: linear-gradient(142deg, rgba(9, 99, 91, 0.4), rgba(8, 25, 49, 0.78)) !important;
-  border-color: rgba(45, 212, 191, 0.22) !important;
-}
-.student-glass-workspace .student-glass-kpi:nth-child(3) {
-  background: linear-gradient(142deg, rgba(89, 50, 166, 0.39), rgba(10, 22, 52, 0.78)) !important;
-  border-color: rgba(167, 139, 250, 0.24) !important;
-}
-.student-glass-workspace .student-glass-kpi:nth-child(4) {
-  background: linear-gradient(142deg, rgba(147, 67, 28, 0.34), rgba(10, 22, 52, 0.78)) !important;
-  border-color: rgba(251, 146, 60, 0.23) !important;
-}
-.student-glass-workspace .bg-white {
-  background-color: rgba(11, 23, 51, 0.73);
-}
-.student-glass-workspace .bg-slate-50 {
-  background-color: rgba(14, 29, 61, 0.54);
-}
-.student-glass-workspace .border-slate-200 {
-  border-color: rgba(136, 169, 235, 0.18);
-}
-.student-glass-workspace .border-slate-100 {
-  border-color: rgba(136, 169, 235, 0.13);
-}
-.student-glass-workspace .text-slate-900 {
-  color: #f5f7ff;
-}
-.student-glass-workspace .text-slate-800 {
-  color: #e6edff;
-}
-.student-glass-workspace .text-slate-700 {
-  color: #d3def7;
-}
-.student-glass-workspace .text-slate-600 {
-  color: #b5c4e5;
-}
-.student-glass-workspace .text-slate-500 {
-  color: #91a4cb;
-}
-.student-glass-workspace .text-slate-400 {
-  color: #8296bd;
-}
-.student-glass-workspace .text-slate-300 {
-  color: #c8d6f5;
-}
-.student-glass-workspace .divide-slate-100 > :not([hidden]) ~ :not([hidden]) {
-  border-color: rgba(136, 169, 235, 0.13);
-}
-.student-glass-workspace table thead {
-  background: rgba(10, 23, 52, 0.88);
-}
-.student-glass-workspace table tbody tr:hover {
-  background-color: rgba(76, 110, 190, 0.08);
-}
+
+.student-glass-workspace .student-glass-hero,
+.student-glass-workspace .student-glass-panel,
+.student-glass-workspace .student-glass-kpi,
 .student-glass-workspace .student-glass-subject-card {
-  background: linear-gradient(145deg, rgba(17, 40, 79, 0.7), rgba(9, 19, 46, 0.72));
-  border: 1px solid rgba(116, 161, 247, 0.2);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
+  background: #ffffff !important;
+  border: 1px solid #e5eaf1 !important;
+  border-radius: 0.9rem;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
+
+.student-glass-workspace .student-glass-kpi:nth-child(n) {
+  background: #ffffff !important;
+  border-color: #e5eaf1 !important;
+}
+
+.student-glass-workspace .bg-white {
+  background-color: #ffffff;
+}
+
+.student-glass-workspace .bg-slate-50 {
+  background-color: #f8fafc;
+}
+
+.student-glass-workspace .bg-slate-100 {
+  background-color: #f1f5f9;
+}
+
+.student-glass-workspace .border-slate-200 {
+  border-color: #e5eaf1;
+}
+
+.student-glass-workspace .border-slate-100 {
+  border-color: #edf1f5;
+}
+
+.student-glass-workspace .text-slate-900,
+.student-glass-workspace .text-slate-800 {
+  color: #111827;
+}
+
+.student-glass-workspace .text-slate-700 {
+  color: #334155;
+}
+
+.student-glass-workspace .text-slate-600 {
+  color: #475569;
+}
+
+.student-glass-workspace .text-slate-500,
+.student-glass-workspace .text-slate-400 {
+  color: #64748b;
+}
+
+.student-glass-sidebar #student-portal-brand-block .text-white {
+  color: #10213f !important;
+}
+
+.student-glass-sidebar .text-slate-300,
+.student-glass-sidebar .text-blue-100,
+.student-glass-sidebar .text-blue-200 {
+  color: #475569 !important;
+}
+
+.student-glass-sidebar button[class*="bg-gradient-to-r"] {
+  background: #173b72 !important;
+  border-color: #173b72 !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.student-glass-sidebar button[class*="bg-gradient-to-r"] svg {
+  color: #ffffff !important;
+}
+
+.student-glass-sidebar div[class*="bg-gradient-to-br"] {
+  background: #f8fafc !important;
+  border: 1px solid #e5eaf1 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.student-glass-sidebar div[class*="bg-gradient-to-br"] .text-white {
+  color: #10213f !important;
+}
+
+.student-glass-sidebar div[class*="bg-gradient-to-br"] .text-blue-100,
+.student-glass-sidebar div[class*="bg-gradient-to-br"] .text-blue-200\/70 {
+  color: #475569 !important;
+}
+
+.student-glass-workspace table thead {
+  background: #f1f5f9;
+}
+
+.student-glass-workspace table tbody tr:hover {
+  background-color: #f8fafc;
+}
+
 .student-glass-workspace button,
 .student-glass-workspace a {
   -webkit-tap-highlight-color: transparent;
 }
+
+/* Dark mode is a true alternate theme, not a permanently dark student portal. */
+html.dark .student-glass-workspace,
+.student-glass-workspace.dark {
+  background: #101827;
+  color: #f8fafc;
+}
+
+html.dark .student-glass-sidebar,
+.student-glass-workspace.dark .student-glass-sidebar {
+  background: #141f31;
+  border-right-color: #29384d;
+}
+
+html.dark .student-glass-topbar,
+.student-glass-workspace.dark .student-glass-topbar {
+  background: rgba(20, 31, 49, 0.98);
+  border-bottom-color: #29384d;
+}
+
+html.dark .student-glass-search,
+.student-glass-workspace.dark .student-glass-search {
+  background: #0f1929;
+  border-color: #35445b;
+  color: #f8fafc;
+}
+
+html.dark .student-glass-search::placeholder,
+.student-glass-workspace.dark .student-glass-search::placeholder {
+  color: #94a3b8;
+}
+
+html.dark .student-glass-workspace .student-glass-hero,
+html.dark .student-glass-workspace .student-glass-panel,
+html.dark .student-glass-workspace .student-glass-kpi,
+html.dark .student-glass-workspace .student-glass-subject-card,
+.student-glass-workspace.dark .student-glass-hero,
+.student-glass-workspace.dark .student-glass-panel,
+.student-glass-workspace.dark .student-glass-kpi,
+.student-glass-workspace.dark .student-glass-subject-card {
+  background: #172235 !important;
+  border-color: #29384d !important;
+  box-shadow: none !important;
+}
+
+html.dark .student-glass-workspace .bg-white,
+.student-glass-workspace.dark .bg-white {
+  background-color: #172235;
+}
+
+html.dark .student-glass-workspace .bg-slate-50,
+.student-glass-workspace.dark .bg-slate-50 {
+  background-color: #1b293d;
+}
+
+html.dark .student-glass-workspace .bg-slate-100,
+.student-glass-workspace.dark .bg-slate-100 {
+  background-color: #223149;
+}
+
+html.dark .student-glass-workspace .border-slate-200,
+html.dark .student-glass-workspace .border-slate-100,
+.student-glass-workspace.dark .border-slate-200,
+.student-glass-workspace.dark .border-slate-100 {
+  border-color: #29384d;
+}
+
+html.dark .student-glass-workspace .text-slate-900,
+html.dark .student-glass-workspace .text-slate-800,
+.student-glass-workspace.dark .text-slate-900,
+.student-glass-workspace.dark .text-slate-800 {
+  color: #f8fafc;
+}
+
+html.dark .student-glass-workspace .text-slate-700,
+.student-glass-workspace.dark .text-slate-700 {
+  color: #dbe4f0;
+}
+
+html.dark .student-glass-workspace .text-slate-600,
+.student-glass-workspace.dark .text-slate-600 {
+  color: #c1cddd;
+}
+
+html.dark .student-glass-workspace .text-slate-500,
+html.dark .student-glass-workspace .text-slate-400,
+.student-glass-workspace.dark .text-slate-500,
+.student-glass-workspace.dark .text-slate-400 {
+  color: #93a4b9;
+}
+
+html.dark .student-glass-sidebar #student-portal-brand-block .text-white,
+.student-glass-workspace.dark .student-glass-sidebar #student-portal-brand-block .text-white {
+  color: #f8fafc !important;
+}
+
+html.dark .student-glass-sidebar .text-slate-300,
+html.dark .student-glass-sidebar .text-blue-100,
+html.dark .student-glass-sidebar .text-blue-200,
+.student-glass-workspace.dark .student-glass-sidebar .text-slate-300,
+.student-glass-workspace.dark .student-glass-sidebar .text-blue-100,
+.student-glass-workspace.dark .student-glass-sidebar .text-blue-200 {
+  color: #c1cddd !important;
+}
+
+html.dark .student-glass-sidebar div[class*="bg-gradient-to-br"],
+.student-glass-workspace.dark .student-glass-sidebar div[class*="bg-gradient-to-br"] {
+  background: #1b293d !important;
+  border-color: #35445b !important;
+}
+
+html.dark .student-glass-sidebar div[class*="bg-gradient-to-br"] .text-white,
+.student-glass-workspace.dark .student-glass-sidebar div[class*="bg-gradient-to-br"] .text-white {
+  color: #f8fafc !important;
+}
+
+html.dark .student-glass-workspace table thead,
+.student-glass-workspace.dark table thead {
+  background: #0f1929;
+}
+
+html.dark .student-glass-workspace table tbody tr:hover,
+.student-glass-workspace.dark table tbody tr:hover {
+  background-color: rgba(96, 165, 250, 0.07);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .student-glass-workspace .student-glass-panel,
   .student-glass-workspace .student-glass-kpi,
   .student-glass-workspace .student-glass-subject-card {
-    transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+    transition: border-color 150ms ease, background-color 150ms ease;
   }
   .student-glass-workspace .student-glass-kpi:hover,
   .student-glass-workspace .student-glass-subject-card:hover {
-    transform: translateY(-2px);
-    border-color: rgba(104, 190, 255, 0.4) !important;
-    box-shadow: 0 18px 42px rgba(1, 7, 24, 0.24), 0 0 24px rgba(37, 99, 235, 0.07);
-  }
-}
-@media (max-width: 640px) {
-  .student-glass-workspace .student-glass-hero {
-    border-radius: 1.25rem;
+    border-color: #c7d7ee !important;
   }
 }
 
+@media (max-width: 640px) {
+  .student-glass-workspace .student-glass-hero {
+    border-radius: 0.85rem;
+  }
+}
+
+
+/* Shared, high-contrast header controls in the student workspace. */
+.student-glass-topbar .text-white {
+  color: #10213f !important;
+}
+.student-glass-topbar .text-blue-100,
+.student-glass-topbar .text-blue-200\/70 {
+  color: #475569 !important;
+}
+.student-glass-topbar button {
+  border-color: #e5eaf1;
+  background-color: #ffffff;
+  color: #334155;
+  box-shadow: none;
+}
+.student-glass-topbar .bg-gradient-to-br {
+  background: #dbeafe !important;
+  border-color: #bfdbfe !important;
+  color: #173b72 !important;
+  box-shadow: none !important;
+}
+
+html.dark .student-glass-topbar .text-white,
+.student-glass-workspace.dark .student-glass-topbar .text-white {
+  color: #f8fafc !important;
+}
+html.dark .student-glass-topbar .text-blue-100,
+html.dark .student-glass-topbar .text-blue-200\/70,
+.student-glass-workspace.dark .student-glass-topbar .text-blue-100,
+.student-glass-workspace.dark .student-glass-topbar .text-blue-200\/70 {
+  color: #c1cddd !important;
+}
+html.dark .student-glass-topbar button,
+.student-glass-workspace.dark .student-glass-topbar button {
+  border-color: #35445b;
+  background-color: #1b293d;
+  color: #dbe4f0;
+}
+html.dark .student-glass-topbar .bg-gradient-to-br,
+.student-glass-workspace.dark .student-glass-topbar .bg-gradient-to-br {
+  background: #27446c !important;
+  border-color: #3b5f8c !important;
+  color: #eff6ff !important;
+}
+
+/* Back-office portals use the same restrained surfaces and type hierarchy. */
+.admin-shell,
+.institute-shell {
+  background: var(--app-bg);
+  color: var(--app-text-primary);
+}
+.admin-shell > aside,
+.institute-shell > aside {
+  background: #14213a;
+  border-color: #243751;
+  box-shadow: none;
+}
+.admin-shell > header,
+.institute-shell > header {
+  background: var(--app-card-bg);
+  border-color: var(--app-card-border);
+  box-shadow: none;
+}
+html.dark .admin-shell > aside,
+html.dark .institute-shell > aside {
+  background: #141f31;
+  border-color: #29384d;
+}
+
+/* Keep the MCQ admin's intentionally dark workspace, but remove decorative glow. */
+.mcq-admin-shell {
+  background: #101827;
+  color: #f8fafc;
+}
+.mcq-admin-shell [class*="bg-gradient-to-"] {
+  background-image: none !important;
+}
+.mcq-admin-shell .shadow-xl,
+.mcq-admin-shell .shadow-2xl,
+.mcq-admin-shell .shadow-lg {
+  box-shadow: none !important;
+}
