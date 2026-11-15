@@ -456,3 +456,86 @@ html.dark .student-glass-workspace table tbody tr:hover,
     border-radius: 0.85rem;
   }
 }
+
+
+/* Shared, high-contrast header controls in the student workspace. */
+.student-glass-topbar .text-white {
+  color: #10213f !important;
+}
+.student-glass-topbar .text-blue-100,
+.student-glass-topbar .text-blue-200\/70 {
+  color: #475569 !important;
+}
+.student-glass-topbar button {
+  border-color: #e5eaf1;
+  background-color: #ffffff;
+  color: #334155;
+  box-shadow: none;
+}
+.student-glass-topbar .bg-gradient-to-br {
+  background: #dbeafe !important;
+  border-color: #bfdbfe !important;
+  color: #173b72 !important;
+  box-shadow: none !important;
+}
+
+html.dark .student-glass-topbar .text-white,
+.student-glass-workspace.dark .student-glass-topbar .text-white {
+  color: #f8fafc !important;
+}
+html.dark .student-glass-topbar .text-blue-100,
+html.dark .student-glass-topbar .text-blue-200\/70,
+.student-glass-workspace.dark .student-glass-topbar .text-blue-100,
+.student-glass-workspace.dark .student-glass-topbar .text-blue-200\/70 {
+  color: #c1cddd !important;
+}
+html.dark .student-glass-topbar button,
+.student-glass-workspace.dark .student-glass-topbar button {
+  border-color: #35445b;
+  background-color: #1b293d;
+  color: #dbe4f0;
+}
+html.dark .student-glass-topbar .bg-gradient-to-br,
+.student-glass-workspace.dark .student-glass-topbar .bg-gradient-to-br {
+  background: #27446c !important;
+  border-color: #3b5f8c !important;
+  color: #eff6ff !important;
+}
+
+/* Back-office portals use the same restrained surfaces and type hierarchy. */
+.admin-shell,
+.institute-shell {
+  background: var(--app-bg);
+  color: var(--app-text-primary);
+}
+.admin-shell > aside,
+.institute-shell > aside {
+  background: #14213a;
+  border-color: #243751;
+  box-shadow: none;
+}
+.admin-shell > header,
+.institute-shell > header {
+  background: var(--app-card-bg);
+  border-color: var(--app-card-border);
+  box-shadow: none;
+}
+html.dark .admin-shell > aside,
+html.dark .institute-shell > aside {
+  background: #141f31;
+  border-color: #29384d;
+}
+
+/* Keep the MCQ admin's intentionally dark workspace, but remove decorative glow. */
+.mcq-admin-shell {
+  background: #101827;
+  color: #f8fafc;
+}
+.mcq-admin-shell [class*="bg-gradient-to-"] {
+  background-image: none !important;
+}
+.mcq-admin-shell .shadow-xl,
+.mcq-admin-shell .shadow-2xl,
+.mcq-admin-shell .shadow-lg {
+  box-shadow: none !important;
+}
