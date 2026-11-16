@@ -595,7 +595,7 @@ export const McqAdminPortal: React.FC = () => {
   }
 
   return (
-    <div className="mcq-admin-shell min-h-screen bg-[#101827] text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col">
       {/* 1. ADMIN HEADER */}
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
