@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { QuickResumeModal } from './components/auth/QuickResumeModal.js';
-import { ThemeProvider, useTheme } from './context/ThemeContext.js';
+import { ThemeProvider } from './context/ThemeContext.js';
 import { LegalConsentGate } from './components/auth/LegalConsentGate.js';
 import { PrivacyPolicyUpdateNotice } from './components/auth/PrivacyPolicyUpdateNotice.js';
 import { Navbar } from './components/layout/Navbar.js';
@@ -351,7 +351,6 @@ const StudentWorkspaceLayout: React.FC<{
   const location = useLocation();
   const navigate = useNavigate();
   const { user, profile, logout } = useAuth();
-  const { isDark } = useTheme();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
@@ -571,7 +570,7 @@ const StudentWorkspaceLayout: React.FC<{
   };
 
   return (
-    <div className={"student-glass-workspace " + (isDark ? "dark " : "") + "relative min-h-screen overflow-hidden text-slate-900 dark:text-slate-100"}>
+    <div className="student-glass-workspace dark relative min-h-screen overflow-hidden text-slate-100">
       <div className="student-glass-ambient student-glass-ambient-one" aria-hidden="true" />
       <div className="student-glass-ambient student-glass-ambient-two" aria-hidden="true" />
 
@@ -781,7 +780,7 @@ const PublicAndStudentLayout: React.FC<{
   }
 
   return (
-    <div className="site-shell min-h-screen flex flex-col bg-[var(--app-bg)] text-[var(--app-text-primary)] font-sans selection:bg-blue-600 selection:text-white transition-colors duration-150">
+    <div className="min-h-screen flex flex-col bg-[#f1f5f9] dark:bg-slate-950 text-[#1e293b] dark:text-slate-100 font-sans selection:bg-blue-600 selection:text-white transition-colors duration-150">
       <Navbar
         currentView={currentView}
         onNavigate={handleNavigate}
