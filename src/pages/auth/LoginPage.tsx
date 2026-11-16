@@ -226,40 +226,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   }
 
   return (
-    <div className="dark relative isolate min-h-[calc(100vh-5rem)] overflow-hidden bg-[#050a16] px-4 py-8 text-white sm:px-6 sm:py-10 lg:px-8">
-      <div aria-hidden="true" className="pointer-events-none absolute -left-40 -top-36 h-[28rem] w-[28rem] rounded-full bg-cyan-500/10 blur-3xl" />
-      <div aria-hidden="true" className="pointer-events-none absolute -bottom-40 -right-40 h-[30rem] w-[30rem] rounded-full bg-blue-600/10 blur-3xl" />
-      <div className="relative mx-auto grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-[30px] border border-white/10 bg-[#0c1526]/95 shadow-[0_32px_100px_rgba(0,0,0,.42)] backdrop-blur-2xl lg:grid-cols-[0.86fr_1.14fr]">
-        <aside className="relative hidden flex-col justify-between overflow-hidden border-b border-white/10 bg-gradient-to-br from-[#0d2030] via-[#0a1727] to-[#08111f] p-8 lg:flex lg:border-b-0 lg:border-r xl:p-10">
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-70 [background-image:radial-gradient(rgba(103,232,249,.14)_1px,transparent_1px)] [background-size:18px_18px] [mask-image:linear-gradient(to_bottom,black,transparent_85%)]" />
-          <div aria-hidden="true" className="pointer-events-none absolute -right-16 top-10 h-48 w-48 rounded-full bg-cyan-400/10 blur-3xl" />
-          <div className="relative">
-            <BrandLogo variant="full" size="md" onClick={onNavigateHome} />
-            <div className="mt-14 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/[0.06] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[.2em] text-cyan-200"><ShieldCheck className="h-3.5 w-3.5" /> Secure student workspace</div>
-            <h1 className="mt-5 max-w-md text-3xl font-black leading-tight tracking-tight xl:text-4xl">{mode === 'login' ? 'Welcome back to your CA workspace.' : 'Build your next CA success story.'}</h1>
-            <p className="mt-4 max-w-md text-sm leading-6 text-slate-400">{mode === 'login' ? 'Continue your preparation with clear evaluations, step-marking reports, and a workspace built around your CA journey.' : 'Create your account to unlock structured practice, examiner-style feedback, and your first two free answer-sheet checks.'}</p>
-          </div>
-          <div className="relative my-10 space-y-3">
-            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3.5"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-cyan-300/15 bg-cyan-300/[0.07] text-cyan-200"><FileCheck2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-100">ICAI-style step checking</p><p className="mt-1 text-xs text-slate-400">Working notes and method marks matter.</p></div></div>
-            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3.5"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/15 bg-emerald-300/[0.07] text-emerald-200"><CheckCircle2 className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-100">Clear, actionable feedback</p><p className="mt-1 text-xs text-slate-400">Understand where marks were gained or lost.</p></div></div>
-            <div className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3.5"><div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-blue-300/15 bg-blue-300/[0.07] text-blue-200"><Lock className="h-5 w-5" /></div><div><p className="text-sm font-bold text-slate-100">Secure account access</p><p className="mt-1 text-xs text-slate-400">Your account and study progress in one place.</p></div></div>
-          </div>
-          <div className="relative flex items-center justify-between border-t border-white/10 pt-5 text-[11px] text-slate-500"><span>CA EXAM CHECKER AI</span><span className="inline-flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> System online</span></div>
-        </aside>
-        <div className="min-w-0 p-5 sm:p-8 lg:p-9 xl:p-11">
+    <main className="min-h-[calc(100vh-5rem)] bg-slate-50 px-4 py-8 dark:bg-slate-950 sm:px-6 sm:py-10 lg:px-8">
+      <section className="mx-auto w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="p-5 sm:p-8">
+
         {/* Header with Brand Logo */}
         <div className="text-center mb-6">
-          <div className="mb-4 flex justify-center lg:hidden">
+          <div className="mb-4 flex justify-center">
             <BrandLogo variant="full" size="sm" onClick={onNavigateHome} />
           </div>
-          <div className="mx-auto mb-3 inline-flex w-fit items-center justify-center gap-1.5 rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-3 py-1.5 text-xs font-semibold text-cyan-200">
+          <div className="mx-auto mb-3 inline-flex w-fit items-center justify-center gap-1.5 rounded-full border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-3 py-1.5 text-xs font-semibold text-blue-700 dark:text-blue-300">
             <GraduationCap className="w-3.5 h-3.5" />
             <span>CA Student Portal</span>
           </div>
-          <h2 className="mt-1 text-2xl font-black tracking-tight text-white sm:text-3xl">
+          <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
             {mode === 'login' ? 'Sign in to Your Account' : 'Create Your Account'}
           </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-400">
+          <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
             {mode === 'login'
               ? 'Access your CA answer sheet evaluations and step-marking reports'
               : 'Complete your profile to receive up to 2 free evaluations when eligible'}
@@ -269,7 +252,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {/* Free Tier Callout on Register */}
         {mode === 'register' && (
           <div className="mb-5 flex items-center gap-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.06] p-3.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-200/20 bg-cyan-300/[0.12] text-[10px] font-black text-cyan-100">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-100 dark:bg-blue-900/50 text-[10px] font-black text-blue-800 dark:text-blue-200">
               FREE
             </div>
             <div className="text-xs">
@@ -305,8 +288,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         )}
 
         {/* Mode Switch Tabs */}
-        <div className="mb-6 flex rounded-xl border border-white/10 bg-white/[0.035] p-1">
-          <button type="button" onClick={() => { setMode('login'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'login' ? 'bg-cyan-300/[0.12] text-cyan-100 shadow-sm ring-1 ring-cyan-200/10' : 'text-slate-400 hover:text-white'}`}>Sign In</button>
+        <div className="mb-6 flex rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-1">
+          <button type="button" onClick={() => { setMode('login'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'login' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'}`}>Sign In</button>
           <button type="button" onClick={() => { setMode('register'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'register' ? 'bg-cyan-300/[0.12] text-cyan-100 shadow-sm ring-1 ring-cyan-200/10' : 'text-slate-400 hover:text-white'}`}>Create Account</button>
         </div>
 
@@ -621,7 +604,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         )}
 
         {/* Switch to Institute Portal */}
-        <div className="mt-6 border-t border-white/10 pt-5 text-center text-xs text-slate-400">
+        <div className="mt-6 border-t border-slate-200 dark:border-slate-700 pt-5 text-center text-xs text-slate-600 dark:text-slate-400">
           <span>Are you a CA Coaching Academy or Faculty? </span>
           <button
             id="btn-goto-institute-portal"
@@ -648,7 +631,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           and acknowledge our strict adherence to ICAI examination guidelines.
         </p>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 };
