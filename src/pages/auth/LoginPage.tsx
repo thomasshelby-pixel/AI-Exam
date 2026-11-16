@@ -251,12 +251,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({
 
         {/* Free Tier Callout on Register */}
         {mode === 'register' && (
-          <div className="mb-5 flex items-center gap-3 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.06] p-3.5">
+          <div className="mb-5 flex items-center gap-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 p-3.5">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-100 dark:bg-blue-900/50 text-[10px] font-black text-blue-800 dark:text-blue-200">
               FREE
             </div>
             <div className="text-xs">
-              <p className="font-bold text-cyan-100">Up to 2 Free Answer Sheet Checks when eligible</p>
+              <p className="font-bold text-blue-800 dark:text-blue-200">Up to 2 Free Answer Sheet Checks when eligible</p>
               <p className="text-slate-600 dark:text-slate-300">Full paper evaluation with ICAI step marking & working notes check.</p>
             </div>
           </div>
@@ -290,7 +290,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         {/* Mode Switch Tabs */}
         <div className="mb-6 flex rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-1">
           <button type="button" onClick={() => { setMode('login'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'login' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'}`}>Sign In</button>
-          <button type="button" onClick={() => { setMode('register'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'register' ? 'bg-cyan-300/[0.12] text-cyan-100 shadow-sm ring-1 ring-cyan-200/10' : 'text-slate-400 hover:text-white'}`}>Create Account</button>
+          <button type="button" onClick={() => { setMode('register'); setErrorMessage(''); }} className={`flex-1 rounded-lg px-4 py-2.5 text-sm font-bold transition ${mode === 'register' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'}`}>Create Account</button>
         </div>
 
                 {/* Login Form */}
