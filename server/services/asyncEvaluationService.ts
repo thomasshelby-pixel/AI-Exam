@@ -6,6 +6,7 @@ import { db, persistEvaluationRunPackageAtomic } from '../db.js';
 import { evaluateCAAnswerSheet } from '../gemini.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
 import {
+  countCompletedQuestionEvaluations,
   generateCheckedCopyPdf,
   generateDetailedReportPdf,
   buildStructuredAnnotations,
@@ -1102,7 +1103,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       'FINALIZING_REPORT',
       'FINALIZING_REPORT',
       85,
-      'Pre-generating verified Checked Copy and Detailed Diagnostic Report...'
+      'Verifying question-level evaluation before preparing student artifacts...'
     );
 
     const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -1110,10 +1111,11 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    let originalPageCount = 1;
+    let originalPageCount = 0;
     let checkedCopyStatus = 'PENDING';
     let reportStatus = 'PENDING';
     let structuredAnnotationsJson = '[]';
+    const completedQuestionEvaluationCount = countCompletedQuestionEvaluations(evaluationResult);
 
     const evalIdentityRow = db.prepare(`
       SELECT e.display_id, p.student_code, p.icai_registration_number, u.full_name
@@ -1126,101 +1128,123 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const resolvedStudentCode = evalIdentityRow?.student_code || undefined;
     const resolvedRegNo = evalIdentityRow?.icai_registration_number || undefined;
 
-    // 5A. Generate Checked Copy PDF
+    // Determine the actual source page count independently of evaluation status.
+    // A diagnostic-only result must still retain the correct original page count
+    // for the admin review screen, but it must not create a "Checked Copy".
     try {
       const origDoc = await PDFDocument.load(job.pdfBuf, { ignoreEncryption: true });
       originalPageCount = origDoc.getPageCount();
-
-      const meta = {
-        id: evaluationId,
-        modelTestNumber: job.modelTestNumber,
-        displayId: resolvedDisplayId,
-        studentCode: resolvedStudentCode,
-        icaiRegistrationNumber: resolvedRegNo,
-        studentName: evalIdentityRow?.full_name || job.studentName,
-        level: job.level,
-        subjectName: job.subjectName,
-        paper: job.paper || 'Paper 1',
-        attempt: job.attempt || 'May 2026',
-        materialType: job.materialType,
-        mtpSeries: job.mtpSeries,
-        checkingMode: job.checkingMode,
-        totalMarks: evaluationResult.totalMarks,
-        maximumMarks: evaluationResult.maximumMarks,
-        percentage: evaluationResult.percentage,
-        grade: evaluationResult.grade,
-        createdAt: new Date().toISOString(),
-      };
-
-      const structuredAnn = buildStructuredAnnotations(meta, evaluationResult, originalPageCount);
-      structuredAnnotationsJson = JSON.stringify(structuredAnn);
-
-      const checkedPdfBuf = await generateCheckedCopyPdf(meta, evaluationResult, job.pdfBuf);
-      const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
-      fs.writeFileSync(checkedFilePath, checkedPdfBuf);
-
-      // Persist checked copy to Cloud Storage / persistent cache
-      await savePersistentFile(
-        `${evaluationId}_checked_copy`,
-        `${evaluationId}_checked_copy.pdf`,
-        'application/pdf',
-        checkedPdfBuf,
-        'EVALUATION_CHECKED_COPY',
-        {
-          ownerUserId: studentId,
-          evaluationId,
-          instituteId: resolvedSponsoringInstituteId || null,
-        }
-      );
-      checkedCopyStatus = 'READY';
-    } catch (annErr) {
-      console.warn('[AsyncEval] Error generating checked copy PDF:', annErr);
+      if (!Number.isInteger(originalPageCount) || originalPageCount <= 0) {
+        throw new Error('Original answer sheet PDF contains no physical pages.');
+      }
+    } catch (pdfErr) {
+      console.warn('[AsyncEval] Could not establish original PDF page count:', pdfErr);
+      originalPageCount = 0;
     }
 
-    // 5B. Generate Detailed Report PDF
-    try {
-      const reportMeta = {
-        id: evaluationId,
-        displayId: resolvedDisplayId,
-        studentCode: resolvedStudentCode,
-        icaiRegistrationNumber: resolvedRegNo,
-        studentName: evalIdentityRow?.full_name || job.studentName || 'CA Student',
-        level: job.level,
-        subjectName: job.subjectName,
-        paper: job.paper || 'Paper 1',
-        attempt: job.attempt || 'May 2026',
-        materialType: job.materialType,
-        mtpSeries: job.mtpSeries,
-        checkingMode: job.checkingMode,
-        totalMarks: evaluationResult.totalMarks,
-        maximumMarks: evaluationResult.maximumMarks,
-        percentage: evaluationResult.percentage,
-        grade: evaluationResult.grade,
-        createdAt: new Date().toISOString(),
-        evaluationSource: requestedEvalSource,
-        instituteName: resolvedInstituteName || undefined,
-      };
-
-      const reportPdfBuf = await generateDetailedReportPdf(reportMeta, evaluationResult);
-      const reportFilePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
-      fs.writeFileSync(reportFilePath, reportPdfBuf);
-
-      // Persist detailed report to Cloud Storage / persistent cache
-      await savePersistentFile(
-        `${evaluationId}_report`,
-        `Evaluation_Report_${evaluationId}.pdf`,
-        'application/pdf',
-        reportPdfBuf,
-        'EVALUATION_REPORT',
-        {
-          ownerUserId: studentId,
-          evaluationId,
-          instituteId: resolvedSponsoringInstituteId || null,
-        }
+    if (completedQuestionEvaluationCount <= 0) {
+      console.warn(
+        `[AsyncEval] Withholding Checked Copy and Detailed Report for ${evaluationId}: no question-level academic evaluation completed. The result remains diagnostic-only and NEEDS_REVIEW.`
       );
-      reportStatus = 'READY';
-    } catch (reportErr) {
-      console.warn('[AsyncEval] Error pre-generating detailed report PDF:', reportErr);
+    } else if (originalPageCount <= 0) {
+      console.warn(
+        `[AsyncEval] Withholding Checked Copy and Detailed Report for ${evaluationId}: original PDF page count could not be verified.`
+      );
+    } else {
+      // 5A. Generate Checked Copy PDF only when at least one question has
+      // actually completed academic evaluation. A genuine evaluated 0/maximum
+      // answer counts; a technical failure or empty review result does not.
+      try {
+        const meta = {
+          id: evaluationId,
+          modelTestNumber: job.modelTestNumber,
+          displayId: resolvedDisplayId,
+          studentCode: resolvedStudentCode,
+          icaiRegistrationNumber: resolvedRegNo,
+          studentName: evalIdentityRow?.full_name || job.studentName,
+          level: job.level,
+          subjectName: job.subjectName,
+          paper: job.paper || 'Paper 1',
+          attempt: job.attempt || 'May 2026',
+          materialType: job.materialType,
+          mtpSeries: job.mtpSeries,
+          checkingMode: job.checkingMode,
+          totalMarks: evaluationResult.totalMarks,
+          maximumMarks: evaluationResult.maximumMarks,
+          percentage: evaluationResult.percentage,
+          grade: evaluationResult.grade,
+          createdAt: new Date().toISOString(),
+        };
+
+        const structuredAnn = buildStructuredAnnotations(meta, evaluationResult, originalPageCount);
+        structuredAnnotationsJson = JSON.stringify(structuredAnn);
+
+        const checkedPdfBuf = await generateCheckedCopyPdf(meta, evaluationResult, job.pdfBuf);
+        const checkedFilePath = path.join(uploadsDir, `${evaluationId}_checked_copy.pdf`);
+        fs.writeFileSync(checkedFilePath, checkedPdfBuf);
+
+        await savePersistentFile(
+          `${evaluationId}_checked_copy`,
+          `${evaluationId}_checked_copy.pdf`,
+          'application/pdf',
+          checkedPdfBuf,
+          'EVALUATION_CHECKED_COPY',
+          {
+            ownerUserId: studentId,
+            evaluationId,
+            instituteId: resolvedSponsoringInstituteId || null,
+          }
+        );
+        checkedCopyStatus = 'READY';
+      } catch (annErr) {
+        console.warn('[AsyncEval] Error generating checked copy PDF:', annErr);
+      }
+
+      // 5B. Detailed reports are also withheld when no question-level academic
+      // evaluation exists; a 0/100 diagnostic placeholder is not a score report.
+      try {
+        const reportMeta = {
+          id: evaluationId,
+          displayId: resolvedDisplayId,
+          studentCode: resolvedStudentCode,
+          icaiRegistrationNumber: resolvedRegNo,
+          studentName: evalIdentityRow?.full_name || job.studentName || 'CA Student',
+          level: job.level,
+          subjectName: job.subjectName,
+          paper: job.paper || 'Paper 1',
+          attempt: job.attempt || 'May 2026',
+          materialType: job.materialType,
+          mtpSeries: job.mtpSeries,
+          checkingMode: job.checkingMode,
+          totalMarks: evaluationResult.totalMarks,
+          maximumMarks: evaluationResult.maximumMarks,
+          percentage: evaluationResult.percentage,
+          grade: evaluationResult.grade,
+          createdAt: new Date().toISOString(),
+          evaluationSource: requestedEvalSource,
+          instituteName: resolvedInstituteName || undefined,
+        };
+
+        const reportPdfBuf = await generateDetailedReportPdf(reportMeta, evaluationResult);
+        const reportFilePath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
+        fs.writeFileSync(reportFilePath, reportPdfBuf);
+
+        await savePersistentFile(
+          `${evaluationId}_report`,
+          `Evaluation_Report_${evaluationId}.pdf`,
+          'application/pdf',
+          reportPdfBuf,
+          'EVALUATION_REPORT',
+          {
+            ownerUserId: studentId,
+            evaluationId,
+            instituteId: resolvedSponsoringInstituteId || null,
+          }
+        );
+        reportStatus = 'READY';
+      } catch (reportErr) {
+        console.warn('[AsyncEval] Error pre-generating detailed report PDF:', reportErr);
+      }
     }
 
     // MTP Series Authoritative Integrity Gate (Requirement: verify series matching before COMPLETED)
@@ -1349,6 +1373,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const runPackage = evaluationResult.evaluationRunPackage;
     const renderManifest = runPackage?.renderManifest;
     const pageAudit = runPackage?.pageCoverageAudit || [];
+    const hasCompletedQuestionEvaluation = completedQuestionEvaluationCount > 0;
     const pageAnalysisAuditPassed = Boolean(
       pageAudit.length === originalPageCount &&
       Array.from({ length: originalPageCount }, (_, index) => index + 1).every((pageNumber) => {
@@ -1378,6 +1403,9 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     // analysis disposition for every source page, (2) a saved checked copy, and
     // (3) physical render proof for every original page and attempted question.
     const renderCompletenessErrors = [
+      ...(!hasCompletedQuestionEvaluation
+        ? ['NO_QUESTION_LEVEL_EVALUATIONS: No question received a completed academic evaluation; score publication, Checked Copy and Detailed Report generation are withheld.']
+        : []),
       ...(!pageAnalysisAuditPassed
         ? [`PAGE_ANALYSIS_COVERAGE_INCOMPLETE: ${pageAudit.filter((page) => page.analysisCompleted === true && !page.hasUnresolvedContent).length}/${originalPageCount} source pages have a complete, resolved analysis audit.`]
         : []),
@@ -1401,6 +1429,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const evaluationValidationPassed = isEvaluationValidationSafeForCertification(evaluationResult.validationStatus);
     const criticalIntegrityPassed =
       hasValidQuestions &&
+      hasCompletedQuestionEvaluation &&
       isMathConsistent &&
       evaluationValidationPassed &&
       supervisorApproved &&
