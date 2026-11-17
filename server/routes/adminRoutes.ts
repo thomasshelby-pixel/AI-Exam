@@ -5200,7 +5200,9 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       ? `aud_${crypto.randomBytes(8).toString('hex')}`
       : null;
 
-    const claimTransaction = db.transaction(() => {
+    let claimed = false;
+    db.exec('BEGIN IMMEDIATE;');
+    try {
       const claim = db.prepare(`
         UPDATE evaluations
         SET status = CASE WHEN ? = 1 THEN 'QUEUED' ELSE status END,
@@ -5260,27 +5262,29 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         evaluationId,
         reprocessNeedsReview ? 1 : 0,
       );
-      if (claim.changes !== 1) return false;
-
-      if (reprocessNeedsReview && reprocessAuditId && previousSnapshot) {
-        db.prepare(`
-          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-          VALUES (?, ?, 'EVALUATION_REPROCESS_STARTED', 'EVALUATION', ?, ?)
-        `).run(
-          reprocessAuditId,
-          String(req.user?.id || evaluation.student_id),
-          evaluationId,
-          JSON.stringify({
-            mode: 'ADMIN_REPROCESS_NEEDS_REVIEW',
-            reason: 'Super Admin requested a fresh evaluation of the original answer-sheet submission.',
-            previousSnapshot,
-          }),
-        );
+      if (claim.changes === 1) {
+        if (reprocessNeedsReview && reprocessAuditId && previousSnapshot) {
+          db.prepare(`
+            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+            VALUES (?, ?, 'EVALUATION_REPROCESS_STARTED', 'EVALUATION', ?, ?)
+          `).run(
+            reprocessAuditId,
+            String(req.user?.id || evaluation.student_id),
+            evaluationId,
+            JSON.stringify({
+              mode: 'ADMIN_REPROCESS_NEEDS_REVIEW',
+              reason: 'Super Admin requested a fresh evaluation of the original answer-sheet submission.',
+              previousSnapshot,
+            }),
+          );
+        }
+        claimed = true;
       }
-      return true;
-    });
-
-    const claimed = claimTransaction();
+      db.exec('COMMIT;');
+    } catch (claimError) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      throw claimError;
+    }
     if (!claimed) {
       return res.status(409).json({
         error: 'Another recovery or reprocess request has claimed this evaluation. Wait briefly and refresh its status.',
