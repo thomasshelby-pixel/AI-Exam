@@ -8,7 +8,7 @@ export function countSqlParameterPlaceholders(sql: string): number {
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const withoutQuotedContent = withoutComments
     .replace(/'(?:''|[^'])*'/g, "''")
-    .replace(/"(?:\"\\"|[^"])*"/g, '""');
+    .replace(/"(?:[^"]|"")*"/g, '""');
   return (withoutQuotedContent.match(/\?/g) || []).length;
 }
 
