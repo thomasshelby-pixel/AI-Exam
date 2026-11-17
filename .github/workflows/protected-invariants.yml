@@ -241,6 +241,10 @@ jobs:
       - name: Admin failed-evaluation credit reconciliation regression
         run: node_modules/.bin/tsx server/tests/adminRecoveryCreditReconciliation.test.ts
 
+      - name: Admin NEEDS_REVIEW reprocess preflight regression
+        run: node_modules/.bin/tsx server/tests/adminNeedsReviewReprocess.test.ts
+
+
       - name: Historical evaluation material recovery regression
         run: node_modules/.bin/tsx server/tests/evaluationMaterialRecovery.test.ts
 

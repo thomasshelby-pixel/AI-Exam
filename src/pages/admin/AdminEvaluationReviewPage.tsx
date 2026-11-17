@@ -182,6 +182,29 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
     }
   };
 
+  const runAdminReprocess = async () => {
+    const confirmed = window.confirm(
+      'Reprocess this NEEDS_REVIEW evaluation using the original answer sheet and its exact linked reference material? The previous result will be preserved in the admin audit log. No additional personal credit will be deducted. Reprocess only after the linked Question Paper / Suggested Answers are confirmed correct; this action does not repair incorrect reference material.'
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    setActionError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/recover`, {
+        method: 'POST',
+        body: JSON.stringify({ mode: 'REPROCESS_NEEDS_REVIEW' }),
+      });
+      setSuccessMessage(result.message || 'Admin reprocess queued successfully.');
+      await fetchReviewDetails();
+    } catch (err: any) {
+      setActionError(err.message || 'Admin reprocess could not safely start. The existing review result has been preserved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+
   const fetchReviewDetails = async () => {
     try {
       setLoading(true);
@@ -247,7 +270,10 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
 
   const { evaluation, resultJson, activeVersion, versions, artifacts } = data;
   const questions = resultJson?.questions || [];
-  const isUnscoredReview = evaluation.status === 'NEEDS_REVIEW' && questions.length === 0;
+  const isUnscoredReview = (
+    evaluation.status === 'NEEDS_REVIEW' ||
+    (['QUEUED', 'PROCESSING'].includes(String(evaluation.status || '').toUpperCase()) && evaluation.grade === 'PENDING_REPROCESS')
+  ) && questions.length === 0;
   const reviewDiagnostics = Array.isArray(resultJson?.validationErrors)
     ? resultJson.validationErrors.filter((message): message is string => typeof message === 'string' && message.trim().length > 0)
     : [];
@@ -424,7 +450,9 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
                 className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                   evaluation.status === 'NEEDS_REVIEW'
                     ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                    : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : ['QUEUED', 'PROCESSING'].includes(String(evaluation.status || '').toUpperCase())
+                      ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                 }`}
               >
                 {evaluation.status}
@@ -440,6 +468,17 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {evaluation.status === 'NEEDS_REVIEW' && (
+            <button
+              onClick={runAdminReprocess}
+              disabled={saving}
+              className="px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 text-blue-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              title="Start a fresh AI evaluation using the original answer sheet and exact linked reference material"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${saving ? 'animate-spin' : ''}`} />
+              {saving ? 'Reprocessing...' : 'Reprocess Evaluation'}
+            </button>
+          )}
           {['QUEUED', 'PROCESSING', 'FAILED', 'PERSISTENCE_FAILED'].includes(String(evaluation.status || '').toUpperCase()) && (
             <button
               onClick={runRecoveryPreflight}
@@ -493,6 +532,19 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           <button onClick={() => setSuccessMessage(null)} className="text-emerald-600 hover:text-emerald-800">
             <X className="w-3.5 h-3.5" />
           </button>
+        </div>
+      )}
+
+      {evaluation.grade === 'PENDING_REPROCESS' &&
+        ['QUEUED', 'PROCESSING'].includes(String(evaluation.status || '').toUpperCase()) && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-blue-900 text-xs flex items-start gap-3">
+          <RotateCcw className="w-4 h-4 text-blue-600 shrink-0 mt-0.5 animate-spin" />
+          <div className="space-y-1">
+            <p className="font-bold text-blue-950">Admin reprocess in progress</p>
+            <p className="text-blue-800 leading-relaxed">
+              The previous review result has been archived in the admin audit log. A fresh evaluation is being run from the original answer sheet and its exact linked reference material. No additional personal credit is being deducted.
+            </p>
+          </div>
         </div>
       )}
 

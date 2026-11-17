@@ -4906,8 +4906,9 @@ router.get('/evaluations', async (req: AuthRequest, res: Response) => {
  */
 router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) => {
   const requestedId = String(req.params.id || '').trim();
+  const reprocessNeedsReview = String(req.body?.mode || '').trim().toUpperCase() === 'REPROCESS_NEEDS_REVIEW';
   try {
-    const evaluation = db.prepare(
+    let evaluation = db.prepare(
       'SELECT * FROM evaluations WHERE id = ? OR display_id = ? LIMIT 1'
     ).get(requestedId, requestedId) as any;
 
@@ -4916,7 +4917,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     const evaluationId = String(evaluation.id);
-    const canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
+    let canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
     if (String(canonicalStatus.status || '').toUpperCase() === 'REJECTED') {
       await repairEvaluationStatus(evaluation);
       return res.status(409).json({
@@ -4930,12 +4931,27 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
 
     if (String(canonicalStatus.status || '').toUpperCase() === 'NEEDS_REVIEW') {
       await repairEvaluationStatus(evaluation);
+      evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any || evaluation;
+      canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
+    }
+
+    const isNeedsReview = String(canonicalStatus.status || '').toUpperCase() === 'NEEDS_REVIEW';
+    if (isNeedsReview && !reprocessNeedsReview) {
+      await repairEvaluationStatus(evaluation);
       return res.status(409).json({
-        error: 'This evaluation is preserved for academic review. It is not a document rejection and should be reviewed before any retry.',
+        error: 'This evaluation is preserved for academic review. Use the explicit Admin Reprocess action to start a fresh AI run.',
         code: 'EVALUATION_NEEDS_REVIEW',
         evaluationId,
         status: 'NEEDS_REVIEW',
         reviewReason: canonicalStatus.error_message || evaluation.error_message || evaluation.rejection_reason || null,
+      });
+    }
+    if (reprocessNeedsReview && !isNeedsReview) {
+      return res.status(409).json({
+        error: 'Admin reprocessing is available only for evaluations currently in NEEDS_REVIEW.',
+        code: 'EVALUATION_NOT_IN_REVIEW',
+        evaluationId,
+        status: String(canonicalStatus.status || evaluation.status || '').toUpperCase(),
       });
     }
 
@@ -4945,6 +4961,39 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         code: 'EVALUATION_ALREADY_ACTIVE',
         evaluationId,
       });
+    }
+
+    // App Hosting may have multiple instances. A process-local activeJobs check
+    // alone cannot protect against a live worker lease held by another instance.
+    const usesDurableProductionQueue =
+      process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE || process.env.K_REVISION);
+    if (reprocessNeedsReview && usesDurableProductionQueue) {
+      let durableQueueRecord: any = null;
+      try {
+        durableQueueRecord = await getFirestoreDoc<any>('evaluation_jobs', evaluationId, { failOnError: true });
+      } catch (queueReadError) {
+        console.error('[AdminReprocess] Could not verify the durable worker lease:', evaluationId, queueReadError);
+        return res.status(503).json({
+          error: 'The active evaluation queue could not be verified. No reprocess was started; refresh and retry after queue status is available.',
+          code: 'DURABLE_QUEUE_STATUS_UNAVAILABLE',
+          evaluationId,
+        });
+      }
+
+      const durableStatus = String(durableQueueRecord?.status || '').trim().toUpperCase();
+      const leaseExpiresAt = Date.parse(String(durableQueueRecord?.leaseExpiresAt || ''));
+      const durableJobIsActive =
+        durableStatus === 'QUEUED' ||
+        (durableStatus === 'RUNNING' && Number.isFinite(leaseExpiresAt) && leaseExpiresAt > Date.now());
+      if (durableJobIsActive) {
+        return res.status(409).json({
+          error: 'A durable worker already owns this evaluation. Wait for its lease to finish before reprocessing.',
+          code: 'EVALUATION_DURABLE_JOB_ACTIVE',
+          evaluationId,
+          queueStatus: durableStatus,
+          leaseExpiresAt: durableQueueRecord.leaseExpiresAt || null,
+        });
+      }
     }
 
     const status = String(evaluation.status || '').toUpperCase();
@@ -4963,9 +5012,11 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         evaluationId,
       });
     }
-    if (status !== 'QUEUED' && status !== 'PROCESSING') {
+    if (status !== 'QUEUED' && status !== 'PROCESSING' && !(reprocessNeedsReview && status === 'NEEDS_REVIEW')) {
       return res.status(409).json({
-        error: 'Recovery is only available for stalled QUEUED or PROCESSING evaluations.',
+        error: reprocessNeedsReview
+          ? 'The evaluation status changed before the reprocess request could be accepted.'
+          : 'Recovery is only available for stalled QUEUED or PROCESSING evaluations.',
         code: 'EVALUATION_STATUS_NOT_RECOVERABLE',
         evaluationId,
         status,
@@ -4988,7 +5039,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
 
     const hasResult = Boolean(result && Array.isArray(result.questions) && result.questions.length > 0);
     const hasDurablePackage = Boolean(runPackage && runPackage.scoreLedger && runPackage.reconciliation);
-    if (hasResult || hasDurablePackage) {
+    if ((hasResult || hasDurablePackage) && !reprocessNeedsReview) {
       return res.status(409).json({
         error: 'A saved result or durable run package already exists. This recovery action will not rerun AI scoring or overwrite a potentially valid result; artifact finalization needs separate handling.',
         code: 'SAVED_RESULT_NEEDS_ARTIFACT_FINALIZATION',
@@ -5153,27 +5204,147 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     const sponsoringInstituteId = evaluation.sponsoring_institute_id || evaluation.institute_id || material.institute_id || null;
 
     // Durable compare-and-set claim prevents two admins from launching duplicate retries.
-    // A crashed claim can be reclaimed after two minutes. Failed statuses are blocked above.
-    const claim = db.prepare(`
-      UPDATE evaluations
-      SET progress_stage = 'RECOVERY_CLAIMED',
-          progress_message = 'Admin recovery claimed; validating retry inputs',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-        AND status IN ('QUEUED', 'PROCESSING')
-        AND (
-          COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
-          OR updated_at < datetime('now', '-2 minutes')
-          OR updated_at IS NULL
-        )
-    `).run(evaluationId);
+    // For NEEDS_REVIEW, archive the previous result in the admin audit log before
+    // clearing the active score and moving the same evaluation back to QUEUED.
+    const previousSnapshot = reprocessNeedsReview ? {
+      snapshotVersion: 1,
+      previousStatus: String(evaluation.status || '').toUpperCase(),
+      previousCertificationStatus: evaluation.certification_status || null,
+      previousDownloadsUnlocked: Number(evaluation.downloads_unlocked || 0),
+      previousErrorMessage: evaluation.error_message || null,
+      previousProgressMessage: evaluation.progress_message || null,
+      previousTotalMarks: evaluation.total_marks ?? null,
+      previousMaximumMarks: evaluation.maximum_marks ?? null,
+      previousPercentage: evaluation.percentage ?? null,
+      previousGrade: evaluation.grade || null,
+      previousResultJson: evaluation.result_json || null,
+      previousAnnotationsJson: evaluation.annotations_json || null,
+      previousNormalizedPackageJson: evaluation.normalized_package_json || null,
+      previousQuestionSourcesJson: evaluation.question_sources_json || null,
+      previousEvaluationRunPackageId: evaluation.evaluation_run_package_id || null,
+      previousScoreLedgerTotal: evaluation.score_ledger_total ?? null,
+      previousOriginalPageCount: evaluation.original_page_count ?? null,
+      previousCheckedCopyPageCount: evaluation.checked_copy_page_count ?? null,
+      previousCheckedCopyStatus: evaluation.checked_copy_status || null,
+      previousReportStatus: evaluation.report_status || null,
+      previousCompletedAt: evaluation.completed_at || null,
+      previousResultSha256: evaluation.result_json
+        ? crypto.createHash('sha256').update(String(evaluation.result_json), 'utf8').digest('hex')
+        : null,
+      reprocessRequestedAt: new Date().toISOString(),
+      adminId: String(req.user?.id || ''),
+      adminEmail: String(req.user?.email || ''),
+    } : null;
+    const reprocessAuditId = reprocessNeedsReview
+      ? `aud_${crypto.randomBytes(8).toString('hex')}`
+      : null;
 
-    if (claim.changes !== 1) {
+    let claimed = false;
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      const claim = db.prepare(`
+        UPDATE evaluations
+        SET status = CASE WHEN ? = 1 THEN 'QUEUED' ELSE status END,
+            certification_status = CASE WHEN ? = 1 THEN 'REVIEW_REQUIRED' ELSE certification_status END,
+            downloads_unlocked = 0,
+            progress_stage = 'RECOVERY_CLAIMED',
+            progress_percentage = CASE WHEN ? = 1 THEN 5 ELSE progress_percentage END,
+            progress_message = CASE WHEN ? = 1
+              THEN 'Admin reprocess claimed; preparing a fresh evaluation from the original submission'
+              ELSE 'Admin recovery claimed; validating retry inputs' END,
+            error_message = CASE WHEN ? = 1 THEN NULL ELSE error_message END,
+            rejection_reason = NULL,
+            total_marks = CASE WHEN ? = 1 THEN 0 ELSE total_marks END,
+            percentage = CASE WHEN ? = 1 THEN 0 ELSE percentage END,
+            grade = CASE WHEN ? = 1 THEN 'PENDING_REPROCESS' ELSE grade END,
+            result_json = CASE WHEN ? = 1 THEN '{}' ELSE result_json END,
+            annotations_json = CASE WHEN ? = 1 THEN NULL ELSE annotations_json END,
+            checked_copy_page_count = CASE WHEN ? = 1 THEN 0 ELSE checked_copy_page_count END,
+            checked_copy_status = CASE WHEN ? = 1 THEN 'PENDING' ELSE checked_copy_status END,
+            report_status = CASE WHEN ? = 1 THEN 'PENDING' ELSE report_status END,
+            normalized_package_json = CASE WHEN ? = 1 THEN NULL ELSE normalized_package_json END,
+            question_sources_json = CASE WHEN ? = 1 THEN NULL ELSE question_sources_json END,
+            evaluation_run_package_id = CASE WHEN ? = 1 THEN NULL ELSE evaluation_run_package_id END,
+            score_ledger_total = CASE WHEN ? = 1 THEN NULL ELSE score_ledger_total END,
+            durable_persistence_confirmed = CASE WHEN ? = 1 THEN 0 ELSE durable_persistence_confirmed END,
+            completed_at = CASE WHEN ? = 1 THEN NULL ELSE completed_at END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+          AND (
+            status IN ('QUEUED', 'PROCESSING')
+            OR (? = 1 AND status = 'NEEDS_REVIEW')
+          )
+          AND (
+            COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
+            OR updated_at < datetime('now', '-2 minutes')
+            OR updated_at IS NULL
+          )
+      `).run(
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        reprocessNeedsReview ? 1 : 0,
+        evaluationId,
+        reprocessNeedsReview ? 1 : 0,
+      );
+      if (claim.changes === 1) {
+        if (reprocessNeedsReview && reprocessAuditId && previousSnapshot) {
+          db.prepare(`
+            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+            VALUES (?, ?, 'EVALUATION_REPROCESS_STARTED', 'EVALUATION', ?, ?)
+          `).run(
+            reprocessAuditId,
+            String(req.user?.id || evaluation.student_id),
+            evaluationId,
+            JSON.stringify({
+              mode: 'ADMIN_REPROCESS_NEEDS_REVIEW',
+              reason: 'Super Admin requested a fresh evaluation of the original answer-sheet submission.',
+              previousSnapshot,
+            }),
+          );
+        }
+        claimed = true;
+      }
+      db.exec('COMMIT;');
+    } catch (claimError) {
+      try { db.exec('ROLLBACK;'); } catch {}
+      throw claimError;
+    }
+    if (!claimed) {
       return res.status(409).json({
-        error: 'Another recovery request has claimed this evaluation. Wait briefly and refresh its status.',
+        error: 'Another recovery or reprocess request has claimed this evaluation. Wait briefly and refresh its status.',
         code: 'RECOVERY_ALREADY_CLAIMED',
         evaluationId,
       });
+    }
+
+    if (reprocessAuditId) {
+      const auditRecord = db.prepare('SELECT * FROM audit_logs WHERE id = ?').get(reprocessAuditId) as any;
+      if (auditRecord) {
+        await syncRecordToFirestore('audit_logs', reprocessAuditId, auditRecord).catch((syncError) =>
+          console.warn('[AdminReprocess] Could not mirror reprocess audit record to Firestore:', syncError)
+        );
+      }
+      const queuedRow = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+      if (queuedRow) {
+        await syncRecordToFirestore('evaluations', evaluationId, queuedRow).catch((syncError) =>
+          console.warn('[AdminReprocess] Could not mirror queued evaluation state to Firestore:', syncError)
+        );
+      }
     }
 
     try {
@@ -5238,21 +5409,79 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       return res.json({
         success: true,
         code: 'EVALUATION_RECOVERY_QUEUED',
-        message: 'Recovery retry queued using the original answer sheet and exact linked reference material. No additional personal credit will be deducted.',
+        message: reprocessNeedsReview
+          ? 'Fresh Admin reprocess queued using the original answer sheet and exact linked reference material. The previous review result was preserved in the admin audit log; no additional personal credit will be deducted.'
+          : 'Recovery retry queued using the original answer sheet and exact linked reference material. No additional personal credit will be deducted.',
         evaluationId,
         status: 'QUEUED',
         originalPdfAvailable: true,
         referenceMaterialId: materialId,
         additionalPersonalCreditDeducted: false,
+        reprocess: reprocessNeedsReview,
       });
     } catch (enqueueError: any) {
-      db.prepare(`
-        UPDATE evaluations
-        SET progress_stage = 'QUEUED',
-            progress_message = 'Recovery enqueue failed; safe to retry after checking status',
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND progress_stage = 'RECOVERY_CLAIMED'
-      `).run(evaluationId);
+      if (reprocessNeedsReview && previousSnapshot) {
+        db.prepare(`
+          UPDATE evaluations
+          SET status = 'NEEDS_REVIEW',
+              certification_status = 'REVIEW_REQUIRED',
+              downloads_unlocked = 0,
+              progress_stage = 'NEEDS_REVIEW',
+              progress_percentage = 100,
+              progress_message = COALESCE(?, 'Admin reprocess could not be queued; the previous review result was restored.'),
+              error_message = ?,
+              rejection_reason = NULL,
+              total_marks = ?,
+              maximum_marks = ?,
+              percentage = ?,
+              grade = ?,
+              result_json = ?,
+              annotations_json = ?,
+              normalized_package_json = ?,
+              question_sources_json = ?,
+              evaluation_run_package_id = ?,
+              score_ledger_total = ?,
+              original_page_count = ?,
+              checked_copy_page_count = ?,
+              checked_copy_status = ?,
+              report_status = ?,
+              durable_persistence_confirmed = 0,
+              completed_at = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND status = 'QUEUED' AND progress_stage = 'RECOVERY_CLAIMED'
+        `).run(
+          previousSnapshot.previousProgressMessage,
+          previousSnapshot.previousErrorMessage,
+          previousSnapshot.previousTotalMarks,
+          previousSnapshot.previousMaximumMarks,
+          previousSnapshot.previousPercentage,
+          previousSnapshot.previousGrade,
+          previousSnapshot.previousResultJson || '{}',
+          previousSnapshot.previousAnnotationsJson,
+          previousSnapshot.previousNormalizedPackageJson,
+          previousSnapshot.previousQuestionSourcesJson,
+          previousSnapshot.previousEvaluationRunPackageId,
+          previousSnapshot.previousScoreLedgerTotal,
+          previousSnapshot.previousOriginalPageCount,
+          previousSnapshot.previousCheckedCopyPageCount,
+          previousSnapshot.previousCheckedCopyStatus,
+          previousSnapshot.previousReportStatus,
+          previousSnapshot.previousCompletedAt,
+          evaluationId,
+        );
+        const restored = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+        if (restored) {
+          await syncRecordToFirestore('evaluations', evaluationId, restored).catch(() => {});
+        }
+      } else {
+        db.prepare(`
+          UPDATE evaluations
+          SET progress_stage = 'QUEUED',
+              progress_message = 'Recovery enqueue failed; safe to retry after checking status',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND progress_stage = 'RECOVERY_CLAIMED'
+        `).run(evaluationId);
+      }
       throw enqueueError;
     }
   } catch (error: any) {
@@ -5472,8 +5701,16 @@ router.get('/evaluations/:id/review', async (req: AuthRequest, res: Response) =>
     const reportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
 
     const hasOriginal = fs.existsSync(origPath) || Boolean(await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`).catch(() => null));
-    const hasCheckedCopy = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`).catch(() => null));
-    const hasReport = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`).catch(() => null));
+    const checkedCopyStatus = String(evaluation.checked_copy_status || '').trim().toUpperCase();
+    const reportStatus = String(evaluation.report_status || '').trim().toUpperCase();
+    const checkedCopyExists = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`).catch(() => null));
+    const reportExists = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`).catch(() => null));
+    const hasCheckedCopy = checkedCopyStatus === 'READY' || (!checkedCopyStatus && checkedCopyExists)
+      ? checkedCopyExists
+      : false;
+    const hasReport = reportStatus === 'READY' || (!reportStatus && reportExists)
+      ? reportExists
+      : false;
 
     return res.json({
       evaluation,
