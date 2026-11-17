@@ -1,4 +1,5 @@
 import { Router, Response, NextFunction } from 'express';
+import { assertSqlParameterCount } from '../services/sqlBindingGuard.js';
 import multer from 'multer';
 import crypto from 'node:crypto';
 import { getServerPort } from '../config/serverPort.js';
@@ -5245,7 +5246,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     let claimed = false;
     db.exec('BEGIN IMMEDIATE;');
     try {
-      const claim = db.prepare(`
+      const claimSql = `
         UPDATE evaluations
         SET status = CASE WHEN ? = 1 THEN 'QUEUED' ELSE status END,
             certification_status = CASE WHEN ? = 1 THEN 'REVIEW_REQUIRED' ELSE certification_status END,
@@ -5289,7 +5290,10 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
             OR updated_at < datetime('now', '-2 minutes')
             OR updated_at IS NULL
           )
-      `).run(
+`;
+      const claimParameters = [
+
+        reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
@@ -5312,7 +5316,10 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         reprocessNeedsReview ? 0 : 1,
         reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
-      );
+
+      ];
+      assertSqlParameterCount(claimSql, claimParameters, 'Admin evaluation recovery/reprocess claim');
+      const claim = db.prepare(claimSql).run(...claimParameters);
       if (claim.changes === 1) {
         if (reprocessNeedsReview && reprocessAuditId && previousSnapshot) {
           db.prepare(`
