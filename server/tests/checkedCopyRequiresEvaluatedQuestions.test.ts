@@ -60,6 +60,21 @@ assert.equal(
   'A legacy result with a completed incorrect evaluation and zero marks remains valid.',
 );
 
+assert.equal(
+  countCompletedQuestionEvaluations({
+    questions: [{
+      canonicalId: 'Q3(a)',
+      status: 'incorrect',
+      reviewRequired: true,
+      flags: ['REVIEW_REQUIRED'],
+      marksAwarded: 0,
+      maximumMarks: 4,
+    }],
+  }),
+  0,
+  'A legacy question awaiting examiner review must not be treated as an academically completed zero.',
+);
+
 const original = await PDFDocument.create();
 original.addPage([595.28, 841.89]);
 const originalPdf = Buffer.from(await original.save());
