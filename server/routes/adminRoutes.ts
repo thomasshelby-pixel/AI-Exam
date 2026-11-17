@@ -5364,12 +5364,15 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       return res.json({
         success: true,
         code: 'EVALUATION_RECOVERY_QUEUED',
-        message: 'Recovery retry queued using the original answer sheet and exact linked reference material. No additional personal credit will be deducted.',
+        message: reprocessNeedsReview
+          ? 'Fresh Admin reprocess queued using the original answer sheet and exact linked reference material. The previous review result was preserved in the admin audit log; no additional personal credit will be deducted.'
+          : 'Recovery retry queued using the original answer sheet and exact linked reference material. No additional personal credit will be deducted.',
         evaluationId,
         status: 'QUEUED',
         originalPdfAvailable: true,
         referenceMaterialId: materialId,
         additionalPersonalCreditDeducted: false,
+        reprocess: reprocessNeedsReview,
       });
     } catch (enqueueError: any) {
       if (reprocessNeedsReview && previousSnapshot) {
