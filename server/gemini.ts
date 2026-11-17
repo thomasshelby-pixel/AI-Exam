@@ -48,6 +48,7 @@ import { AnswerCoverageMap, AttemptedQuestionMapping } from './services/answerSh
 import { PDFDocument } from 'pdf-lib';
 import { validateBase64Upload } from './utils/fileValidation.js';
 import { normalizeAiAnswerSheetDocumentValidation } from './services/answerSheetDocumentPolicy.js';
+import { shouldUseFacultyMockPagePipeline } from './services/evaluationPipelineRouting.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -1178,9 +1179,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
   // it reads the complete script against the selected paper references in one
   // coherent pass and avoids dropping answers when page-level label crosswalks
   // are incomplete. This split is deliberate: faculty mock behaviour is frozen.
-  const useFacultyMockPagePipeline =
-    params.materialType === 'FACULTY_MOCK_TEST' ||
-    params.evaluationSource === 'FACULTY_MOCK';
+  const useFacultyMockPagePipeline = shouldUseFacultyMockPagePipeline(params);
 
   if ((params.mimeType === 'application/pdf' || Boolean(params.fileBase64)) && useFacultyMockPagePipeline) {
     let coverageMap: any = null;
