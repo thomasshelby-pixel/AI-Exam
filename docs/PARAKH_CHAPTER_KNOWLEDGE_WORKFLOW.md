@@ -26,6 +26,107 @@ The official page lists nine chapters:
 | Module 2 | 9. Management of Working Capital | Original authored draft and operating-cycle illustration; six official units listed; not human-verified |
 
 All nine mapped FM chapters now have original draft teaching content in English, Hindi and Hinglish, with answer, example, simpler-explanation and quiz modes. The chapter drafts are a first content rollout, not a claim of complete academic depth or subject mastery.
+## Fifth rollout: CA Foundation Paper 1: Accounting
+
+**Source of truth:** ICAI's official Foundation Paper 1 page at https://www.icai.org/post/sm-foundation-p1-may2027 lists the linked study material as “Relevant for May, 2027 and Onwards Examination” and exposes 11 chapters: Theoretical Framework; Accounting Process; Bank Reconciliation Statement; Inventories; Depreciation and Amortisation; Bills of Exchange and Promissory Notes; Preparation of Final Accounts of Sole Proprietors; Financial Statements of Not-for-Profit Organisations; Accounts from Incomplete Records; Partnership and LLP Accounts; Company Accounts.
+
+All 11 chapters have original English, Hindi and Hinglish drafts with answer/example/simpler/quiz modes and 55 separate benchmark prompts. A deterministic signed-balance BRS helper is covered by tests. There are zero human-reviewed chapters and zero benchmark answer keys reviewed by a qualified accounting reviewer.
+
+**Attempt boundary:** this material is marked relevant for May 2027 and onwards. Earlier attempt editions and corrigenda may differ. Current accounting standards and company-account statutory/procedural details must be checked against the exact ICAI material and primary sources.
+
+## Sixth rollout: CA Foundation Paper 2: Business Laws
+
+**Source of truth:** ICAI's official Paper 2 chapter catalogue at https://www.icai.org/post/24381 is marked “Relevant for May, 2027 and Onwards Examination” and lists seven chapters: Indian Regulatory Framework; The Indian Contract Act, 1872; The Sale of Goods Act, 1930; The Indian Partnership Act, 1932; The Limited Liability Partnership Act, 2008; The Companies Act, 2013; and The Negotiable Instruments Act, 1881.
+
+All seven chapters have original English, Hindi and Hinglish conceptual drafts with answer/example/simpler/quiz modes and 35 separate benchmark prompts. None has human-reviewed content or approved benchmark answer keys. Section numbers, amendments, limitation periods, penalties and deadlines require current bare Acts/official sources and the exact attempt.
+
+## Seventh rollout: CA Foundation Paper 3: Quantitative Aptitude
+
+**Source of truth:** ICAI's official Paper 3 catalogue at https://www.icai.org/post/24402 is marked “Relevant for May, 2027 and Onwards Examination” and lists 18 chapters across Business Mathematics, Logical Reasoning and Statistics. Chapter 13 includes Statistical Description of Data and Sampling units; Chapter 14 includes Measures of Central Tendency and Dispersion units.
+
+All 18 chapters have original English, Hindi and Hinglish drafts with answer/example/simpler/quiz modes and 90 separate benchmark prompts. None has human-reviewed content or approved benchmark answer keys. Numerical content remains an author draft pending independent mathematics/statistics review.
+
+## Eighth rollout: CA Foundation Paper 4: Business Economics
+
+**Source of truth:** ICAI's official Paper 4 catalogue at https://www.icai.org/post/24403 is marked “Relevant for May, 2027 and Onwards Examination” and lists 10 chapters.
+
+All 10 chapters have original English, Hindi and Hinglish drafts with answer/example/simpler/quiz modes and 50 separate benchmark prompts. None has human-reviewed content or approved benchmark answer keys. Current GDP, inflation, unemployment, fiscal, exchange-rate and RBI policy figures are not hard-coded; those questions must be answered from dated official sources.
+
+## Fourth rollout: CA Intermediate Paper 5: Auditing and Ethics
+
+**Source of truth:** ICAI's official Paper 5 study material page at https://www.icai.org/post/sm-inter-p5-may2027 is headed “Applicable for May 2027 Exam Onwards” and lists 11 chapters.
+
+The original packs cover Nature, Objective and Scope of Audit; Audit Strategy, Audit Planning and Audit Programme; Risk Assessment and Internal Control; Audit Evidence; Audit of Items of Financial Statements; Audit Documentation; Completion and Review; Audit Report; Special Features of Audit of Different Type of Entities; Audit of Banks; and Ethics and Terms of Audit Engagements.
+
+Each pack includes original English, Hindi and Hinglish teaching notes with answer, example, simpler and quiz modes. Fifty-five distinct benchmark prompts are defined (five per chapter). There are zero human-reviewed chapters and zero benchmark answer keys reviewed by a qualified auditor.
+
+**Attempt and source boundary:** Current Standards on Auditing, audit report wording, bank regulatory requirements, ethics provisions and engagement conditions are not treated as timeless facts. Questions asking for latest/current/applicable requirements are routed away from the evergreen draft and must be checked against exact ICAI material, current primary sources, effective dates and attempt.
+
+## Ninth rollout: CA Intermediate Paper 1: Advanced Accounting
+
+**Source of truth:** ICAI's official Paper 1 catalogue at https://www.icai.org/post/24303 is headed “Applicable for May 2027 Exam Onwards” and lists 15 chapters across three modules. The chapter map includes introductory standards/framework/applicability, presentation and disclosure standards, asset/liability and other standard groups, consolidated financial statements, company financial statements, buyback, amalgamation, internal reconstruction, and branch accounts including foreign branches.
+
+All 15 chapters have original English, Hindi and Hinglish drafts with answer/example/simpler/quiz modes and 75 separate benchmark prompts. There are zero human-reviewed chapters and zero approved benchmark answer keys. Recognition, measurement and disclosure must be checked against the applicable AS version and exact attempt; Ind AS and AS treatments must not be mixed.
+
+## Third rollout: CA Intermediate Paper 4: Cost and Management Accounting
+
+**Source of truth:** ICAI's official Paper 4 page at https://icai.org/post/24297 is headed “Applicable for May 2027 Exam Onwards” and lists 15 chapters.
+
+The 15 original teaching packs cover:
+
+1. Introduction to Cost and Management Accounting
+2. Material Cost
+3. Employee Cost and Direct Expenses
+4. Overheads – Absorption Costing Method
+5. Activity Based Costing
+6. Cost Sheet
+7. Cost Accounting Systems
+8. Unit & Batch Costing
+9. Job Costing
+10. Process & Operation Costing
+11. Joint Products and By Products
+12. Service Costing
+13. Standard Costing
+14. Marginal Costing
+15. Budgets and Budgetary Control
+
+Each pack has original explanations in English, Hindi and Hinglish, plus answer, example, simpler and quiz modes. Worked examples include EOQ, Halsey/Rowan incentives, overhead absorption, activity drivers, cost-sheet build-up, normal/abnormal process loss, further-processing decisions, service cost units, material variances, break-even analysis and flexible budgets. A deterministic cost-sheet helper is covered by regression tests.
+
+Five distinct benchmark prompts are defined per chapter (75 total) across core concept, unseen numerical/application, exam presentation, edge cases and attempt/source sensitivity. There are zero human-reviewed chapters and zero human-reviewed benchmark answer keys. The notes are original and do not reproduce ICAI study material.
+
+**Attempt boundary:** this ICAI page is headed May 2027 Exam Onwards. Do not claim these chapters apply to a different attempt without checking the student's exact ICAI material, RTP, corrigenda and exclusions.
+
+## Second rollout: CA Intermediate Paper 6B, Section B: Strategic Management
+
+**Source of truth:** ICAI's official Paper 6B page with separate applicability editions. The page for the next listed edition is headed “Applicable for May 2027 Exam Onwards” and lists five chapters:
+
+- https://www.icai.org/post/sm-inter-p6b-may2027
+- Paper 6B edition index: https://www.icai.org/post/sm-intermediate-paper6b
+
+| Chapter | Current PARAKH state |
+| --- | --- |
+| 1. Introduction to Strategic Management | Original authored draft in English, Hindi and Hinglish; answer/example/simpler/quiz modes; not human-verified |
+| 2. Strategic Analysis: External Environment | Original authored draft with PESTEL and industry/competitive analysis examples; not human-verified |
+| 3. Strategic Analysis: Internal Environment | Original authored draft with resources, capabilities, VRIO, value chain and SWOT examples; not human-verified |
+| 4. Strategic Choices | Original authored draft with corporate directions, competitive strategies, Ansoff and BCG illustrations; not human-verified |
+| 5. Strategy Implementation and Evaluation | Original authored draft with implementation alignment, controls, KPIs and Balanced Scorecard examples; not human-verified |
+
+The five packs have original explanations in English, Hindi and Hinglish and five distinct benchmark prompts each (25 total). The prompts span core concepts, unseen application, exam-style analysis, trade-offs/edge cases and attempt/source sensitivity. These are not approved answer keys and have not been scored. No Strategic Management chapter or benchmark is human-reviewed.
+
+**Attempt boundary:** The official page is headed May 2027 Exam Onwards. The drafts must not be used to assert chapter applicability for a different attempt without checking that student's exact ICAI material, RTP, amendment and corrigendum. This authored content does not reproduce ICAI study-material text.
+
+## New rollout: CA Intermediate Paper 2: Corporate and Other Laws
+
+**Source of truth:** ICAI's official Paper 2 catalogue at https://www.icai.org/post/24331 is marked applicable for May 2027 examinations onwards. It lists 12 Company Law/LLP chapters and three Other Laws chapters (General Clauses Act, Interpretation of Statutes and FEMA).
+
+PARAKH now has 15 original chapter drafts, each in English, Hindi and Hinglish and with answer, example, simpler and quiz modes. Five benchmark prompts are defined per chapter (75 total). These are original concept notes, not ICAI material reproductions; no chapter or benchmark answer key has qualified human review. Company-law amendments, filing dates, statutory limits, penalties and attempt-specific legal positions must be checked against the exact ICAI edition and primary legal sources.
+
+## New rollout: CA Intermediate Paper 3: Taxation
+
+**Source of truth:** ICAI's official Paper 3 Section A Income-tax Law catalogue is at https://www.icai.org/post/24313; Section B Goods and Services Tax catalogue is at https://www.icai.org/post/24360. Both catalogues list applicability for May 2027, September 2027 and January 2028 examinations.
+
+PARAKH now has nine Income-tax chapter drafts (45 prompts) and 15 GST chapter drafts (75 prompts), each with original English, Hindi and Hinglish concept notes and answer, example, simpler and quiz modes. Current rates, thresholds, statutory limits, return dates, notifications, effective dates, amendments, exclusions and case-specific tax outcomes are not hard-coded as timeless answers; the freshness guard routes such questions away from evergreen drafts for current-source verification. These 24 chapters and 120 prompts remain author drafts and prompt scaffolding only, with zero qualified human review and zero answer-key-scored benchmark cases.
+
 ## Content and intellectual-property policy
 
 ICAI's website carries an intellectual-property notice reserving its material to ICAI. PARAKH therefore stores original explanations, original examples and links to the official source page; it does not copy ICAI chapter text, reproduce its illustrations, or mirror its PDFs.
@@ -88,6 +189,8 @@ Chat messages, unreviewed evaluation results and aggregate student signals must 
 
 ## Current scope and next expansion
 
-This rollout covers only CA Intermediate Paper 6A, Section A. All nine FM chapters have original drafts, but none has human-approved content or human-reviewed benchmark answers. It does not provide complete coverage for the other Intermediate papers, Foundation, Final, SPOM, or Section B: Strategic Management. Those areas remain gaps until separately mapped from current official sources, authored, benchmarked and reviewed.
+The paper-level catalogue covers all four ICAI New Scheme tracks: Foundation (4 papers), Intermediate (6 papers), Final (6 papers) and SPOM (16 modules/papers). A course-aware coverage registry and Super Admin dashboard show the map/index type and content status for all 32 entries. See docs/PARAKH_ALL_COURSE_COVERAGE_FOUNDATION.md.
 
-The next content sequence is to map and build Section B: Strategic Management, then expand to the other Intermediate paper/section pairs and later Foundation, Final and SPOM. Tax and law content requires separate attempt-aware statutory source controls and must not be promoted from evergreen explanations.
+All four Foundation papers and all six Intermediate papers now have original author-draft content. Foundation totals 46 chapter drafts/230 prompts. Intermediate totals 94 chapter drafts/470 prompts: Paper 1 Advanced Accounting (15/75), Paper 2 Corporate and Other Laws (15/75), Paper 3 Section A Income-tax Law (9/45) and Section B GST (15/75), Paper 4 Cost and Management Accounting (15/75), Paper 5 Auditing and Ethics (11/55), Paper 6A Financial Management (9/45) and Paper 6B Strategic Management (5/25). Across Foundation and Intermediate there are 140 chapter drafts and 700 benchmark prompts. There are zero qualified human-reviewed chapters and zero human-reviewed benchmark answer keys. The prompts are not a held-out scored benchmark. Current statutory/tax positions, rates, limits, due dates, notifications, amendments, exclusions and attempt-specific applicability must be verified against the correct ICAI edition and primary sources. CA Final topic pointers remain provisional and SPOM remains mapped at module/paper level only; both are deferred from this release phase.
+
+Next work is source-verified chapter/unit indexing and original content authoring for every remaining paper/section, followed by separate benchmark answer keys and qualified review. Tax and law content needs attempt-aware statutory source controls and must not be promoted from evergreen explanations.
