@@ -4963,6 +4963,39 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       });
     }
 
+    // App Hosting may have multiple instances. A process-local activeJobs check
+    // alone cannot protect against a live worker lease held by another instance.
+    const usesDurableProductionQueue =
+      process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE || process.env.K_REVISION);
+    if (reprocessNeedsReview && usesDurableProductionQueue) {
+      let durableQueueRecord: any = null;
+      try {
+        durableQueueRecord = await getFirestoreDoc<any>('evaluation_jobs', evaluationId, { failOnError: true });
+      } catch (queueReadError) {
+        console.error('[AdminReprocess] Could not verify the durable worker lease:', evaluationId, queueReadError);
+        return res.status(503).json({
+          error: 'The active evaluation queue could not be verified. No reprocess was started; refresh and retry after queue status is available.',
+          code: 'DURABLE_QUEUE_STATUS_UNAVAILABLE',
+          evaluationId,
+        });
+      }
+
+      const durableStatus = String(durableQueueRecord?.status || '').trim().toUpperCase();
+      const leaseExpiresAt = Date.parse(String(durableQueueRecord?.leaseExpiresAt || ''));
+      const durableJobIsActive =
+        durableStatus === 'QUEUED' ||
+        (durableStatus === 'RUNNING' && Number.isFinite(leaseExpiresAt) && leaseExpiresAt > Date.now());
+      if (durableJobIsActive) {
+        return res.status(409).json({
+          error: 'A durable worker already owns this evaluation. Wait for its lease to finish before reprocessing.',
+          code: 'EVALUATION_DURABLE_JOB_ACTIVE',
+          evaluationId,
+          queueStatus: durableStatus,
+          leaseExpiresAt: durableQueueRecord.leaseExpiresAt || null,
+        });
+      }
+    }
+
     const status = String(evaluation.status || '').toUpperCase();
     if (status === 'FAILED' || status === 'PERSISTENCE_FAILED' || status === 'REJECTED') {
       return res.status(409).json({
