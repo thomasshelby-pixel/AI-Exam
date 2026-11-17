@@ -379,25 +379,34 @@ export function isEvaluationValidationSafeForCertification(status: unknown): boo
 export function classifyPreEvaluationFailures(failedInvariants: string[]): {
   blockingFailures: string[];
   reviewOnlyFailures: string[];
+  /** Backward-compatible subset for callers that only expect page/question coverage holds. */
+  coverageReviewFailures: string[];
 } {
-  const reviewOnlyPrefixes = [
+  const coverageReviewPrefixes = [
     'UNMAPPED_STUDENT_PAGE:',
     'UNMAPPED_ATTEMPT_DETECTED:',
+  ];
+  const sourceAllocationReviewPrefixes = [
     'MARK_ALLOCATION_SOURCE_CONFLICT:',
     'MCQ_MARK_ALLOCATION_SOURCE_CONFLICT:',
   ];
   const reviewOnlyFailures: string[] = [];
+  const coverageReviewFailures: string[] = [];
   const blockingFailures: string[] = [];
 
   for (const failure of failedInvariants || []) {
-    if (reviewOnlyPrefixes.some((prefix) => String(failure).startsWith(prefix))) {
-      reviewOnlyFailures.push(failure);
+    const normalizedFailure = String(failure);
+    if (coverageReviewPrefixes.some((prefix) => normalizedFailure.startsWith(prefix))) {
+      reviewOnlyFailures.push(normalizedFailure);
+      coverageReviewFailures.push(normalizedFailure);
+    } else if (sourceAllocationReviewPrefixes.some((prefix) => normalizedFailure.startsWith(prefix))) {
+      reviewOnlyFailures.push(normalizedFailure);
     } else {
-      blockingFailures.push(failure);
+      blockingFailures.push(normalizedFailure);
     }
   }
 
-  return { blockingFailures, reviewOnlyFailures };
+  return { blockingFailures, reviewOnlyFailures, coverageReviewFailures };
 }
 
 /**
