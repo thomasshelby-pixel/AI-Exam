@@ -5172,6 +5172,8 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       previousStatus: String(evaluation.status || '').toUpperCase(),
       previousCertificationStatus: evaluation.certification_status || null,
       previousDownloadsUnlocked: Number(evaluation.downloads_unlocked || 0),
+      previousErrorMessage: evaluation.error_message || null,
+      previousProgressMessage: evaluation.progress_message || null,
       previousTotalMarks: evaluation.total_marks ?? null,
       previousMaximumMarks: evaluation.maximum_marks ?? null,
       previousPercentage: evaluation.percentage ?? null,
@@ -5383,8 +5385,8 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
               downloads_unlocked = 0,
               progress_stage = 'NEEDS_REVIEW',
               progress_percentage = 100,
-              progress_message = 'Admin reprocess could not be queued; the previous review result was restored.',
-              error_message = COALESCE(?, 'Admin reprocess could not be queued. The previous result remains available for review.'),
+              progress_message = COALESCE(?, 'Admin reprocess could not be queued; the previous review result was restored.'),
+              error_message = ?,
               rejection_reason = NULL,
               total_marks = ?,
               maximum_marks = ?,
@@ -5405,7 +5407,8 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
               updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND status = 'QUEUED' AND progress_stage = 'RECOVERY_CLAIMED'
         `).run(
-          String(enqueueError?.message || 'Admin reprocess could not be queued.'),
+          previousSnapshot.previousProgressMessage,
+          previousSnapshot.previousErrorMessage,
           previousSnapshot.previousTotalMarks,
           previousSnapshot.previousMaximumMarks,
           previousSnapshot.previousPercentage,
