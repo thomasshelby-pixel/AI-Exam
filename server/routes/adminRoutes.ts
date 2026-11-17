@@ -5275,7 +5275,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         WHERE id = ?
           AND (
             (? = 0 AND UPPER(TRIM(COALESCE(status, ''))) IN ('QUEUED', 'PROCESSING'))
-            OR (? = 1 AND status = 'NEEDS_REVIEW')
+            OR (? = 1 AND UPPER(TRIM(COALESCE(status, ''))) = 'NEEDS_REVIEW')
           )
           AND (
             -- An explicit NEEDS_REVIEW reprocess reaches this SQL only after
