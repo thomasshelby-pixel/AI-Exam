@@ -4963,6 +4963,8 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       });
     }
 
+    let durableQueueStatus: string | null = null;
+
     // App Hosting may have multiple instances. A process-local activeJobs check
     // alone cannot protect against a live worker lease held by another instance.
     const usesDurableProductionQueue =
@@ -4981,6 +4983,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       }
 
       const durableStatus = String(durableQueueRecord?.status || '').trim().toUpperCase();
+      durableQueueStatus = durableStatus || null;
       const leaseExpiresAt = Date.parse(String(durableQueueRecord?.leaseExpiresAt || ''));
       const durableJobIsActive =
         durableStatus === 'QUEUED' ||
@@ -5343,9 +5346,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         progressStage: String(latestClaimRow?.progress_stage || '').trim() || null,
         updatedAt: latestClaimRow?.updated_at || null,
         canonicalStatus: String(canonicalStatus.status || '').trim().toUpperCase() || null,
-        durableQueueStatus: typeof durableQueueRecord !== 'undefined'
-          ? String(durableQueueRecord?.status || '').trim().toUpperCase() || null
-          : null,
+        durableQueueStatus,
       };
       console.error('[AdminRecovery] Compare-and-set claim returned zero rows:', {
         evaluationId,
