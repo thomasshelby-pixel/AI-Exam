@@ -5655,8 +5655,16 @@ router.get('/evaluations/:id/review', async (req: AuthRequest, res: Response) =>
     const reportPath = path.join(uploadsDir, `${evaluationId}_report.pdf`);
 
     const hasOriginal = fs.existsSync(origPath) || Boolean(await getPersistentFile(`${evaluationId}_original`, `${evaluationId}_original.pdf`).catch(() => null));
-    const hasCheckedCopy = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`).catch(() => null));
-    const hasReport = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`).catch(() => null));
+    const checkedCopyStatus = String(evaluation.checked_copy_status || '').trim().toUpperCase();
+    const reportStatus = String(evaluation.report_status || '').trim().toUpperCase();
+    const checkedCopyExists = fs.existsSync(checkedPath) || Boolean(await getPersistentFile(`${evaluationId}_checked_copy`, `${evaluationId}_checked_copy.pdf`).catch(() => null));
+    const reportExists = fs.existsSync(reportPath) || Boolean(await getPersistentFile(`${evaluationId}_report`, `${evaluationId}_report.pdf`).catch(() => null));
+    const hasCheckedCopy = checkedCopyStatus === 'READY' || (!checkedCopyStatus && checkedCopyExists)
+      ? checkedCopyExists
+      : false;
+    const hasReport = reportStatus === 'READY' || (!reportStatus && reportExists)
+      ? reportExists
+      : false;
 
     return res.json({
       evaluation,
