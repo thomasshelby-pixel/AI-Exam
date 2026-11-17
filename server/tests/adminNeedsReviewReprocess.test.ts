@@ -116,7 +116,41 @@ async function run() {
       'A reprocess audit snapshot is written only after all preflight inputs are verified.',
     );
 
-    console.log('✅ Admin NEEDS_REVIEW reprocess is explicit and fail-closed when original/reference inputs are unavailable.');
+    // A previous request may have left the SQLite RECOVERY_CLAIMED marker behind
+    // while the evaluation is still NEEDS_REVIEW and no active worker/Firestore
+    // lease exists (the route checks both before this atomic SQL compare-and-set).
+    // An explicit reprocess may reclaim that orphan marker exactly once.
+    db.prepare(`
+      UPDATE evaluations
+      SET progress_stage = 'RECOVERY_CLAIMED', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(evaluationId);
+
+    const staleClaimReclaimed = db.prepare(`
+      UPDATE evaluations
+      SET status = 'QUEUED', progress_stage = 'RECOVERY_CLAIMED', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND ((? = 0 AND status IN ('QUEUED', 'PROCESSING')) OR (? = 1 AND status = 'NEEDS_REVIEW'))
+        AND ((? = 1 AND status = 'NEEDS_REVIEW')
+          OR COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
+          OR updated_at < datetime('now', '-2 minutes')
+          OR updated_at IS NULL)
+    `).run(evaluationId, 0, 1, 1);
+    assert.equal(staleClaimReclaimed.changes, 1, 'An orphaned claim marker must not permanently trap NEEDS_REVIEW.');
+
+    const duplicateClaim = db.prepare(`
+      UPDATE evaluations
+      SET status = 'QUEUED', progress_stage = 'RECOVERY_CLAIMED', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+        AND ((? = 0 AND status IN ('QUEUED', 'PROCESSING')) OR (? = 1 AND status = 'NEEDS_REVIEW'))
+        AND ((? = 1 AND status = 'NEEDS_REVIEW')
+          OR COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
+          OR updated_at < datetime('now', '-2 minutes')
+          OR updated_at IS NULL)
+    `).run(evaluationId, 0, 1, 1);
+    assert.equal(duplicateClaim.changes, 0, 'A second simultaneous Admin request must lose once the first changes status to QUEUED.');
+
+    console.log('✅ Admin NEEDS_REVIEW reprocess is fail-closed on missing inputs and safely reclaims orphaned locks exactly once.');
   } finally {
     try { fs.unlinkSync(originalPath); } catch {}
     try { db.prepare('DELETE FROM audit_logs WHERE entity_id = ?').run(evaluationId); } catch {}
