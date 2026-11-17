@@ -4996,7 +4996,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       }
     }
 
-    const status = String(evaluation.status || '').toUpperCase();
+    const status = String(evaluation.status || '').trim().toUpperCase();
     if (status === 'FAILED' || status === 'PERSISTENCE_FAILED' || status === 'REJECTED') {
       return res.status(409).json({
         error: 'Recovery is only available for stalled QUEUED or PROCESSING evaluations. Failed evaluations are not eligible.',
@@ -5271,7 +5271,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
           AND (
-            (? = 0 AND status IN ('QUEUED', 'PROCESSING'))
+            (? = 0 AND UPPER(TRIM(COALESCE(status, ''))) IN ('QUEUED', 'PROCESSING'))
             OR (? = 1 AND status = 'NEEDS_REVIEW')
           )
           AND (
@@ -5281,7 +5281,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
             -- while the row is still NEEDS_REVIEW. The first claimant atomically
             -- changes status to QUEUED, so a simultaneous second admin request
             -- cannot pass this predicate.
-            (? = 1 AND status = 'NEEDS_REVIEW')
+            (? = 1 AND UPPER(TRIM(COALESCE(status, ''))) = 'NEEDS_REVIEW')
             OR COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
             OR updated_at < datetime('now', '-2 minutes')
             OR updated_at IS NULL
@@ -5334,10 +5334,28 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       throw claimError;
     }
     if (!claimed) {
+      const latestClaimRow = db.prepare(
+        'SELECT status, progress_stage, updated_at FROM evaluations WHERE id = ?'
+      ).get(evaluationId) as any;
+      const claimDiagnostics = {
+        requestedMode: reprocessNeedsReview ? 'REPROCESS_NEEDS_REVIEW' : 'RECOVERY',
+        databaseStatus: String(latestClaimRow?.status || '').trim().toUpperCase() || null,
+        progressStage: String(latestClaimRow?.progress_stage || '').trim() || null,
+        updatedAt: latestClaimRow?.updated_at || null,
+        canonicalStatus: String(canonicalStatus.status || '').trim().toUpperCase() || null,
+        durableQueueStatus: typeof durableQueueRecord !== 'undefined'
+          ? String(durableQueueRecord?.status || '').trim().toUpperCase() || null
+          : null,
+      };
+      console.error('[AdminRecovery] Compare-and-set claim returned zero rows:', {
+        evaluationId,
+        ...claimDiagnostics,
+      });
       return res.status(409).json({
-        error: 'Another recovery or reprocess request has claimed this evaluation. Wait briefly and refresh its status.',
+        error: 'The evaluation status changed while the reprocess request was being claimed. Refresh the Admin review and share the diagnostic values with support if it remains stuck.',
         code: 'RECOVERY_ALREADY_CLAIMED',
         evaluationId,
+        diagnostics: claimDiagnostics,
       });
     }
 
