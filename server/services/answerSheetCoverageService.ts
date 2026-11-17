@@ -257,30 +257,9 @@ export function resolveMcqSelectionNumber(
   const flatMatch = raw.match(/^(?:MCQ|OBJECTIVE)\s*(\d{1,3})$/i) || raw.match(/^(\d{1,3})$/);
   if (flatMatch) {
     const flatNumber = flatMatch[1];
-    const sourceMcqs = mcqs || [];
-    const directMatch = sourceMcqs.find((mcq) =>
-      String(mcq.questionNumber || '').replace(/[^0-9]/g, '') === flatNumber ||
-      normalizeMcqSelectionLabel(String(mcq.sourceQuestionLabel || '')) === flatNumber
-    );
-    if (directMatch) {
-      return String(directMatch.questionNumber).replace(/[^0-9]/g, '') || undefined;
-    }
-
-    // Some CA papers print objective responses as a flat 1..N answer grid,
-    // while the selected Question Paper stores the same MCQs under nested
-    // source labels (for example Q1(i), Q1(ii), ...). In that case the
-    // student's flat number is the 1-based position in the authoritative
-    // MCQ inventory, not the digits extracted from the nested source label.
-    // Use this fallback only when the source labels are explicitly nested;
-    // never use position to resolve an ambiguous flat source inventory.
-    const hasNestedSourceLabels = sourceMcqs.some((mcq) =>
-      /\([^)]*[a-z0-9]+[^)]*\)/i.test(String(mcq.sourceQuestionLabel || ''))
-    );
-    const ordinal = Number(flatNumber);
-    if (hasNestedSourceLabels && Number.isInteger(ordinal) && ordinal >= 1 && ordinal <= sourceMcqs.length) {
-      return String(sourceMcqs[ordinal - 1].questionNumber || '').replace(/[^0-9]/g, '') || undefined;
-    }
-    return undefined;
+    return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === flatNumber)
+      ? flatNumber
+      : undefined;
   }
 
   const normalized = normalizeMcqSelectionLabel(raw);
