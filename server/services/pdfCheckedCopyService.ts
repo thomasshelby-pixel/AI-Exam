@@ -825,6 +825,58 @@ export function buildStructuredAnnotations(
 }
 
 /**
+ * Counts completed academic question evaluations from the authoritative run package.
+ * A genuine academic zero is counted when its record is EVALUATED; technical failures,
+ * unresolved mappings, and empty diagnostic review results are not.
+ */
+export function countCompletedQuestionEvaluations(resultJson: any): number {
+  const runPackageRecords = resultJson?.evaluationRunPackage?.evaluationRecords;
+  if (Array.isArray(runPackageRecords)) {
+    return runPackageRecords.filter((record: any) =>
+      String(record?.evaluationStatus || '').toUpperCase() === 'EVALUATED' ||
+      (!record?.evaluationStatus && record?.evaluated === true)
+    ).length;
+  }
+
+  const ledgerRecords = resultJson?.canonicalLedger?.records;
+  if (Array.isArray(ledgerRecords)) {
+    return ledgerRecords.filter((record: any) =>
+      String(record?.evaluationStatus || '').toUpperCase() === 'EVALUATED' ||
+      (!record?.evaluationStatus && record?.evaluated === true)
+    ).length;
+  }
+
+  const questions = Array.isArray(resultJson?.questions)
+    ? resultJson.questions
+    : Array.isArray(resultJson?.questionWiseBreakdown)
+      ? resultJson.questionWiseBreakdown
+      : [];
+  const failedStatuses = new Set([
+    'UNCLEAR',
+    'NOT_ATTEMPTED',
+    'FAILED_TO_EVALUATE',
+    'NEEDS_REVIEW',
+    'NEEDS_MAPPING_REVIEW',
+    'RENDER_FAILED',
+  ]);
+  const technicalOrReviewFlags = new Set([
+    'FAILED_TO_EVALUATE',
+    'TECHNICAL_FAILURE',
+    'NEEDS_MAPPING_REVIEW',
+    'REVIEW_REQUIRED',
+    'QUESTION_REFERENCE_REVIEW_REQUIRED',
+    'MCQ_SELECTION_REVIEW_REQUIRED',
+    'HANDWRITING_UNCLEAR',
+  ]);
+  return questions.filter((question: any) => {
+    const status = String(question?.status || '').trim().toUpperCase();
+    if (!status || failedStatuses.has(status) || question?.reviewRequired === true) return false;
+    const flags = Array.isArray(question?.flags) ? question.flags : [];
+    return !flags.some((flag: unknown) => technicalOrReviewFlags.has(String(flag).toUpperCase()));
+  }).length;
+}
+
+/**
  * Generates the Authentic Checked Copy PDF.
  * CRITICAL RULE (Rules 69-89):
  * The Checked Copy is STRICTLY the original student answer sheet pages + red-ink examiner annotations.
@@ -837,6 +889,17 @@ export async function generateCheckedCopyPdf(
   originalPdfBuffer?: Buffer
 ): Promise<Buffer> {
   const runPkg = resultJson?.evaluationRunPackage || (evalData.id ? loadEvaluationRunPackage(evalData.id) : null);
+  const completedQuestionCount = countCompletedQuestionEvaluations({
+    ...resultJson,
+    evaluationRunPackage: runPkg,
+  });
+  if (completedQuestionCount === 0) {
+    const error = new Error(
+      'CHECKED_COPY_NO_EVALUATED_QUESTIONS: No academic question evaluation was completed. Diagnostic-only review results cannot be published as a Checked Copy.'
+    ) as Error & { code?: string };
+    error.code = 'CHECKED_COPY_NO_EVALUATED_QUESTIONS';
+    throw error;
+  }
   const totalAwarded = runPkg?.scoreLedger?.totalAwardedMarks
     ?? resultJson?.canonicalLedger?.totalAwardedMarks
     ?? evalData.totalMarks

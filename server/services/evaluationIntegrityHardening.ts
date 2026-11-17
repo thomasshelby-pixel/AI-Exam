@@ -366,33 +366,47 @@ export function isEvaluationValidationSafeForCertification(status: unknown): boo
 }
 
 /**
- * Coverage uncertainty is a certification blocker, not a reason to discard all
- * otherwise-mappable answers. Keep mapping failures visible for reviewer follow-up
- * while allowing identified questions to be evaluated provisionally.
+ * Separate true paper-identity / structure blockers from issues that require a
+ * provisional result and human review.
  *
- * Source/paper-structure failures remain hard blockers because the evaluator cannot
- * safely establish the authoritative marking basis for those questions.
+ * An explicit source mark-allocation disagreement MUST prevent certification,
+ * but it must not short-circuit answer-sheet page analysis. The selected Question
+ * Paper remains the primary maximum-mark source; question-level QP/Suggested Answer
+ * locking still decides whether an individual answer can be scored. This lets
+ * independent, correctly mapped questions be evaluated while the conflicting
+ * question/source remains on review hold.
  */
 export function classifyPreEvaluationFailures(failedInvariants: string[]): {
   blockingFailures: string[];
+  reviewOnlyFailures: string[];
+  /** Backward-compatible subset for callers that only expect page/question coverage holds. */
   coverageReviewFailures: string[];
 } {
   const coverageReviewPrefixes = [
     'UNMAPPED_STUDENT_PAGE:',
     'UNMAPPED_ATTEMPT_DETECTED:',
   ];
+  const sourceAllocationReviewPrefixes = [
+    'MARK_ALLOCATION_SOURCE_CONFLICT:',
+    'MCQ_MARK_ALLOCATION_SOURCE_CONFLICT:',
+  ];
+  const reviewOnlyFailures: string[] = [];
   const coverageReviewFailures: string[] = [];
   const blockingFailures: string[] = [];
 
   for (const failure of failedInvariants || []) {
-    if (coverageReviewPrefixes.some((prefix) => String(failure).startsWith(prefix))) {
-      coverageReviewFailures.push(failure);
+    const normalizedFailure = String(failure);
+    if (coverageReviewPrefixes.some((prefix) => normalizedFailure.startsWith(prefix))) {
+      reviewOnlyFailures.push(normalizedFailure);
+      coverageReviewFailures.push(normalizedFailure);
+    } else if (sourceAllocationReviewPrefixes.some((prefix) => normalizedFailure.startsWith(prefix))) {
+      reviewOnlyFailures.push(normalizedFailure);
     } else {
-      blockingFailures.push(failure);
+      blockingFailures.push(normalizedFailure);
     }
   }
 
-  return { blockingFailures, coverageReviewFailures };
+  return { blockingFailures, reviewOnlyFailures, coverageReviewFailures };
 }
 
 /**
