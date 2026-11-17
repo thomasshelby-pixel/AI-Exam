@@ -1595,7 +1595,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       JSON.stringify(evaluationResult),
       structuredAnnotationsJson,
       originalPageCount,
-      originalPageCount,
+      checkedCopyStatus === 'READY' ? originalPageCount : 0,
       checkedCopyStatus,
       reportStatus,
       job.mtpSeries || null,
