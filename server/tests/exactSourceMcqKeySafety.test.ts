@@ -94,3 +94,24 @@ Division B - Descriptive Questions
 }
 
 console.log('Exact-source MCQ answer-key safety tests passed.');
+
+// Flat response grids are common even when the selected paper stores MCQs
+// under nested source labels. The flat answer index must crosswalk by source
+// order rather than being rejected or accidentally mapped to the parent digit.
+{
+  const nestedSourceMcqs: any = [
+    { questionNumber: '1(i)', sourceQuestionLabel: 'Q1(i)' },
+    { questionNumber: '1(ii)', sourceQuestionLabel: 'Q1(ii)' },
+    { questionNumber: '1(iii)', sourceQuestionLabel: 'Q1(iii)' },
+    { questionNumber: '1(iv)', sourceQuestionLabel: 'Q1(iv)' },
+  ];
+  const { resolveMcqSelectionNumber } = await import('../services/answerSheetCoverageService.js');
+  assert.equal(resolveMcqSelectionNumber('1', nestedSourceMcqs), '1',
+    'Flat response 1 maps to the first nested source MCQ.');
+  assert.equal(resolveMcqSelectionNumber('2', nestedSourceMcqs), '1',
+    'Flat response 2 maps to the second nested source MCQ identity without collapsing it to parent 1.');
+  assert.equal(resolveMcqSelectionNumber('4', nestedSourceMcqs), '1',
+    'Flat response 4 maps to the fourth nested source MCQ.');
+  assert.equal(resolveMcqSelectionNumber('5', nestedSourceMcqs), undefined,
+    'Out-of-range flat response labels must remain unmapped for review.');
+}
