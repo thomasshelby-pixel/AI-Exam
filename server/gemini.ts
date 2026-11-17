@@ -1172,7 +1172,17 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 `;
 
   // Attempt Authoritative Evaluation Pipeline if input is a PDF
-  if (params.mimeType === 'application/pdf' || params.fileBase64) {
+  // Faculty Mock evaluations intentionally retain their existing page-audited,
+  // canonical-inventory pipeline. For public / institute PYQ, MTP and Model
+  // Test evaluations, use the established full-answer-sheet evaluator below:
+  // it reads the complete script against the selected paper references in one
+  // coherent pass and avoids dropping answers when page-level label crosswalks
+  // are incomplete. This split is deliberate: faculty mock behaviour is frozen.
+  const useFacultyMockPagePipeline =
+    params.materialType === 'FACULTY_MOCK_TEST' ||
+    params.evaluationSource === 'FACULTY_MOCK';
+
+  if ((params.mimeType === 'application/pdf' || Boolean(params.fileBase64)) && useFacultyMockPagePipeline) {
     let coverageMap: any = null;
     try {
       const pdfBuffer = Buffer.from(params.fileBase64, 'base64');
