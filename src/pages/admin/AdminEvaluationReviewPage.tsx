@@ -182,6 +182,29 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
     }
   };
 
+  const runAdminReprocess = async () => {
+    const confirmed = window.confirm(
+      'Reprocess this NEEDS_REVIEW evaluation using the original answer sheet and its exact linked reference material? The previous result will be preserved in the admin audit log. No additional personal credit will be deducted. Reprocess only after the linked Question Paper / Suggested Answers are confirmed correct; this action does not repair incorrect reference material.'
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    setActionError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/recover`, {
+        method: 'POST',
+        body: JSON.stringify({ mode: 'REPROCESS_NEEDS_REVIEW' }),
+      });
+      setSuccessMessage(result.message || 'Admin reprocess queued successfully.');
+      await fetchReviewDetails();
+    } catch (err: any) {
+      setActionError(err.message || 'Admin reprocess could not safely start. The existing review result has been preserved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+
   const fetchReviewDetails = async () => {
     try {
       setLoading(true);
@@ -247,7 +270,10 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
 
   const { evaluation, resultJson, activeVersion, versions, artifacts } = data;
   const questions = resultJson?.questions || [];
-  const isUnscoredReview = evaluation.status === 'NEEDS_REVIEW' && questions.length === 0;
+  const isUnscoredReview = (
+    evaluation.status === 'NEEDS_REVIEW' ||
+    (['QUEUED', 'PROCESSING'].includes(String(evaluation.status || '').toUpperCase()) && evaluation.grade === 'PENDING_REPROCESS')
+  ) && questions.length === 0;
   const reviewDiagnostics = Array.isArray(resultJson?.validationErrors)
     ? resultJson.validationErrors.filter((message): message is string => typeof message === 'string' && message.trim().length > 0)
     : [];
@@ -440,6 +466,17 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {evaluation.status === 'NEEDS_REVIEW' && (
+            <button
+              onClick={runAdminReprocess}
+              disabled={saving}
+              className="px-3 py-1.5 rounded-lg border border-blue-300 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 text-blue-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+              title="Start a fresh AI evaluation using the original answer sheet and exact linked reference material"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${saving ? 'animate-spin' : ''}`} />
+              {saving ? 'Reprocessing...' : 'Reprocess Evaluation'}
+            </button>
+          )}
           {['QUEUED', 'PROCESSING', 'FAILED', 'PERSISTENCE_FAILED'].includes(String(evaluation.status || '').toUpperCase()) && (
             <button
               onClick={runRecoveryPreflight}
