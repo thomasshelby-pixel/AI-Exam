@@ -1375,6 +1375,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const pageAudit = runPackage?.pageCoverageAudit || [];
     const hasCompletedQuestionEvaluation = completedQuestionEvaluationCount > 0;
     const pageAnalysisAuditPassed = Boolean(
+      originalPageCount > 0 &&
       pageAudit.length === originalPageCount &&
       Array.from({ length: originalPageCount }, (_, index) => index + 1).every((pageNumber) => {
         const page = pageAudit.find((item) => item.pageNumber === pageNumber);
