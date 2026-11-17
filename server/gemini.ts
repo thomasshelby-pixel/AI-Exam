@@ -1211,10 +1211,12 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           errors,
         });
 
-        // Run deterministic source/paper checks BEFORE sending every answer-sheet
-        // page through the AI page auditor. An unparsed or conflicting reference set
-        // cannot produce a trustworthy mapping, so page-level provider calls would
-        // only spend money before the same blocker is detected below.
+        // Run deterministic source/paper checks before sending answer-sheet pages
+        // through the AI page auditor. Only failures that make the canonical paper
+        // structure or paper identity unsafe short-circuit page analysis.
+        // Mark-allocation disagreements remain explicit review holds, but we still
+        // analyse every answer page so independent, correctly mapped questions are
+        // not discarded before evaluation.
         const sourcePreflight = validatePreEvaluationGate({
           paperStructure,
           questionPaperText: params.referenceQuestionPaperText,
@@ -1273,9 +1275,10 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           return validCanonicalIds.has(canon);
         }) || [];
 
-        // Stop only when the authoritative paper/marking basis is unsafe or no
-        // question can be mapped. Coverage-only ambiguity stays review-required,
-        // but must not suppress marking for other correctly mapped attempts.
+        // Stop only when the canonical paper identity/structure is unsafe or no
+        // attempted question can be mapped at all. Page-coverage and source mark
+        // allocation disagreements remain review holds; correctly mapped answers
+        // may still be evaluated provisionally, but the result cannot be certified.
         if (preGateDisposition.blockingFailures.length > 0 || attemptedScorableQuestions.length === 0) {
           return createTechnicalReview(coverageMap, preGate.failedInvariants);
         }
