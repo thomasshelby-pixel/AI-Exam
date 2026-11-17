@@ -120,9 +120,12 @@ async function run() {
     // while the evaluation is still NEEDS_REVIEW and no active worker/Firestore
     // lease exists (the route checks both before this atomic SQL compare-and-set).
     // An explicit reprocess may reclaim that orphan marker exactly once.
+    // Legacy/hydrated records may contain lower-case status values even though
+    // the Admin API normalizes them to upper-case before deciding eligibility.
+    // The atomic claim must normalize the stored status as well.
     db.prepare(`
       UPDATE evaluations
-      SET progress_stage = 'RECOVERY_CLAIMED', updated_at = CURRENT_TIMESTAMP
+      SET status = 'needs_review', progress_stage = 'RECOVERY_CLAIMED', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(evaluationId);
 
@@ -130,8 +133,8 @@ async function run() {
       UPDATE evaluations
       SET status = 'QUEUED', progress_stage = 'RECOVERY_CLAIMED', updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-        AND ((? = 0 AND status IN ('QUEUED', 'PROCESSING')) OR (? = 1 AND status = 'NEEDS_REVIEW'))
-        AND ((? = 1 AND status = 'NEEDS_REVIEW')
+        AND ((? = 0 AND UPPER(TRIM(COALESCE(status, ''))) IN ('QUEUED', 'PROCESSING')) OR (? = 1 AND UPPER(TRIM(COALESCE(status, ''))) = 'NEEDS_REVIEW'))
+        AND ((? = 1 AND UPPER(TRIM(COALESCE(status, ''))) = 'NEEDS_REVIEW')
           OR COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
           OR updated_at < datetime('now', '-2 minutes')
           OR updated_at IS NULL)
