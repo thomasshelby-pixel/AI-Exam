@@ -450,7 +450,9 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
                 className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                   evaluation.status === 'NEEDS_REVIEW'
                     ? 'bg-amber-100 text-amber-800 border border-amber-300'
-                    : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : ['QUEUED', 'PROCESSING'].includes(String(evaluation.status || '').toUpperCase())
+                      ? 'bg-blue-100 text-blue-800 border border-blue-300'
+                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                 }`}
               >
                 {evaluation.status}
@@ -530,6 +532,19 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
           <button onClick={() => setSuccessMessage(null)} className="text-emerald-600 hover:text-emerald-800">
             <X className="w-3.5 h-3.5" />
           </button>
+        </div>
+      )}
+
+      {evaluation.grade === 'PENDING_REPROCESS' &&
+        ['QUEUED', 'PROCESSING'].includes(String(evaluation.status || '').toUpperCase()) && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-blue-900 text-xs flex items-start gap-3">
+          <RotateCcw className="w-4 h-4 text-blue-600 shrink-0 mt-0.5 animate-spin" />
+          <div className="space-y-1">
+            <p className="font-bold text-blue-950">Admin reprocess in progress</p>
+            <p className="text-blue-800 leading-relaxed">
+              The previous review result has been archived in the admin audit log. A fresh evaluation is being run from the original answer sheet and its exact linked reference material. No additional personal credit is being deducted.
+            </p>
+          </div>
         </div>
       )}
 
