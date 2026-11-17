@@ -859,16 +859,20 @@ export function countCompletedQuestionEvaluations(resultJson: any): number {
     'NEEDS_MAPPING_REVIEW',
     'RENDER_FAILED',
   ]);
-  const technicalFlags = new Set([
+  const technicalOrReviewFlags = new Set([
     'FAILED_TO_EVALUATE',
     'TECHNICAL_FAILURE',
     'NEEDS_MAPPING_REVIEW',
+    'REVIEW_REQUIRED',
+    'QUESTION_REFERENCE_REVIEW_REQUIRED',
+    'MCQ_SELECTION_REVIEW_REQUIRED',
+    'HANDWRITING_UNCLEAR',
   ]);
   return questions.filter((question: any) => {
     const status = String(question?.status || '').trim().toUpperCase();
-    if (!status || failedStatuses.has(status)) return false;
+    if (!status || failedStatuses.has(status) || question?.reviewRequired === true) return false;
     const flags = Array.isArray(question?.flags) ? question.flags : [];
-    return !flags.some((flag: unknown) => technicalFlags.has(String(flag).toUpperCase()));
+    return !flags.some((flag: unknown) => technicalOrReviewFlags.has(String(flag).toUpperCase()));
   }).length;
 }
 
