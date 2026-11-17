@@ -1621,11 +1621,11 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
           // A mapped subset can still be evaluated when some pages/questions need
           // manual mapping. Preserve the provisional marks and every unresolved
           // coverage invariant, but never certify or unlock the partial result.
-          if (preGateDisposition.coverageReviewFailures.length > 0) {
-            const coverageErrors = preGateDisposition.coverageReviewFailures;
+          if (preGateDisposition.reviewOnlyFailures.length > 0) {
+            const reviewErrors = preGateDisposition.reviewOnlyFailures;
             const validationErrors = Array.from(new Set([
               ...(hardenedResult.validationErrors || []),
-              ...coverageErrors,
+              ...reviewErrors,
             ]));
             hardenedResult.validationStatus = 'NEEDS_REVIEW';
             hardenedResult.certificationStatus = 'VERIFICATION_REQUIRED';
@@ -1633,19 +1633,19 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             hardenedResult.validationErrors = validationErrors;
             hardenedResult.overallSummary = [
               hardenedResult.overallSummary,
-              `PROVISIONAL RESULT: ${attemptedScorableQuestions.length} mapped attempted question(s) were scored, but ${coverageMap.unmappedPages?.length || 0} page(s) or question mapping(s) still require review. These marks are not a certified full-paper result.`,
+              `PROVISIONAL RESULT: ${attemptedScorableQuestions.length} mapped attempted question(s) were evaluated, but source mark-allocation or page/question mapping checks still require review. These marks are provisional and are not a certified full-paper result.`,
             ].filter(Boolean).join('\n\n');
             hardenedResult.completionGateReport = {
               ...(hardenedResult.completionGateReport || { passedCount: 0, failedCount: 0, checks: [] }),
               isPassed: false,
-              failedCount: Math.max(1, (hardenedResult.completionGateReport?.failedCount || 0) + coverageErrors.length),
+              failedCount: Math.max(1, (hardenedResult.completionGateReport?.failedCount || 0) + reviewErrors.length),
               checks: [
                 ...(hardenedResult.completionGateReport?.checks || []),
                 {
-                  ruleId: 'PRE_EVALUATION_COVERAGE_REVIEW',
-                  name: 'Unmapped page/question review',
+                  ruleId: 'PRE_EVALUATION_REVIEW_REQUIRED',
+                  name: 'Source allocation and page/question review',
                   passed: false,
-                  details: coverageErrors.join(' | '),
+                  details: reviewErrors.join(' | '),
                 },
               ],
               timestamp: new Date().toISOString(),
@@ -1657,7 +1657,7 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
             };
             hardenedResult.recommendations = Array.from(new Set([
               ...(hardenedResult.recommendations || []),
-              'Review the unmapped page(s) and unresolved question identities before certifying the full-paper score.',
+              'Resolve the source mark-allocation and page/question review items before certifying the full-paper score.',
             ]));
           }
 
