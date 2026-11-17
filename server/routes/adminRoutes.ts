@@ -5271,11 +5271,18 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
           AND (
-            status IN ('QUEUED', 'PROCESSING')
+            (? = 0 AND status IN ('QUEUED', 'PROCESSING'))
             OR (? = 1 AND status = 'NEEDS_REVIEW')
           )
           AND (
-            COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
+            -- An explicit NEEDS_REVIEW reprocess reaches this SQL only after
+            -- process-local active-job and durable Firestore lease checks above.
+            -- Allow it to reclaim an orphaned RECOVERY_CLAIMED marker, but only
+            -- while the row is still NEEDS_REVIEW. The first claimant atomically
+            -- changes status to QUEUED, so a simultaneous second admin request
+            -- cannot pass this predicate.
+            (? = 1 AND status = 'NEEDS_REVIEW')
+            OR COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
             OR updated_at < datetime('now', '-2 minutes')
             OR updated_at IS NULL
           )
@@ -5299,6 +5306,8 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
         evaluationId,
+        reprocessNeedsReview ? 0 : 1,
+        reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
       );
       if (claim.changes === 1) {
