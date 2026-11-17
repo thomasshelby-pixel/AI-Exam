@@ -4908,7 +4908,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
   const requestedId = String(req.params.id || '').trim();
   const reprocessNeedsReview = String(req.body?.mode || '').trim().toUpperCase() === 'REPROCESS_NEEDS_REVIEW';
   try {
-    const evaluation = db.prepare(
+    let evaluation = db.prepare(
       'SELECT * FROM evaluations WHERE id = ? OR display_id = ? LIMIT 1'
     ).get(requestedId, requestedId) as any;
 
@@ -4917,7 +4917,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     const evaluationId = String(evaluation.id);
-    const canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
+    let canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
     if (String(canonicalStatus.status || '').toUpperCase() === 'REJECTED') {
       await repairEvaluationStatus(evaluation);
       return res.status(409).json({
@@ -4927,6 +4927,12 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         status: 'REJECTED',
         rejection_reason: canonicalStatus.rejection_reason || evaluation.error_message || null,
       });
+    }
+
+    if (String(canonicalStatus.status || '').toUpperCase() === 'NEEDS_REVIEW') {
+      await repairEvaluationStatus(evaluation);
+      evaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any || evaluation;
+      canonicalStatus = normalizeEvaluationRejectionStatus(evaluation);
     }
 
     const isNeedsReview = String(canonicalStatus.status || '').toUpperCase() === 'NEEDS_REVIEW';
