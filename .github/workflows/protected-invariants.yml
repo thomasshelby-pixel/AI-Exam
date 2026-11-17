@@ -244,6 +244,9 @@ jobs:
       - name: Admin NEEDS_REVIEW reprocess preflight regression
         run: node_modules/.bin/tsx server/tests/adminNeedsReviewReprocess.test.ts
 
+      - name: SQL positional binding mismatch regression
+        run: node_modules/.bin/tsx server/tests/sqlBindingGuard.test.ts
+
 
       - name: Historical evaluation material recovery regression
         run: node_modules/.bin/tsx server/tests/evaluationMaterialRecovery.test.ts

@@ -198,7 +198,11 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
       setSuccessMessage(result.message || 'Admin reprocess queued successfully.');
       await fetchReviewDetails();
     } catch (err: any) {
-      setActionError(err.message || 'Admin reprocess could not safely start. The existing review result has been preserved.');
+      const diagnostics = err?.data?.diagnostics;
+      const diagnosticText = diagnostics
+        ? ` Database status: ${diagnostics.databaseStatus || 'unknown'}; stage: ${diagnostics.progressStage || 'unknown'}; updated: ${diagnostics.updatedAt || 'unknown'}; canonical: ${diagnostics.canonicalStatus || 'unknown'}; durable queue: ${diagnostics.durableQueueStatus || 'unknown'}.`
+        : '';
+      setActionError((err.message || 'Admin reprocess could not safely start. The existing review result has been preserved.') + diagnosticText);
     } finally {
       setSaving(false);
     }
