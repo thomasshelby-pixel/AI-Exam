@@ -35,6 +35,10 @@ import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
 import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
 import { settlePersonalEntitlementForSuccessfulEvaluation } from '../services/evaluationEntitlementSettlementService.js';
+import {
+  reserveInstituteEvaluationCredit,
+  releaseInstituteEvaluationCredit,
+} from '../services/instituteTrialService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { canManuallyRestoreFreeTrialForReason } from '../services/freeTrialAbuseService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
@@ -5557,6 +5561,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     const reprocessAuditId = reprocessNeedsReview
       ? `aud_${crypto.randomBytes(8).toString('hex')}`
       : null;
+    let instituteCreditReserved = false;
 
     let claimed = false;
     db.exec('BEGIN IMMEDIATE;');
@@ -5698,6 +5703,17 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     try {
+      // Reprocessed institute evaluations reserve one shared credit before
+      // acceptance. A previous review-required run released its reservation.
+      if (String(entitlementSource || '').trim().toUpperCase() === 'INSTITUTE_ALLOCATION' && sponsoringInstituteId) {
+        reserveInstituteEvaluationCredit({
+          instituteId: String(sponsoringInstituteId),
+          studentId: String(evaluation.student_id),
+          evaluationId,
+        });
+        instituteCreditReserved = true;
+      }
+
       await enqueueEvaluation({
         evaluationId,
         studentId: String(evaluation.student_id),
@@ -5771,6 +5787,13 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         reprocess: reprocessNeedsReview,
       });
     } catch (enqueueError: any) {
+      if (instituteCreditReserved) {
+        releaseInstituteEvaluationCredit({
+          evaluationId,
+          reason: String(enqueueError?.message || 'Admin reprocess could not be queued.'),
+        });
+        instituteCreditReserved = false;
+      }
       if (reprocessNeedsReview && previousSnapshot) {
         db.prepare(`
           UPDATE evaluations
