@@ -64,15 +64,24 @@ async function run() {
     assert.equal(firstSettlement?.source, 'PERSONAL_PURCHASED_CREDIT');
     assert.equal(getValidStudentCreditBalance(userId), 1);
 
-    const missingReplicaLedger = await settlePersonalEntitlementForSuccessfulEvaluation({
+    const missingLedgerEvalId = `eval_ledger_missing_${crypto.randomBytes(4).toString('hex')}`;
+    const missingLedgerSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
       userId,
-      evaluationId: `eval_ledger_not_visible_${crypto.randomBytes(4).toString('hex')}`,
+      evaluationId: missingLedgerEvalId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
-      creditAlreadyConsumed: true,
     });
-    assert.equal(missingReplicaLedger?.charged, false);
-    assert.equal(missingReplicaLedger?.reason, 'PRECHARGED_LEDGER_NOT_VISIBLE');
-    assert.equal(getValidStudentCreditBalance(userId), 1);
+    assert.equal(missingLedgerSettlement?.charged, true);
+    assert.equal(missingLedgerSettlement?.reason, 'DEBIT_CREATED');
+    assert.equal(getValidStudentCreditBalance(userId), 0);
+
+    const missingLedgerRetry = await settlePersonalEntitlementForSuccessfulEvaluation({
+      userId,
+      evaluationId: missingLedgerEvalId,
+      entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+    });
+    assert.equal(missingLedgerRetry?.charged, false);
+    assert.equal(missingLedgerRetry?.reason, 'DEBIT_ALREADY_EXISTS');
+    assert.equal(getValidStudentCreditBalance(userId), 0);
 
     // A negative ledger entry is authoritative: repeat completion must not
     // consume another credit. Faculty Mock sponsorship is excluded entirely.
@@ -116,7 +125,7 @@ async function run() {
     });
     assert.equal(reprocessSettlement?.charged, true);
     assert.equal(reprocessSettlement?.reason, 'DEBIT_RESTORED_AFTER_REFUND');
-    assert.equal(getValidStudentCreditBalance(userId), 1);
+    assert.equal(getValidStudentCreditBalance(userId), 0);
 
     const reprocessRetry = await settlePersonalEntitlementForSuccessfulEvaluation({
       userId,
@@ -125,7 +134,7 @@ async function run() {
       creditAlreadyConsumed: true,
     });
     assert.equal(reprocessRetry?.charged, false);
-    assert.equal(getValidStudentCreditBalance(userId), 1);
+    assert.equal(getValidStudentCreditBalance(userId), 0);
 
     // A second failed reprocess cycle must be refundable too; a historical
     // refund from the first attempt must not block the later refund.
