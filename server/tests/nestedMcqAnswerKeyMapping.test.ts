@@ -248,6 +248,26 @@ assert.equal(
   'The 15 individual responses must score 10/15 for this fixed selected-option and answer-key fixture.',
 );
 
+// The compact MCQ key may be followed by Division B descriptive solutions
+// in the same TXT. Those Q1(a)/Q2(b) headings must never overwrite MCQ 1/2.
+const compactKeyWithDescriptiveSolutions = [
+  'SUGGESTED ANSWERS',
+  'ANSWER KEY',
+  ...compactFifteenOfficialKeys.map((key, index) => \`\${index + 1}. (\${key.toLowerCase()})\`),
+  'Division B',
+  '1. (a) The descriptive answer begins here and must not become MCQ 1.',
+  '2. (b) Another descriptive answer must not become MCQ 2.',
+].join('\n');
+const safeCompactKeys = extractOfficialMcqKeysFromSuggestedAnswers(
+  compactKeyWithDescriptiveSolutions,
+  compactFifteenQuestionPaper,
+);
+assert.deepEqual(
+  Array.from(safeCompactKeys.entries()).map(([number, value]) => [number, value.officialKey]),
+  compactFifteenOfficialKeys.map((key, index) => [String(index + 1), key]),
+  'The compact parser must stop at Division B and preserve only the authoritative MCQ key list.',
+);
+
 // No QP objective section or no explicit Answer Key heading means no inferred
 // MCQ keys; descriptive "1(a)" answer structure must not be converted to MCQs.
 assert.equal(
