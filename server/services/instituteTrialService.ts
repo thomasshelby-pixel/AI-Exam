@@ -461,3 +461,41 @@ export function releaseInstituteEvaluationCredit(params: { evaluationId: string;
     return false;
   }
 }
+
+/**
+ * Atomically reserves one occupied student seat for an enrollment/invitation.
+ * Active memberships and pending invitations both consume capacity. The row
+ * count and insert/reactivation run under the same SQLite write transaction,
+ * so simultaneous single and bulk imports cannot exceed the seat limit.
+ */
+export function withInstituteStudentSeatReservation<T>(instituteId: string, operation: () => T): T {
+  let transactionStarted = false;
+  try {
+    db.exec('BEGIN IMMEDIATE;');
+    transactionStarted = true;
+    const institute = db.prepare('SELECT status, max_students FROM institutes WHERE id = ? LIMIT 1').get(instituteId) as any;
+    if (!institute || String(institute.status || '').trim().toUpperCase() !== 'ACTIVE') {
+      throw new Error('INSTITUTE_SUBSCRIPTION_REQUIRED');
+    }
+    const subscription = getActiveInstituteSubscription(instituteId);
+    if (!subscription && !hasActiveLegacyInstitutePlan(instituteId)) {
+      throw new Error('INSTITUTE_SUBSCRIPTION_REQUIRED');
+    }
+    const capacity = Number(subscription?.student_capacity ?? institute.max_students ?? 0);
+    const occupied = Number((db.prepare(
+      "SELECT COUNT(*) AS count FROM institute_memberships WHERE institute_id = ? AND UPPER(TRIM(COALESCE(status, ''))) IN ('ACTIVE', 'PENDING')"
+    ).get(instituteId) as any)?.count || 0);
+    if (capacity <= 0 || occupied >= capacity) {
+      throw new Error('INSTITUTE_STUDENT_QUOTA_EXCEEDED');
+    }
+    const result = operation();
+    db.exec('COMMIT;');
+    transactionStarted = false;
+    return result;
+  } catch (error) {
+    if (transactionStarted) {
+      try { db.exec('ROLLBACK;'); } catch {}
+    }
+    throw error;
+  }
+}
