@@ -230,6 +230,7 @@ export async function evaluateMfaRequirementForLogin(
   message?: string;
   deviceTrusted?: boolean;
   trustToken?: string;
+  testAccountMfaBypass?: boolean;
 }> {
   // Authoritative server/database MFA state evaluation
   const authState = await getAuthoritativeUserMfaState(user.id);
@@ -277,6 +278,7 @@ export async function evaluateMfaRequirementForLogin(
       mfaState,
       mfaEnrolled: isEnrolled,
       role: user.role,
+      testAccountMfaBypass: true,
       message: 'MFA bypass is enabled for this explicitly configured test Institute Admin account.',
     };
   }
@@ -1892,10 +1894,10 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         authProvider: isSocialLogin ? socialProvider : inferAuthProvider(user.password_hash),
         requiresProfileCompletion,
         hasPermanentFreeAccess: isPermanentFree,
-        mfaEnabled: authMfa.mfaEnabled,
+        mfaEnabled: authMfa.mfaEnabled && !mfaCheck.testAccountMfaBypass,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified: true,
-        mfaMandatory: isMandatoryRole,
+        mfaMandatory: isMandatoryRole && !mfaCheck.testAccountMfaBypass,
       },
       requiresProfileCompletion,
       createdViaSocialSignup,
@@ -2218,10 +2220,10 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
         fullName: user.full_name,
         role: user.role,
         status: user.status,
-        mfaEnabled: authMfa.mfaEnabled,
+        mfaEnabled: authMfa.mfaEnabled && !mfaCheck.testAccountMfaBypass,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified: true,
-        mfaMandatory: true,
+        mfaMandatory: !mfaCheck.testAccountMfaBypass,
       },
     });
   } catch (error: unknown) {
