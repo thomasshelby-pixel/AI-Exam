@@ -1795,7 +1795,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       // this safe to call repeatedly and refuses refunds without a matching debit.
       if (
         currentStatus !== 'COMPLETED' &&
-        !job.isRecoveryRetry &&
+        (successfulSettlementDebited || !job.isRecoveryRetry) &&
         (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
       ) {
         try {
@@ -1832,7 +1832,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       if (isTerminalEvaluationStatus(latestStatus)) {
         if (
           latestStatus !== 'COMPLETED' &&
-          !job.isRecoveryRetry &&
+          (successfulSettlementDebited || !job.isRecoveryRetry) &&
           (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')
         ) {
           try {
@@ -1861,7 +1861,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     await releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
 
     // Refund only after successfully recording this job's FAILED transition.
-    if (job.creditAlreadyConsumed && !job.isRecoveryRetry && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
+    if ((successfulSettlementDebited || (job.creditAlreadyConsumed && !job.isRecoveryRetry)) && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {
       try {
         const restored = refundEvaluationCreditAtomic({
           userId: studentId,
