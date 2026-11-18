@@ -12,6 +12,8 @@ import { isConfiguredInstituteTestAccountMfaBypass } from '../services/mfaTestAc
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore, persistStudentAccountToFirestore, recoverStudentAccountFromFirestoreByEmail } from '../services/firestoreSyncService.js';
+import { persistInstituteAccountToFirestore, recoverInstituteAccountFromFirestoreByEmail } from '../services/instituteAccountPersistenceService.js';
+import { ensureInstituteStarterTrial, getActiveInstituteSubscription, INSTITUTE_FREE_TRIAL_PLAN_ID } from '../services/instituteTrialService.js';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
@@ -1986,91 +1988,239 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const existingUser = db.prepare('SELECT id, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
+      id: string;
+      role: string;
+    } | undefined;
 
-    // Check if user or institute already exists
-    const existingUser = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(normalizedEmail);
+    // An earlier local registration may have missed its cloud mirror. Repair its
+    // exact identity rather than generating a replacement institute/admin.
     if (existingUser) {
+      if (String(existingUser.role || '').toUpperCase() === 'INSTITUTE_ADMIN') {
+        const localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
+        if (!localInstitute) {
+          const recovery = await recoverInstituteAccountFromFirestoreByEmail(normalizedEmail, existingUser.id);
+          if (recovery === 'recovered' || recovery === 'already-present') {
+            return res.status(400).json({ error: 'An account with this email address already exists. Please sign in.' });
+          }
+          if (recovery === 'conflict') {
+            return res.status(409).json({
+              error: 'An institute account with this email exists but its records conflict. Registration is blocked to prevent a duplicate.',
+              code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
+            });
+          }
+          if (requiresDurableAccountPersistence()) {
+            return res.status(503).json({
+              error: 'The existing institute profile could not be safely restored. Please sign in or contact support; do not register again.',
+              code: 'INSTITUTE_ACCOUNT_RECOVERY_UNAVAILABLE',
+              retryable: true,
+            });
+          }
+        } else {
+          const localUser = db.prepare('SELECT * FROM users WHERE id = ?').get(existingUser.id) as any;
+          const localBatches = db.prepare('SELECT * FROM batches WHERE institute_id = ? ORDER BY created_at ASC').all(localInstitute.id) as any[];
+          const localAuditLogs = db.prepare(
+            "SELECT * FROM audit_logs WHERE user_id = ? AND action = 'INSTITUTE_SIGNUP' AND entity_id = ? ORDER BY created_at ASC"
+          ).all(existingUser.id, localInstitute.id) as any[];
+          const persistence = await persistInstituteAccountToFirestore({
+            institute: localInstitute,
+            user: localUser,
+            batches: localBatches,
+            auditLogs: localAuditLogs,
+          });
+          if (persistence === 'conflict') {
+            return res.status(409).json({
+              error: 'This institute email is already linked to a different cloud account. Please contact support.',
+              code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
+            });
+          }
+          if (persistence !== 'persisted' && requiresDurableAccountPersistence()) {
+            return res.status(503).json({
+              error: 'Your existing institute account is present, but its durable cloud save could not be confirmed. Please retry.',
+              code: 'INSTITUTE_ACCOUNT_PERSISTENCE_UNCONFIRMED',
+              retryable: true,
+            });
+          }
+        }
+      }
       return res.status(400).json({ error: 'An account with this email address already exists. Please sign in.' });
     }
 
     const instituteId = `inst_${crypto.randomBytes(8).toString('hex')}`;
-    const codePrefix = instituteName.replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'INST';
+    const codePrefix = String(instituteName).replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'INST';
     const instituteCode = `${codePrefix}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-
-    // Create institute record
-    db.prepare(`
-      INSERT INTO institutes (
-        id, name, code, logo_url, email, phone, address, website,
-        contact_person, status, subscription_plan, max_students
-      ) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, 'ACTIVE', 'PENDING_SELECTION', 50)
-    `).run(
-      instituteId,
-      instituteName.trim(),
-      instituteCode,
-      normalizedEmail,
-      phone.trim(),
-      address?.trim() || null,
-      website?.trim() || null,
-      contactPerson.trim()
-    );
-
-    // Create default initial batch for the institute
     const batchId = `batch_${crypto.randomBytes(8).toString('hex')}`;
-    db.prepare(`
-      INSERT INTO batches (id, institute_id, name, course_level, description)
-      VALUES (?, ?, 'First Batch - Foundation & Inter', 'INTERMEDIATE', 'Primary batch for enrolled CA students')
-    `).run(batchId, instituteId);
-
-    // Create INSTITUTE_ADMIN user
     const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const auditId = `log_${crypto.randomBytes(8).toString('hex')}`;
+    const createdAt = new Date().toISOString();
     const passwordHash = hashPassword(password);
-    const role: UserRole = 'INSTITUTE_ADMIN';
 
-    db.prepare(`
-      INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
-    `).run(userId, normalizedEmail, passwordHash, contactPerson.trim(), phone.trim(), role);
+    const instituteRecord = {
+      id: instituteId,
+      name: String(instituteName).trim(),
+      code: instituteCode,
+      logo_url: '',
+      email: normalizedEmail,
+      phone: String(phone).trim(),
+      address: address ? String(address).trim() : null,
+      website: website ? String(website).trim() : null,
+      contact_person: String(contactPerson).trim(),
+      status: 'ACTIVE',
+      subscription_plan: 'PENDING_SELECTION',
+      subscription_expires_at: null,
+      max_students: 50,
+      created_at: createdAt,
+    };
+    const userRecord = {
+      id: userId,
+      email: normalizedEmail,
+      password_hash: passwordHash,
+      full_name: String(contactPerson).trim(),
+      phone: String(phone).trim(),
+      role: 'INSTITUTE_ADMIN',
+      status: 'ACTIVE',
+      account_classification: 'NORMAL',
+      signup_platform: getSignupPlatform(req),
+      mfa_enabled: 0,
+      mfa_reset_required: 0,
+      created_at: createdAt,
+      updated_at: createdAt,
+    };
+    const batchRecord = {
+      id: batchId,
+      institute_id: instituteId,
+      name: 'First Batch - Foundation & Inter',
+      course_level: 'INTERMEDIATE',
+      description: 'Primary batch for enrolled CA students',
+      created_at: createdAt,
+    };
+    const auditRecord = {
+      id: auditId,
+      user_id: userId,
+      action: 'INSTITUTE_SIGNUP',
+      entity_type: 'INSTITUTE',
+      entity_id: instituteId,
+      details: `Registered institute ${instituteRecord.name}`,
+      created_at: createdAt,
+    };
 
-    // Audit log
-    db.prepare(`
-      INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-      VALUES (?, ?, 'INSTITUTE_SIGNUP', 'INSTITUTE', ?, ?)
-    `).run(`log_${crypto.randomBytes(8).toString('hex')}`, userId, instituteId, `Registered institute ${instituteName}`);
+    // Do not acknowledge a production signup until Firestore has atomically
+    // stored and read back the institute, admin, batch and signup audit record.
+    const persistence = await persistInstituteAccountToFirestore({
+      institute: instituteRecord,
+      user: userRecord,
+      batches: [batchRecord],
+      auditLogs: [auditRecord],
+    });
+    if (persistence === 'conflict') {
+      return res.status(409).json({
+        error: 'An institute account with this email already exists in the cloud account store. Please sign in or contact support.',
+        code: 'INSTITUTE_ACCOUNT_ALREADY_EXISTS',
+      });
+    }
+    if (persistence !== 'persisted' && requiresDurableAccountPersistence()) {
+      console.error('[InstituteRegister] Durable persistence gate failed:', { instituteId, userId, result: persistence });
+      return res.status(503).json({
+        error: 'Your institute account could not be safely saved. Please retry shortly; registration is complete only after the account is durably stored.',
+        code: 'INSTITUTE_ACCOUNT_PERSISTENCE_UNCONFIRMED',
+        retryable: true,
+      });
+    }
+    if (persistence !== 'persisted') {
+      console.warn('[InstituteRegister] Cloud persistence unavailable in non-production runtime:', persistence);
+    }
 
-    // Mirror newly registered institute, batch, and user to Cloud Firestore
+    // Persist the local runtime copy atomically after the authoritative cloud copy.
+    db.exec('BEGIN IMMEDIATE');
     try {
-      const createdInst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId);
-      if (createdInst) await syncRecordToFirestore('institutes', instituteId, createdInst as any);
-      const createdUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-      if (createdUser) await syncRecordToFirestore('users', userId, createdUser as any);
-      const createdBatch = db.prepare('SELECT * FROM batches WHERE id = ?').get(batchId);
-      if (createdBatch) await syncRecordToFirestore('batches', batchId, createdBatch as any);
-    } catch (syncErr) {
-      console.warn('[InstituteRegister] Cloud sync warning:', syncErr);
+      db.prepare(`
+        INSERT INTO institutes (
+          id, name, code, logo_url, email, phone, address, website,
+          contact_person, status, subscription_plan, subscription_expires_at,
+          max_students, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      `).run(
+        instituteRecord.id, instituteRecord.name, instituteRecord.code, instituteRecord.logo_url,
+        instituteRecord.email, instituteRecord.phone, instituteRecord.address, instituteRecord.website,
+        instituteRecord.contact_person, instituteRecord.status, instituteRecord.subscription_plan,
+        instituteRecord.subscription_expires_at, instituteRecord.max_students, instituteRecord.created_at,
+      );
+
+      db.prepare(`
+        INSERT INTO batches (id, institute_id, name, course_level, description, created_at)
+        VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      `).run(
+        batchRecord.id, batchRecord.institute_id, batchRecord.name, batchRecord.course_level,
+        batchRecord.description, batchRecord.created_at,
+      );
+
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, signup_platform, mfa_enabled, mfa_reset_required, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      `).run(
+        userRecord.id, userRecord.email, userRecord.password_hash, userRecord.full_name, userRecord.phone,
+        userRecord.role, userRecord.status, userRecord.account_classification, userRecord.signup_platform,
+        userRecord.mfa_enabled, userRecord.mfa_reset_required, userRecord.created_at,
+      );
+
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+      `).run(
+        auditRecord.id, auditRecord.user_id, auditRecord.action, auditRecord.entity_type,
+        auditRecord.entity_id, auditRecord.details, auditRecord.created_at,
+      );
+      db.exec('COMMIT');
+    } catch (localError) {
+      try { db.exec('ROLLBACK'); } catch {}
+      // The cloud copy remains authoritative and can heal the local runtime on login.
+      throw localError;
+    }
+
+    // Activate the one-time Free Starter Trial as part of signup, not later
+    // as a side effect of the first dashboard API request.
+    const starterTrial = ensureInstituteStarterTrial({
+      instituteId,
+      adminUserId: userId,
+      adminEmail: normalizedEmail,
+    });
+    const activeStarterTrial = getActiveInstituteSubscription(instituteId);
+    if (
+      !starterTrial.granted &&
+      (!activeStarterTrial || activeStarterTrial.plan_id !== INSTITUTE_FREE_TRIAL_PLAN_ID)
+    ) {
+      console.error('[InstituteRegister] Starter trial activation failed:', { instituteId, reason: starterTrial.reason });
+      return res.status(503).json({
+        error: 'Your institute account is saved, but the free 30-day starter trial could not be activated yet. Please retry or contact support.',
+        code: 'INSTITUTE_STARTER_TRIAL_ACTIVATION_FAILED',
+        retryable: true,
+      });
     }
 
     const token = generateToken({
       id: userId,
       email: normalizedEmail,
-      role,
-      fullName: contactPerson.trim(),
+      role: 'INSTITUTE_ADMIN',
+      fullName: String(contactPerson).trim(),
     });
 
-    res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+    const isProduction = requiresDurableAccountPersistence();
+    const secureFlag = isProduction ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `ca_token=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${secureFlag}`);
 
     return res.status(201).json({
       token,
       user: {
         id: userId,
         email: normalizedEmail,
-        fullName: contactPerson.trim(),
-        role,
+        fullName: String(contactPerson).trim(),
+        role: 'INSTITUTE_ADMIN',
         status: 'ACTIVE',
       },
       institute: {
         id: instituteId,
-        name: instituteName.trim(),
+        name: instituteRecord.name,
         code: instituteCode,
         status: 'ACTIVE',
       },
@@ -2148,6 +2298,101 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
         error: 'Your institute account is inactive. Please contact support.',
         status: user.status,
       });
+    }
+
+    let localInstitute: any = null;
+    if (user.role === 'INSTITUTE_ADMIN') {
+      localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
+
+      if (!localInstitute) {
+        // Local SQLite may be a fresh deployment instance. Recover the exact
+        // institute linked to this verified admin before issuing a new session.
+        const recovery = await recoverInstituteAccountFromFirestoreByEmail(normalizedEmail, user.id);
+        if (recovery === 'conflict') {
+          return res.status(409).json({
+            error: 'Your institute records are ambiguous or do not match this administrator. Registration is blocked; please contact support.',
+            code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
+          });
+        }
+        if (recovery === 'not-found') {
+          return res.status(409).json({
+            error: 'The administrator account exists, but its original institute profile was not found in the durable account store. No replacement profile was created. Please contact support for recovery.',
+            code: 'INSTITUTE_PROFILE_NOT_FOUND',
+          });
+        }
+        if (recovery !== 'recovered' && recovery !== 'already-present') {
+          if (requiresDurableAccountPersistence()) {
+            return res.status(503).json({
+              error: 'We could not safely restore your institute profile from the durable account store. Please retry shortly.',
+              code: 'INSTITUTE_ACCOUNT_RECOVERY_UNAVAILABLE',
+              retryable: true,
+            });
+          }
+        }
+        localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
+      }
+
+      if (!localInstitute) {
+        return res.status(409).json({
+          error: 'Your original institute profile is unavailable. No replacement profile was created.',
+          code: 'INSTITUTE_PROFILE_NOT_FOUND',
+        });
+      }
+
+      const localUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
+      const localBatches = db.prepare(
+        'SELECT * FROM batches WHERE institute_id = ? ORDER BY created_at ASC'
+      ).all(localInstitute.id) as any[];
+      const localAuditLogs = db.prepare(
+        "SELECT * FROM audit_logs WHERE user_id = ? AND action = 'INSTITUTE_SIGNUP' AND entity_id = ? ORDER BY created_at ASC"
+      ).all(user.id, localInstitute.id) as any[];
+      const persistence = await persistInstituteAccountToFirestore({
+        institute: localInstitute,
+        user: localUser,
+        batches: localBatches,
+        auditLogs: localAuditLogs,
+      });
+
+      if (persistence === 'conflict') {
+        return res.status(409).json({
+          error: 'Your institute identity conflicts with a different cloud record. Please contact support before continuing.',
+          code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
+        });
+      }
+      if (persistence !== 'persisted' && requiresDurableAccountPersistence()) {
+        return res.status(503).json({
+          error: 'Your institute account is present, but its durable cloud copy could not be verified. Please retry shortly.',
+          code: 'INSTITUTE_ACCOUNT_PERSISTENCE_UNCONFIRMED',
+          retryable: true,
+        });
+      }
+    }
+
+    if (user.role === 'INSTITUTE_ADMIN') {
+      // Existing institutes receive the one-time starter trial at their first
+      // successful login too. Paid/trial history is respected by the service.
+      try {
+        const starterTrial = ensureInstituteStarterTrial({
+          instituteId: String(localInstitute.id),
+          adminUserId: user.id,
+          adminEmail: normalizedEmail,
+        });
+        if (starterTrial.granted) {
+          console.info('[InstituteLogin] One-time Free Starter Trial activated:', {
+            instituteId: localInstitute.id,
+            expiresAt: starterTrial.expiresAt,
+          });
+        }
+      } catch (trialError) {
+        console.error('[InstituteLogin] Starter trial activation failed:', trialError);
+        if (requiresDurableAccountPersistence()) {
+          return res.status(503).json({
+            error: 'Your institute account was restored, but the free starter trial could not be activated yet. Please retry shortly.',
+            code: 'INSTITUTE_STARTER_TRIAL_ACTIVATION_FAILED',
+            retryable: true,
+          });
+        }
+      }
     }
 
     // Role-Based MFA Evaluation for Institute Login (MANDATORY, but bypasses OTP if device is trusted)

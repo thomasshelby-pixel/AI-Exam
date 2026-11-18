@@ -1143,8 +1143,11 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           inst.status || 'ACTIVE', inst.subscription_plan || 'INSTITUTIONAL_PRO',
           inst.subscription_expires_at || null, inst.max_students || 500, inst.created_at || null
         );
-      } catch {
-        // ignore
+      } catch (error) {
+        console.warn(`[FirestoreSync] Failed to hydrate institute ${inst.id}:`, error);
+        if (requireComplete) {
+          throw new Error(`Complete Firestore hydration could not restore institute ${inst.id}.`);
+        }
       }
     }
 
@@ -1162,8 +1165,11 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             description = excluded.description,
             updated_at = CURRENT_TIMESTAMP
         `).run(b.id, b.institute_id, b.name, b.course_level || 'INTERMEDIATE', b.description || '', b.created_at || null);
-      } catch {
-        // ignore
+      } catch (error) {
+        console.warn(`[FirestoreSync] Failed to hydrate institute batch ${b.id}:`, error);
+        if (requireComplete) {
+          throw new Error(`Complete Firestore hydration could not restore institute batch ${b.id}.`);
+        }
       }
     }
 
