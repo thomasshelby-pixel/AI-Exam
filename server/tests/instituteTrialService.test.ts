@@ -21,7 +21,7 @@ function createInstituteAdmin() {
     INSERT INTO users (id, email, password_hash, full_name, role, status)
     VALUES (?, ?, 'hash', 'Institute Trial Test Admin', 'INSTITUTE_ADMIN', 'ACTIVE')
   `).run(id, email);
-  db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(id);
+  // Institute signup/login currently does not set the general email_verified flag.
   return { id, email };
 }
 
