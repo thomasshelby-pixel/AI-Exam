@@ -105,6 +105,9 @@ interface EvaluationReviewData {
     attempt: string;
     material_type: string;
     checking_mode: string;
+    evaluation_source?: string;
+    entitlement_source?: string;
+    faculty_mock_test_id?: string | null;
     status: string;
     total_marks: number;
     maximum_marks: number;
@@ -182,9 +185,30 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
     }
   };
 
+  const runCreditReconciliation = async () => {
+    const confirmed = window.confirm(
+      'Reconcile the entitlement for this already COMPLETED evaluation? If a debit already exists, no extra credit will be taken. If the original debit is missing or was refunded, one current personal entitlement will be consumed. Faculty Mock, institute-sponsored and permanent-free evaluations are not eligible.'
+    );
+    if (!confirmed) return;
+    setSaving(true);
+    setActionError(null);
+    setSuccessMessage(null);
+    try {
+      const result = await apiRequest<any>(`/api/admin/evaluations/${evaluationId}/reconcile-entitlement`, {
+        method: 'POST',
+      });
+      setSuccessMessage(result.message || 'Evaluation entitlement reconciliation completed.');
+      await fetchReviewDetails();
+    } catch (err: any) {
+      setActionError(err.message || 'Evaluation entitlement could not be reconciled.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const runAdminReprocess = async () => {
     const confirmed = window.confirm(
-      'Reprocess this NEEDS_REVIEW evaluation using the original answer sheet and its exact linked reference material? The previous result will be preserved in the admin audit log. No additional personal credit will be deducted. Reprocess only after the linked Question Paper / Suggested Answers are confirmed correct; this action does not repair incorrect reference material.'
+      'Reprocess this NEEDS_REVIEW evaluation using the original answer sheet and its exact linked reference material? The previous result will be preserved in the admin audit log. An existing debit will not be duplicated; a refunded or missing debit will be settled only after successful completion. Reprocess only after the linked Question Paper / Suggested Answers are confirmed correct; this action does not repair incorrect reference material.'
     );
     if (!confirmed) return;
     setSaving(true);
@@ -472,6 +496,21 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {String(evaluation.status || '').toUpperCase() === 'COMPLETED' &&
+            ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(evaluation.entitlement_source || '').toUpperCase()) &&
+            String(evaluation.evaluation_source || 'PUBLIC').toUpperCase() !== 'FACULTY_MOCK' &&
+            String(evaluation.material_type || '').toUpperCase() !== 'FACULTY_MOCK_TEST' &&
+            !evaluation.faculty_mock_test_id && (
+              <button
+                onClick={runCreditReconciliation}
+                disabled={saving}
+                className="px-3 py-1.5 rounded-lg border border-emerald-300 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-900 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                title="Check the completed evaluation's personal entitlement ledger and safely apply a missing debit once"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {saving ? 'Reconciling...' : 'Reconcile Credit'}
+              </button>
+            )}
           {evaluation.status === 'NEEDS_REVIEW' && (
             <button
               onClick={runAdminReprocess}

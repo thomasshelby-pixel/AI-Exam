@@ -34,6 +34,7 @@ import { buildMaterialQuestionMappingAudit } from '../services/materialQuestionM
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
 import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
+import { settlePersonalEntitlementForSuccessfulEvaluation } from '../services/evaluationEntitlementSettlementService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { canManuallyRestoreFreeTrialForReason } from '../services/freeTrialAbuseService.js';
 import { getAllMcqRules, resetDefaultMcqRules, getCanonicalPaperName } from '../mcqRules.js';
@@ -4897,6 +4898,113 @@ router.get('/evaluations', async (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     console.error('Get evaluations error:', error);
     return res.status(500).json({ error: 'Failed to load evaluations' });
+  }
+});
+
+/**
+ * Explicit, idempotent credit repair for an already completed personal evaluation.
+ * This is used when a previous successful reprocess predates or missed the
+ * completion-time ledger settlement. Faculty Mock, institute-sponsored and
+ * permanent-free evaluations are deliberately not eligible.
+ */
+router.post('/evaluations/:id/reconcile-entitlement', async (req: AuthRequest, res: Response) => {
+  const requestedId = String(req.params.id || '').trim();
+  try {
+    const evaluation = db.prepare(`
+      SELECT id, student_id, status, evaluation_source, material_type,
+             faculty_mock_test_id, entitlement_source
+      FROM evaluations
+      WHERE id = ? OR display_id = ?
+      LIMIT 1
+    `).get(requestedId, requestedId) as any;
+
+    if (!evaluation) {
+      return res.status(404).json({ success: false, error: 'Evaluation not found.' });
+    }
+
+    const evaluationId = String(evaluation.id || '');
+    const status = String(evaluation.status || '').trim().toUpperCase();
+    if (status !== 'COMPLETED') {
+      return res.status(409).json({
+        success: false,
+        code: 'EVALUATION_NOT_COMPLETED',
+        error: 'Credit reconciliation is available only after an evaluation is COMPLETED.',
+        status,
+      });
+    }
+
+    const evaluationSource = String(evaluation.evaluation_source || 'PUBLIC').trim().toUpperCase();
+    const materialType = String(evaluation.material_type || '').trim().toUpperCase();
+    if (
+      evaluationSource === 'FACULTY_MOCK' ||
+      materialType === 'FACULTY_MOCK_TEST' ||
+      Boolean(evaluation.faculty_mock_test_id)
+    ) {
+      return res.status(409).json({
+        success: false,
+        code: 'FACULTY_MOCK_NOT_ELIGIBLE',
+        error: 'Faculty Mock entitlements are not reconciled through personal evaluation credits.',
+      });
+    }
+
+    const entitlementSource = String(evaluation.entitlement_source || '').trim().toUpperCase();
+    if (!['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource)) {
+      return res.status(409).json({
+        success: false,
+        code: 'PERSONAL_ENTITLEMENT_NOT_APPLICABLE',
+        error: `This evaluation uses ${entitlementSource || 'an unknown'} entitlement and is not eligible for personal credit reconciliation.`,
+        entitlementSource: entitlementSource || null,
+      });
+    }
+
+    const settlement = await settlePersonalEntitlementForSuccessfulEvaluation({
+      userId: String(evaluation.student_id),
+      evaluationId,
+      entitlementSource,
+    });
+
+    if (!settlement) {
+      return res.status(409).json({
+        success: false,
+        code: 'PERSONAL_ENTITLEMENT_NOT_APPLICABLE',
+        error: 'This evaluation does not use a personal entitlement.',
+      });
+    }
+
+    try {
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, ?, 'EVALUATION', ?, ?)
+      `).run(
+        `aud_${crypto.randomBytes(8).toString('hex')}`,
+        String(req.user?.id || evaluation.student_id),
+        settlement.charged ? 'EVALUATION_CREDIT_RECONCILED' : 'EVALUATION_CREDIT_RECONCILIATION_CHECKED',
+        evaluationId,
+        `Admin credit reconciliation: source=${settlement.source}; charged=${settlement.charged}; reason=${settlement.reason}.`
+      );
+    } catch (auditError) {
+      console.warn('[AdminCreditReconciliation] Audit log insert failed:', auditError);
+    }
+
+    return res.json({
+      success: true,
+      evaluationId,
+      charged: settlement.charged,
+      entitlementSource: settlement.source,
+      reason: settlement.reason,
+      message: settlement.charged
+        ? `One ${settlement.source} entitlement was successfully reconciled for this completed evaluation.`
+        : settlement.reason === 'DEBIT_ALREADY_EXISTS'
+          ? 'This evaluation already has its credit debit recorded. No additional credit was deducted.'
+          : 'No additional credit was deducted because the evaluation ledger already records a separate entitlement event.',
+    });
+  } catch (error: any) {
+    const message = String(error?.message || 'Credit reconciliation failed.');
+    console.error('[AdminCreditReconciliation] Failed:', requestedId, error);
+    if (/exhausted|no valid, unexpired evaluation credits available/i.test(message)) {
+      return res.status(402).json({ success: false, code: 'INSUFFICIENT_EVALUATION_ENTITLEMENT', error: message });
+    }
+    return res.status(500).json({ success: false, error: message });
   }
 });
 

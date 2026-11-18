@@ -12,7 +12,7 @@ export type PersonalEvaluationEntitlementSource =
 export interface SuccessfulEvaluationSettlementResult {
   charged: boolean;
   source: PersonalEvaluationEntitlementSource;
-  reason: 'DEBIT_ALREADY_EXISTS' | 'DEBIT_RESTORED_AFTER_REFUND' | 'DEBIT_CREATED' | 'PRECHARGED_LEDGER_NOT_VISIBLE' | 'NON_REFUND_POSITIVE_LEDGER_EVENT';
+  reason: 'DEBIT_ALREADY_EXISTS' | 'DEBIT_RESTORED_AFTER_REFUND' | 'DEBIT_CREATED' | 'NON_REFUND_POSITIVE_LEDGER_EVENT';
 }
 
 /**
@@ -29,7 +29,6 @@ export async function settlePersonalEntitlementForSuccessfulEvaluation(params: {
   userId: string;
   evaluationId: string;
   entitlementSource: string;
-  creditAlreadyConsumed: boolean;
 }): Promise<SuccessfulEvaluationSettlementResult | null> {
   const userId = String(params.userId || '').trim();
   const evaluationId = String(params.evaluationId || '').trim();
@@ -72,18 +71,10 @@ export async function settlePersonalEntitlementForSuccessfulEvaluation(params: {
     Number(latestLedgerEntry?.amount) > 0 &&
     ['REFUND_PROMO', 'REFUND_MONTHLY_FREE', 'REFUND_PURCHASED_CREDIT'].includes(latestSource);
 
-  // The request flag is only a fallback hint. Never invent a second debit for
-  // a pre-charged job when its local ledger copy is missing (for example, while
-  // another instance is hydrating). A recorded refund is different: that debit
-  // was explicitly returned and must be restored after successful completion.
-  if (!latestLedgerEntry && params.creditAlreadyConsumed) {
-    return {
-      charged: false,
-      source: requestedSource as PersonalEvaluationEntitlementSource,
-      reason: 'PRECHARGED_LEDGER_NOT_VISIBLE',
-    };
-  }
-
+  // The local database commits balance changes and their evaluation ledger row
+  // in the same transaction. If no event exists for this evaluation, there is
+  // no local debit to preserve: consume one current entitlement. The evaluation
+  // ID idempotency guard in consumeEvaluationEntitlementAtomic prevents repeats.
   if (latestLedgerEntry && Number(latestLedgerEntry.amount) > 0 && !latestIsRefund) {
     return {
       charged: false,
