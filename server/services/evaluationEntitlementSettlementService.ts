@@ -12,7 +12,7 @@ export type PersonalEvaluationEntitlementSource =
 export interface SuccessfulEvaluationSettlementResult {
   charged: boolean;
   source: PersonalEvaluationEntitlementSource;
-  reason: 'DEBIT_ALREADY_EXISTS' | 'DEBIT_RESTORED_AFTER_REFUND' | 'DEBIT_CREATED';
+  reason: 'DEBIT_ALREADY_EXISTS' | 'DEBIT_RESTORED_AFTER_REFUND' | 'DEBIT_CREATED' | 'PRECHARGED_LEDGER_NOT_VISIBLE' | 'NON_REFUND_POSITIVE_LEDGER_EVENT';
 }
 
 /**
@@ -29,6 +29,7 @@ export async function settlePersonalEntitlementForSuccessfulEvaluation(params: {
   userId: string;
   evaluationId: string;
   entitlementSource: string;
+  creditAlreadyConsumed: boolean;
 }): Promise<SuccessfulEvaluationSettlementResult | null> {
   const userId = String(params.userId || '').trim();
   const evaluationId = String(params.evaluationId || '').trim();
@@ -66,9 +67,33 @@ export async function settlePersonalEntitlementForSuccessfulEvaluation(params: {
     };
   }
 
-  // No debit exists, or the latest entry is a positive refund. The service
-  // itself is atomic and evaluation-ID idempotent; it selects the currently
-  // applicable promo/free/purchased entitlement in the established priority.
+  const latestSource = String(latestLedgerEntry?.source || '').toUpperCase();
+  const latestIsRefund =
+    Number(latestLedgerEntry?.amount) > 0 &&
+    ['REFUND_PROMO', 'REFUND_MONTHLY_FREE', 'REFUND_PURCHASED_CREDIT'].includes(latestSource);
+
+  // The request flag is only a fallback hint. Never invent a second debit for
+  // a pre-charged job when its local ledger copy is missing (for example, while
+  // another instance is hydrating). A recorded refund is different: that debit
+  // was explicitly returned and must be restored after successful completion.
+  if (!latestLedgerEntry && params.creditAlreadyConsumed) {
+    return {
+      charged: false,
+      source: requestedSource as PersonalEvaluationEntitlementSource,
+      reason: 'PRECHARGED_LEDGER_NOT_VISIBLE',
+    };
+  }
+
+  if (latestLedgerEntry && Number(latestLedgerEntry.amount) > 0 && !latestIsRefund) {
+    return {
+      charged: false,
+      source: requestedSource as PersonalEvaluationEntitlementSource,
+      reason: 'NON_REFUND_POSITIVE_LEDGER_EVENT',
+    };
+  }
+
+  // No debit exists on an uncharged job, or the latest event is a real refund.
+  // The underlying service is atomic and evaluation-ID idempotent.
   const consumed = consumeEvaluationEntitlementAtomic({ userId, evaluationId });
   // Local ledger mutation is authoritative. A mirror outage must not turn a
   // successful debit into a failed worker run after the charge was committed.
