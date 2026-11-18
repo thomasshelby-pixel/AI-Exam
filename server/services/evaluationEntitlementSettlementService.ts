@@ -38,7 +38,10 @@ export async function settlePersonalEntitlementForSuccessfulEvaluation(params: {
     throw new Error('Cannot settle an evaluation entitlement without a student ID and evaluation ID.');
   }
 
-  if (!['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(requestedSource)) {
+  // A blank source is accepted only for the guarded legacy-PUBLIC Admin repair
+  // path. In that case the existing atomic consumer selects the student's
+  // current eligible entitlement in the established promo → monthly-free → paid priority.
+  if (requestedSource && !['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(requestedSource)) {
     return null;
   }
 
