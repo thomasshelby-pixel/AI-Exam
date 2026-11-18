@@ -32,7 +32,7 @@ export function getActiveInstituteSubscription(instituteId: string): InstituteSu
       AND datetime(expiry_date) > datetime('now')
     ORDER BY datetime(expiry_date) DESC, datetime(created_at) DESC
     LIMIT 1
-  `).get(instituteId) as InstituteSubscriptionEntitlement | undefined) || null;
+  `).get(instituteId) as unknown as InstituteSubscriptionEntitlement | undefined) || null;
 }
 
 /**
