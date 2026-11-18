@@ -48,6 +48,7 @@ import { AnswerCoverageMap, AttemptedQuestionMapping } from './services/answerSh
 import { PDFDocument } from 'pdf-lib';
 import { validateBase64Upload } from './utils/fileValidation.js';
 import { normalizeAiAnswerSheetDocumentValidation } from './services/answerSheetDocumentPolicy.js';
+import { shouldUseFacultyMockPagePipeline } from './services/evaluationPipelineRouting.js';
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -1172,7 +1173,15 @@ CRITICAL: You MUST respond ONLY with valid JSON conforming to this exact structu
 `;
 
   // Attempt Authoritative Evaluation Pipeline if input is a PDF
-  if (params.mimeType === 'application/pdf' || params.fileBase64) {
+  // Faculty Mock evaluations intentionally retain their existing page-audited,
+  // canonical-inventory pipeline. For public / institute PYQ, MTP and Model
+  // Test evaluations, use the established full-answer-sheet evaluator below:
+  // it reads the complete script against the selected paper references in one
+  // coherent pass and avoids dropping answers when page-level label crosswalks
+  // are incomplete. This split is deliberate: faculty mock behaviour is frozen.
+  const useFacultyMockPagePipeline = shouldUseFacultyMockPagePipeline(params);
+
+  if ((params.mimeType === 'application/pdf' || Boolean(params.fileBase64)) && useFacultyMockPagePipeline) {
     let coverageMap: any = null;
     try {
       const pdfBuffer = Buffer.from(params.fileBase64, 'base64');
