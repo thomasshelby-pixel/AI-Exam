@@ -27,7 +27,7 @@ async function run() {
       user_id, icai_registration_number, ca_level,
       free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
       purchased_credits, paid_credits
-    ) VALUES (?, 'WRO9876543', 'INTERMEDIATE', 0, 0, 2, 0, 0)
+    ) VALUES (?, `WRO${String(crypto.randomInt(0, 10_000_000)).padStart(7, '0')}`, 'INTERMEDIATE', 0, 0, 2, 0, 0)
   `).run(userId);
 
   try {
@@ -64,7 +64,7 @@ async function run() {
     assert.equal(getValidStudentCreditBalance(userId), 1);
 
     // A negative ledger entry is authoritative: repeat completion must not
-    // consume another credit.
+    // consume another credit. Faculty Mock sponsorship is excluded entirely.
     const duplicateSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
       userId,
       evaluationId: targetEvaluationId,
@@ -72,6 +72,14 @@ async function run() {
     });
     assert.equal(duplicateSettlement?.charged, false);
     assert.equal(duplicateSettlement?.reason, 'DEBIT_ALREADY_EXISTS');
+    assert.equal(getValidStudentCreditBalance(userId), 1);
+
+    const facultyMockSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
+      userId,
+      evaluationId: `eval_faculty_mock_${crypto.randomBytes(4).toString('hex')}`,
+      entitlementSource: 'FACULTY_MOCK_SPONSORED',
+    });
+    assert.equal(facultyMockSettlement, null);
     assert.equal(getValidStudentCreditBalance(userId), 1);
 
     // Failed first attempt is refunded; a later successful admin reprocess
