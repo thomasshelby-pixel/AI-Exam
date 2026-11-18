@@ -79,12 +79,38 @@ async function run() {
       INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
       VALUES (?, ?, ?, NULL, 'ACTIVE', ?, 'Seat Test Student', CURRENT_TIMESTAMP)
     `).run(activeMembershipId, instituteId, admin.id, admin.email);
+    const pendingStudentId = `usr_trial_pending_student_${crypto.randomBytes(5).toString('hex')}`;
+    const pendingStudentEmail = `${pendingStudentId}@example.com`;
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, full_name, role, status)
+      VALUES (?, ?, 'hash', 'Pending Seat Student', 'STUDENT', 'ACTIVE')
+    `).run(pendingStudentId, pendingStudentEmail);
+    let pendingMembershipId = '';
     for (let i = 0; i < 49; i++) {
+      const membershipId = `mem_trial_pending_${i}_${crypto.randomBytes(3).toString('hex')}`;
+      if (i === 0) pendingMembershipId = membershipId;
       db.prepare(`
         INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
-        VALUES (?, ?, NULL, NULL, 'PENDING', ?, 'Pending Seat Test', CURRENT_TIMESTAMP)
-      `).run(`mem_trial_pending_${i}_${crypto.randomBytes(3).toString('hex')}`, `pending-${i}-${admin.id}@example.com`);
+        VALUES (?, ?, ?, NULL, 'PENDING', ?, 'Pending Seat Test', CURRENT_TIMESTAMP)
+      `).run(
+        membershipId,
+        instituteId,
+        i === 0 ? pendingStudentId : null,
+        i === 0 ? pendingStudentEmail : `pending-${i}-${admin.id}@example.com`
+      );
     }
+    assert.equal(
+      Number((db.prepare(`
+        SELECT COUNT(*) AS count FROM institute_memberships
+        WHERE institute_id = ? AND status IN ('ACTIVE', 'PENDING')
+      `).get(instituteId) as any).count),
+      50
+    );
+    // An existing pending invitation already owns a seat; completing its signup
+    // must be allowed at capacity without increasing occupied seats.
+    withInstituteStudentSeatReservation(instituteId, () => {
+      db.prepare("UPDATE institute_memberships SET status = 'ACTIVE' WHERE id = ?").run(pendingMembershipId);
+    }, pendingMembershipId);
     assert.equal(
       Number((db.prepare(`
         SELECT COUNT(*) AS count FROM institute_memberships
@@ -178,6 +204,7 @@ async function run() {
     db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(instituteId);
     db.prepare('DELETE FROM institutes WHERE id = ?').run(instituteId);
     db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(admin.id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(pendingStudentId);
     db.prepare('DELETE FROM users WHERE id = ?').run(admin.id);
   }
 }
