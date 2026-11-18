@@ -1535,6 +1535,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
         userId: studentId,
         evaluationId,
         entitlementSource,
+        creditAlreadyConsumed: Boolean(job.creditAlreadyConsumed),
       });
 
       if (settlement?.charged) {
