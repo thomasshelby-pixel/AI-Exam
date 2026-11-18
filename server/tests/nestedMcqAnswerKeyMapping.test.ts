@@ -146,14 +146,14 @@ const compactObjectiveQuestionPaper = [
   'Division B',
   'Question 1(a) - 10 Marks',
   'Explain the descriptive legal requirement.',
-].join('\\n');
+].join('\n');
 const compactOfficialAnswerKey = [
   'SUGGESTED ANSWERS',
   'ANSWER KEY',
   '1. (b)',
   '2. (a)',
   '3. (d)',
-].join('\\n');
+].join('\n');
 
 const compactKeys = extractOfficialMcqKeysFromSuggestedAnswers(
   compactOfficialAnswerKey,
@@ -195,8 +195,8 @@ assert.equal(compactScoring.reduce((sum, question) => sum + question.marksAwarde
 // MCQ keys; descriptive "1(a)" answer structure must not be converted to MCQs.
 assert.equal(
   extractOfficialMcqKeysFromSuggestedAnswers(
-    ['SUGGESTED ANSWERS', '1. (a) Descriptive answer', '2. (b) Another descriptive answer', '3. (c) Conclusion'].join('\\n'),
-    'QUESTION PAPER\\nDivision B\\nQuestion 1(a) - 5 Marks',
+    ['SUGGESTED ANSWERS', '1. (a) Descriptive answer', '2. (b) Another descriptive answer', '3. (c) Conclusion'].join('\n'),
+    'QUESTION PAPER\nDivision B\nQuestion 1(a) - 5 Marks',
   ).size,
   0,
   'Descriptive sub-question labels must never be reclassified as MCQ answer keys.',

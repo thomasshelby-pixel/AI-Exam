@@ -125,7 +125,7 @@ assert.ok(mcqBadge, 'A scored MCQ must appear in the right-margin checked-copy a
 assert.equal(mcqBadge?.marksAwarded, 2);
 assert.equal(mcqBadge?.maxMarks, 2);
 assert.equal(mcqBadge?.reviewRequired, false);
-assert.match(mcqBadge?.steps[0]?.stepName || '', /Option: B \\| Key: B/);
+assert.match(mcqBadge?.steps[0]?.stepName || '', /Option: B \| Key: B/);
 
 assert.equal(
   cleanContinuationAndMcqCopy.pages[1].annotations.some((annotation) => annotation.pageReviewOnly),
