@@ -35,6 +35,30 @@ export function getActiveInstituteSubscription(instituteId: string): InstituteSu
   `).get(instituteId) as InstituteSubscriptionEntitlement | undefined) || null;
 }
 
+/**
+ * Backward compatibility for paid institute accounts created before the
+ * institute_subscriptions ledger was introduced. Starter trials are never
+ * treated as legacy-unmetered: they must always have their 50-credit row.
+ */
+export function hasActiveLegacyInstitutePlan(instituteId: string): boolean {
+  const institute = db.prepare(`
+    SELECT status, subscription_plan, subscription_expires_at
+    FROM institutes WHERE id = ? LIMIT 1
+  `).get(instituteId) as any;
+  if (!institute || String(institute.status || '').trim().toUpperCase() !== 'ACTIVE') return false;
+  const plan = String(institute.subscription_plan || '').trim().toUpperCase();
+  if (
+    !plan ||
+    plan === INSTITUTE_FREE_TRIAL_PLAN_ID ||
+    ['', 'NONE', 'NO_PLAN', 'INACTIVE', 'EXPIRED', 'PENDING_SELECTION', 'UNPAID', 'FREE', 'TRIAL_EXPIRED', 'CANCELLED', 'CANCELED', 'SUSPENDED'].includes(plan)
+  ) return false;
+  if (institute.subscription_expires_at) {
+    const expiry = Date.parse(String(institute.subscription_expires_at));
+    if (Number.isFinite(expiry) && expiry <= Date.now()) return false;
+  }
+  return true;
+}
+
 /** Grants one verified Institute Admin a single 30-day starter trial. */
 export function ensureInstituteStarterTrial(params: {
   instituteId: string;
@@ -215,6 +239,45 @@ export function reserveInstituteEvaluationCredit(params: {
     }
 
     const subscription = getActiveInstituteSubscription(instituteId);
+    if (!subscription && hasActiveLegacyInstitutePlan(instituteId)) {
+      // Preserve the pre-ledger paid institute behaviour without weakening the
+      // new starter trial: legacy plans have no shared quota record to decrement.
+      // A no-op reservation ledger keeps the async worker's lifecycle coherent.
+      const notes = JSON.stringify({
+        status: 'RESERVED',
+        legacyUnmeteredPlan: true,
+        studentId,
+        evaluationId,
+        reservedAt: new Date().toISOString(),
+      });
+      const ledgerId = `usg_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO institute_usage_ledger (
+          id, institute_id, student_id, evaluation_id, units_deducted,
+          balance_before, balance_after, action_type, idempotency_key,
+          subscription_id, notes, created_at
+        ) VALUES (?, ?, ?, ?, 1, 0, 0, 'RESERVED', ?, NULL, ?, CURRENT_TIMESTAMP)
+      `).run(ledgerId, instituteId, studentId, evaluationId, idempotencyKey, notes);
+      db.prepare(`
+        UPDATE evaluations
+        SET institute_id = COALESCE(institute_id, ?),
+            sponsoring_institute_id = ?,
+            entitlement_source = 'INSTITUTE_ALLOCATION',
+            consumed_from_institute_allocation = 1,
+            consumed_from_personal_credits = 0
+        WHERE id = ?
+      `).run(instituteId, instituteId, evaluationId);
+      db.exec('COMMIT;');
+      transactionStarted = false;
+      return {
+        instituteId,
+        subscriptionId: 'LEGACY_UNMETERED',
+        balanceBefore: 0,
+        balanceAfter: 0,
+        alreadyReserved: false,
+        alreadyConsumed: false,
+      };
+    }
     if (!subscription || Number(subscription.evaluations_remaining) <= 0) {
       throw new Error('INSTITUTE_EVALUATION_QUOTA_EXHAUSTED');
     }
