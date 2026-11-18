@@ -1747,6 +1747,26 @@ function runMigrations() {
 
   addColumnIfNotExists('institute_subscriptions', 'plan_name', 'TEXT');
 
+  // Starter-trial claim history survives trial expiry and blocks repeat grants.
+  addColumnIfNotExists('institute_usage_ledger', 'subscription_id', 'TEXT');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS institute_trial_claims (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL,
+      admin_user_id TEXT NOT NULL,
+      admin_email TEXT NOT NULL,
+      subscription_id TEXT NOT NULL,
+      claimed_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      UNIQUE(admin_user_id),
+      UNIQUE(admin_email),
+      UNIQUE(institute_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_institute_trial_claims_expires
+      ON institute_trial_claims(expires_at);
+  `);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS legal_documents (
       id TEXT PRIMARY KEY,
