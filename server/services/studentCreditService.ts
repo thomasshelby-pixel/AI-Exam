@@ -1126,12 +1126,20 @@ export function refundEvaluationCreditAtomic(params: {
     // A refund is valid only for a real negative debit attached to this exact
     // evaluation. This protects document rejections before acceptance, failed
     // requests that never consumed a credit, and malformed retry callbacks.
-    const existingRefund = db.prepare(`
-      SELECT id FROM credit_ledger
-      WHERE student_id = ? AND evaluation_id = ? AND source = ?
+    // Only the latest evaluation event can prove that this debit cycle was
+    // already refunded. A historical refund must not block refunding a later
+    // re-debit after a successful admin reprocess.
+    const latestEvaluationLedgerEntry = db.prepare(`
+      SELECT id, source, amount
+      FROM credit_ledger
+      WHERE student_id = ? AND evaluation_id = ?
+      ORDER BY rowid DESC
       LIMIT 1
-    `).get(userId, evalRefId, refundSource);
-    if (existingRefund) {
+    `).get(userId, evalRefId) as { id: string; source?: string; amount?: number } | undefined;
+    const currentDebitAlreadyRefunded =
+      latestEvaluationLedgerEntry?.source === refundSource &&
+      Number(latestEvaluationLedgerEntry.amount) > 0;
+    if (currentDebitAlreadyRefunded) {
       db.exec('COMMIT;');
       transactionStarted = false;
       if (isMonthlyFree) ensureMonthlyFreeEvaluationsReset(userId);
