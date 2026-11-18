@@ -204,12 +204,12 @@ const compactFifteenQuestionPaper = [
   'Division B',
   'Question 1(a) - 10 Marks',
   'Explain the descriptive legal requirement.',
-].join('\\n');
+].join('\n');
 const compactFifteenAnswerKey = [
   'SUGGESTED ANSWERS',
   'ANSWER KEY',
   ...compactFifteenOfficialKeys.map((key, index) => `${index + 1}. (${key.toLowerCase()})`),
-].join('\\n');
+].join('\n');
 
 const compactFifteenPaper = getAuthoritativePaperStructure({
   level: 'INTERMEDIATE',
