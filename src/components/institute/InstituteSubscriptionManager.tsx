@@ -107,7 +107,7 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
 
   const usage = data.usage || {
     activeStudents: data.activeStudents || 0,
-    maxStudents: data.maxStudents || 50,
+    maxStudents: data.maxStudents || 100,
     remainingSeats: data.remainingSeats || 0,
     pendingInvitations: data.pendingInvitations || 0,
     occupiedSeats: data.occupiedSeats ?? data.activeStudents ?? 0,
@@ -119,6 +119,7 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
   const evaluationsUsed = usage.evaluationsUsed ?? usage.monthlyEvaluationsUsed ?? 0;
   const evaluationAllowance = usage.evaluationAllowance ?? usage.maxEvaluationsPerMonth ?? 0;
   const evaluationsRemaining = usage.evaluationsRemaining ?? Math.max(0, evaluationAllowance - evaluationsUsed);
+  const hasTrackedEvaluationAllowance = evaluationAllowance > 0;
 
   const studentPercent = Math.min(100, Math.round((occupiedSeats / Math.max(1, usage.maxStudents)) * 100));
   const evalPercent = Math.min(
@@ -292,10 +293,10 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
             <div className="flex justify-between text-xs">
               <span className="text-slate-600 font-medium flex items-center gap-1.5">
-                <Zap className="w-4 h-4 text-emerald-600" /> {data.isTrial ? 'Shared Trial Evaluation Credits' : 'Evaluation Credit Allowance'}
+                <Zap className="w-4 h-4 text-emerald-600" /> {data.isTrial ? 'Shared Trial Evaluation Credits' : hasTrackedEvaluationAllowance ? 'Evaluation Credit Allowance' : 'Legacy Plan Evaluation Access'}
               </span>
               <span className="font-mono font-bold text-slate-900">
-                {evaluationsUsed} / {evaluationAllowance} ({evalPercent}%)
+                {hasTrackedEvaluationAllowance ? `${evaluationsUsed} / ${evaluationAllowance} (${evalPercent}%)` : 'Legacy plan'}
               </span>
             </div>
             <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
@@ -307,7 +308,11 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
               />
             </div>
             <div className="flex justify-between text-[11px] text-slate-500 pt-1">
-              <span>{evaluationsRemaining} evaluation credit(s) remaining</span>
+              <span>
+                {hasTrackedEvaluationAllowance
+                  ? `${evaluationsRemaining} evaluation credit(s) remaining`
+                  : 'Usage is managed under your existing institute plan'}
+              </span>
               <span>{data.isTrial ? 'One-time shared allowance' : 'Plan allowance'} • ICAI Checked Copy</span>
             </div>
           </div>
