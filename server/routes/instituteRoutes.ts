@@ -566,19 +566,27 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
 
       const normalizedEmail = email.toLowerCase();
 
-      if (currentCount.count + results.enrolled + results.invited >= maxCapacity) {
-        results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
-        results.skipped++;
-        continue;
-      }
-
       const user = db.prepare('SELECT id, full_name, email, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as { id: string; full_name: string; email: string; role: string } | undefined;
 
       if (user && user.role === 'STUDENT') {
         const existingMem = db.prepare('SELECT id, status FROM institute_memberships WHERE institute_id = ? AND student_id = ?').get(instituteId, user.id) as { id: string; status: string } | undefined;
 
+        if (existingMem && String(existingMem.status || '').toUpperCase() === 'ACTIVE') {
+          // Existing active students already occupy a seat; updating a batch must not count them twice.
+          db.prepare("UPDATE institute_memberships SET batch_id = COALESCE(?, batch_id) WHERE id = ?").run(targetBatchId || null, existingMem.id);
+          results.skipped++;
+          continue;
+        }
+
+        if (currentCount.count + results.enrolled + results.invited >= maxCapacity) {
+          results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
+          results.skipped++;
+          continue;
+        }
+
         if (existingMem) {
-          db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = COALESCE(?, batch_id) WHERE id = ?").run(targetBatchId || null, existingMem.id);
+          db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = COALESCE(?, batch_id), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .run(targetBatchId || null, existingMem.id);
         } else {
           const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
           db.prepare(`
@@ -588,10 +596,25 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
         }
         results.enrolled++;
       } else {
-        const existingInvite = db.prepare('SELECT id FROM institute_memberships WHERE institute_id = ? AND lower(invited_email) = ?').get(instituteId, normalizedEmail) as { id: string } | undefined;
+        const existingInvite = db.prepare('SELECT id, status FROM institute_memberships WHERE institute_id = ? AND lower(invited_email) = ?').get(instituteId, normalizedEmail) as { id: string; status: string } | undefined;
+
+        if (existingInvite && String(existingInvite.status || '').toUpperCase() === 'PENDING') {
+          // Updating an existing pending invitation does not consume another seat.
+          db.prepare("UPDATE institute_memberships SET batch_id = COALESCE(?, batch_id), status = 'PENDING' WHERE id = ?")
+            .run(targetBatchId || null, existingInvite.id);
+          results.skipped++;
+          continue;
+        }
+
+        if (currentCount.count + results.enrolled + results.invited >= maxCapacity) {
+          results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
+          results.skipped++;
+          continue;
+        }
 
         if (existingInvite) {
-          db.prepare("UPDATE institute_memberships SET batch_id = COALESCE(?, batch_id), status = 'PENDING' WHERE id = ?").run(targetBatchId || null, existingInvite.id);
+          db.prepare("UPDATE institute_memberships SET batch_id = COALESCE(?, batch_id), status = 'PENDING' WHERE id = ?")
+            .run(targetBatchId || null, existingInvite.id);
         } else {
           const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
           db.prepare(`
