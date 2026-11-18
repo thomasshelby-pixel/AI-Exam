@@ -2279,6 +2279,73 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
       });
     }
 
+    if (user.role === 'INSTITUTE_ADMIN') {
+      let localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
+
+      if (!localInstitute) {
+        // Local SQLite may be a fresh deployment instance. Recover the exact
+        // institute linked to this verified admin before issuing a new session.
+        const recovery = await recoverInstituteAccountFromFirestoreByEmail(normalizedEmail, user.id);
+        if (recovery === 'conflict') {
+          return res.status(409).json({
+            error: 'Your institute records are ambiguous or do not match this administrator. Registration is blocked; please contact support.',
+            code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
+          });
+        }
+        if (recovery === 'not-found') {
+          return res.status(409).json({
+            error: 'The administrator account exists, but its original institute profile was not found in the durable account store. No replacement profile was created. Please contact support for recovery.',
+            code: 'INSTITUTE_PROFILE_NOT_FOUND',
+          });
+        }
+        if (recovery !== 'recovered' && recovery !== 'already-present') {
+          if (requiresDurableAccountPersistence()) {
+            return res.status(503).json({
+              error: 'We could not safely restore your institute profile from the durable account store. Please retry shortly.',
+              code: 'INSTITUTE_ACCOUNT_RECOVERY_UNAVAILABLE',
+              retryable: true,
+            });
+          }
+        }
+        localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
+      }
+
+      if (!localInstitute) {
+        return res.status(409).json({
+          error: 'Your original institute profile is unavailable. No replacement profile was created.',
+          code: 'INSTITUTE_PROFILE_NOT_FOUND',
+        });
+      }
+
+      const localUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id) as any;
+      const localBatches = db.prepare(
+        'SELECT * FROM batches WHERE institute_id = ? ORDER BY created_at ASC'
+      ).all(localInstitute.id) as any[];
+      const localAuditLogs = db.prepare(
+        "SELECT * FROM audit_logs WHERE user_id = ? AND action = 'INSTITUTE_SIGNUP' AND entity_id = ? ORDER BY created_at ASC"
+      ).all(user.id, localInstitute.id) as any[];
+      const persistence = await persistInstituteAccountToFirestore({
+        institute: localInstitute,
+        user: localUser,
+        batches: localBatches,
+        auditLogs: localAuditLogs,
+      });
+
+      if (persistence === 'conflict') {
+        return res.status(409).json({
+          error: 'Your institute identity conflicts with a different cloud record. Please contact support before continuing.',
+          code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
+        });
+      }
+      if (persistence !== 'persisted' && requiresDurableAccountPersistence()) {
+        return res.status(503).json({
+          error: 'Your institute account is present, but its durable cloud copy could not be verified. Please retry shortly.',
+          code: 'INSTITUTE_ACCOUNT_PERSISTENCE_UNCONFIRMED',
+          retryable: true,
+        });
+      }
+    }
+
     // Role-Based MFA Evaluation for Institute Login (MANDATORY, but bypasses OTP if device is trusted)
     const deviceId =
       (req.body?.deviceId as string)?.trim() ||
