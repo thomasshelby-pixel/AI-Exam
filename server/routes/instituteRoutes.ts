@@ -6,6 +6,7 @@ import { createInstituteSubscriptionOrder, verifyInstituteSubscriptionPayment, i
 import {
   ensureInstituteStarterTrial,
   getActiveInstituteSubscription,
+  withInstituteStudentSeatReservation,
 } from '../services/instituteTrialService.js';
 
 const router = Router();
@@ -427,8 +428,10 @@ router.post('/students', (req: AuthRequest, res: Response) => {
             });
           }
           // Reactivate inactive membership
-          db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = ?, notes = COALESCE(?, notes), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
-            .run(batchId || null, notes || null, existingMembership.id);
+          withInstituteStudentSeatReservation(instituteId, () => {
+            db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = ?, notes = COALESCE(?, notes), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
+              .run(batchId || null, notes || null, existingMembership.id);
+          });
           
           logInstituteAudit(req.user!.id, 'REACTIVATE_STUDENT_ENROLLMENT', 'MEMBERSHIP', existingMembership.id, { instituteId, studentId: existingUser.id });
           return res.json({ success: true, message: `Student ${existingUser.full_name} re-enrolled successfully with active sponsorship.` });
@@ -444,10 +447,12 @@ router.post('/students', (req: AuthRequest, res: Response) => {
       }
       // Multi-institute supported: no check blocking enrollment if student belongs to another institute.
       const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
-      db.prepare(`
-        INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
-        VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, CURRENT_TIMESTAMP)
-      `).run(membershipId, instituteId, existingUser.id, batchId || null, normalizedEmail, existingUser.full_name, notes || null);
+      withInstituteStudentSeatReservation(instituteId, () => {
+        db.prepare(`
+          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
+          VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, ?, CURRENT_TIMESTAMP)
+        `).run(membershipId, instituteId, existingUser.id, batchId || null, normalizedEmail, existingUser.full_name, notes || null);
+      });
 
       // Optionally update student profile registration info if provided and empty
       if (icaiRegistrationNumber || caLevel) {
@@ -490,8 +495,15 @@ router.post('/students', (req: AuthRequest, res: Response) => {
             code: 'QUOTA_EXCEEDED',
           });
         }
-        db.prepare("UPDATE institute_memberships SET batch_id = ?, student_name = COALESCE(?, student_name), notes = COALESCE(?, notes), status = 'PENDING' WHERE id = ?")
-          .run(batchId || null, studentName || null, notes || null, existingInvite.id);
+        if (String(currentInvite?.status || '').toUpperCase() === 'PENDING') {
+          db.prepare("UPDATE institute_memberships SET batch_id = ?, student_name = COALESCE(?, student_name), notes = COALESCE(?, notes), status = 'PENDING' WHERE id = ?")
+            .run(batchId || null, studentName || null, notes || null, existingInvite.id);
+        } else {
+          withInstituteStudentSeatReservation(instituteId, () => {
+            db.prepare("UPDATE institute_memberships SET batch_id = ?, student_name = COALESCE(?, student_name), notes = COALESCE(?, notes), status = 'PENDING' WHERE id = ?")
+              .run(batchId || null, studentName || null, notes || null, existingInvite.id);
+          });
+        }
       } else {
         if (subStatus.remainingSeats <= 0) {
           return res.status(403).json({
@@ -500,10 +512,12 @@ router.post('/students', (req: AuthRequest, res: Response) => {
           });
         }
         membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
-        db.prepare(`
-          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
-          VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP)
-        `).run(membershipId, instituteId, batchId || null, normalizedEmail, studentName || 'Invited Student', notes || null);
+        withInstituteStudentSeatReservation(instituteId, () => {
+          db.prepare(`
+            INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
+            VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, ?, CURRENT_TIMESTAMP)
+          `).run(membershipId, instituteId, batchId || null, normalizedEmail, studentName || 'Invited Student', notes || null);
+        });
       }
 
       logInstituteAudit(req.user!.id, 'INVITE_STUDENT', 'MEMBERSHIP', membershipId || 'invite', {
