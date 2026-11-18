@@ -1186,7 +1186,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
     // 5c. Hydrate institute subscription and quota ledgers before any evaluation routes run.
     const instituteSubscriptions = await readDocs<any>('institute_subscriptions');
     for (const s of instituteSubscriptions) {
-      if (!s.id || !s.institute_id || tombstoneSet.has(`institutes_${s.institute_id}`)) continue;
+      if (!s.id || !s.institute_id || !s.plan_id || !s.expiry_date || tombstoneSet.has(`institutes_${s.institute_id}`)) continue;
       try {
         db.prepare(`
           INSERT INTO institute_subscriptions (
@@ -1206,7 +1206,7 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
           s.id, s.institute_id, s.plan_id, s.plan_name || null, s.billing_cycle || 'MONTHLY', Number(s.price_inr || 0),
           Number(s.student_capacity || 0), Number(s.evaluation_allowance || 0), Number(s.evaluations_used || 0),
           Number(s.evaluations_remaining || 0), s.payment_order_ref || null, s.payment_id || null,
-          s.start_date || null, s.expiry_date, s.status || 'ACTIVE', s.created_at || null, s.updated_at || s.created_at || null
+          s.start_date || s.created_at || new Date().toISOString(), s.expiry_date, s.status || 'ACTIVE', s.created_at || null, s.updated_at || s.created_at || null
         );
       } catch (subscriptionError) {
         console.warn(`[FirestoreSync] Failed to hydrate institute subscription ${s.id}:`, subscriptionError);
