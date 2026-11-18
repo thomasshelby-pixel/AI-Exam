@@ -825,7 +825,7 @@ export function updateEvaluationProgress(
  * client tracks authoritative state from the database.
  */
 export async function executeEvaluationJob(job: EvaluationJobData): Promise<void> {
-  const { evaluationId, studentId, subjectName, entitlementSource: initialEntitlementSource, resolvedSponsoringInstituteId, resolvedInstituteName, requestedEvalSource, personalEntitlement } = job;
+  const { evaluationId, studentId, subjectName, entitlementSource: initialEntitlementSource, resolvedSponsoringInstituteId, resolvedInstituteName, requestedEvalSource } = job;
   let entitlementSource = initialEntitlementSource;
   let successfulSettlementDebited = false;
 
