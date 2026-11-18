@@ -81,7 +81,7 @@ export function ensureInstituteStarterTrial(params: {
     !admin ||
     String(admin.email || '').trim().toLowerCase() !== adminEmail ||
     !['INSTITUTE_ADMIN', 'INSTITUTE'].includes(String(admin.role || '').trim().toUpperCase()) ||
-    String(admin.status || '').trim().toUpperCase() !== 'ACTIVE' ||
+    String(admin.status || '').trim().toUpperCase() !== 'ACTIVE'
   ) return { granted: false, reason: 'ACTIVE_INSTITUTE_ADMIN_REQUIRED' };
 
   const institute = db.prepare('SELECT id, email, status, subscription_plan FROM institutes WHERE id = ?').get(instituteId) as any;
