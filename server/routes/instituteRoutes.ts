@@ -421,17 +421,18 @@ router.post('/students', (req: AuthRequest, res: Response) => {
           return res.status(400).json({ error: `Student ${existingUser.full_name} (${normalizedEmail}) is already actively enrolled in this institute.` });
         } else {
           // An inactive membership must reserve a seat again before reactivation.
-          if (subStatus.remainingSeats <= 0) {
+          const alreadyReservedSeat = String(existingMembership.status || '').toUpperCase() === 'PENDING';
+          if (!alreadyReservedSeat && subStatus.remainingSeats <= 0) {
             return res.status(403).json({
               error: `Student quota exceeded: Current plan limit is ${subStatus.maxStudents} seats, including pending invitations. Please upgrade your plan.`,
               code: 'QUOTA_EXCEEDED',
             });
           }
-          // Reactivate inactive membership
+          // Convert a pending invitation without consuming a second seat.
           withInstituteStudentSeatReservation(instituteId, () => {
             db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = ?, notes = COALESCE(?, notes), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
               .run(batchId || null, notes || null, existingMembership.id);
-          });
+          }, alreadyReservedSeat ? existingMembership.id : undefined);
           
           logInstituteAudit(req.user!.id, 'REACTIVATE_STUDENT_ENROLLMENT', 'MEMBERSHIP', existingMembership.id, { instituteId, studentId: existingUser.id });
           return res.json({ success: true, message: `Student ${existingUser.full_name} re-enrolled successfully with active sponsorship.` });
@@ -567,6 +568,7 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
 
     const maxCapacity = subStatus.maxStudents;
     const currentCount = { count: subStatus.occupiedSeats };
+    let additionalSeatsConsumed = 0;
 
     for (const item of students) {
       const email = typeof item === 'string' ? item.trim() : item?.email?.trim();
@@ -592,7 +594,10 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
           continue;
         }
 
-        if (currentCount.count + results.enrolled + results.invited >= maxCapacity) {
+        const existingMembershipAlreadyHasSeat = Boolean(
+          existingMem && ['ACTIVE', 'PENDING'].includes(String(existingMem.status || '').toUpperCase())
+        );
+        if (!existingMembershipAlreadyHasSeat && currentCount.count + additionalSeatsConsumed >= maxCapacity) {
           results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
           results.skipped++;
           continue;
@@ -603,7 +608,7 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
             withInstituteStudentSeatReservation(instituteId, () => {
               db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = COALESCE(?, batch_id), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
                 .run(targetBatchId || null, existingMem.id);
-            });
+            }, existingMembershipAlreadyHasSeat ? existingMem.id : undefined);
           } else {
             const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
             withInstituteStudentSeatReservation(instituteId, () => {
@@ -621,6 +626,7 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
           continue;
         }
         results.enrolled++;
+        if (!existingMembershipAlreadyHasSeat) additionalSeatsConsumed++;
       } else {
         const existingInvite = db.prepare('SELECT id, status FROM institute_memberships WHERE institute_id = ? AND lower(invited_email) = ?').get(instituteId, normalizedEmail) as { id: string; status: string } | undefined;
 
@@ -632,8 +638,8 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
           continue;
         }
 
-        if (currentCount.count + results.enrolled + results.invited >= maxCapacity) {
-          results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
+        if (currentCount.count + additionalSeatsConsumed >= maxCapacity) {
+          results.errors.push(`Student limit reached (${maxCapacity}). Cannot invite ${email}.`);
           results.skipped++;
           continue;
         }
@@ -661,6 +667,7 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
           continue;
         }
         results.invited++;
+        additionalSeatsConsumed++;
       }
     }
 
