@@ -59,9 +59,20 @@ async function run() {
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+      creditAlreadyConsumed: false,
     });
     assert.equal(firstSettlement?.charged, true);
     assert.equal(firstSettlement?.source, 'PERSONAL_PURCHASED_CREDIT');
+    assert.equal(getValidStudentCreditBalance(userId), 1);
+
+    const missingReplicaLedger = await settlePersonalEntitlementForSuccessfulEvaluation({
+      userId,
+      evaluationId: `eval_ledger_not_visible_${crypto.randomBytes(4).toString('hex')}`,
+      entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+      creditAlreadyConsumed: true,
+    });
+    assert.equal(missingReplicaLedger?.charged, false);
+    assert.equal(missingReplicaLedger?.reason, 'PRECHARGED_LEDGER_NOT_VISIBLE');
     assert.equal(getValidStudentCreditBalance(userId), 1);
 
     // A negative ledger entry is authoritative: repeat completion must not
@@ -70,6 +81,7 @@ async function run() {
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+      creditAlreadyConsumed: true,
     });
     assert.equal(duplicateSettlement?.charged, false);
     assert.equal(duplicateSettlement?.reason, 'DEBIT_ALREADY_EXISTS');
@@ -79,6 +91,7 @@ async function run() {
       userId,
       evaluationId: `eval_faculty_mock_${crypto.randomBytes(4).toString('hex')}`,
       entitlementSource: 'FACULTY_MOCK_SPONSORED',
+      creditAlreadyConsumed: false,
     });
     assert.equal(facultyMockSettlement, null);
     assert.equal(getValidStudentCreditBalance(userId), 1);
@@ -99,6 +112,7 @@ async function run() {
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+      creditAlreadyConsumed: true,
     });
     assert.equal(reprocessSettlement?.charged, true);
     assert.equal(reprocessSettlement?.reason, 'DEBIT_RESTORED_AFTER_REFUND');
@@ -108,6 +122,7 @@ async function run() {
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+      creditAlreadyConsumed: true,
     });
     assert.equal(reprocessRetry?.charged, false);
     assert.equal(getValidStudentCreditBalance(userId), 1);
