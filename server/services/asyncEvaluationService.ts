@@ -1547,8 +1547,25 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       } else if (settlement) {
         entitlementSource = settlement.source;
         console.info(
-          `[AsyncEval] Existing entitlement debit verified for ${evaluationId}; no duplicate charge applied.`
+          `[AsyncEval] Entitlement settlement for ${evaluationId} was not charged (${settlement.reason}).`
         );
+      }
+
+      if (settlement) {
+        try {
+          db.prepare(`
+            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+            VALUES (?, ?, ?, 'EVALUATION', ?, ?)
+          `).run(
+            `aud_${crypto.randomBytes(8).toString('hex')}`,
+            studentId,
+            settlement.source === 'PROMO' ? 'EVALUATION_COMPLETED_PROMO' : 'EVALUATION_COMPLETED_CREDIT',
+            evaluationId,
+            `Successful evaluation entitlement settlement: ${settlement.reason}; charged=${settlement.charged}.`
+          );
+        } catch (auditErr) {
+          console.warn('[AsyncEval] Completion entitlement audit log failed:', auditErr);
+        }
       }
     }
 
