@@ -65,6 +65,7 @@ import { buildStudentOwnershipSql, getStudentOwnershipParams } from '../services
 import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
 import {
   getActiveInstituteSubscription,
+  hasActiveLegacyInstitutePlan,
   reserveInstituteEvaluationCredit,
   releaseInstituteEvaluationCredit,
 } from '../services/instituteTrialService.js';
@@ -1490,7 +1491,11 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       // Verify institute subscription quota
       const sub = getActiveInstituteSubscription(chosenInst.institute_id);
 
-      if (!isPermanentFreeStudent && (!sub || Number(sub.evaluations_remaining) <= 0)) {
+      if (
+        !isPermanentFreeStudent &&
+        ((!sub && !hasActiveLegacyInstitutePlan(chosenInst.institute_id)) ||
+          (sub && Number(sub.evaluations_remaining) <= 0))
+      ) {
         return res.status(402).json({
           error: `Coaching institute evaluation allowance for ${chosenInst.institute_name} is exhausted or expired. Please contact institute administration to upgrade the plan.`,
           code: 'INSTITUTE_EVALUATION_QUOTA_EXHAUSTED',
