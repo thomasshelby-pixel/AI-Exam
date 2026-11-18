@@ -1758,6 +1758,7 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           `1 evaluation credit deducted from sponsoring institute (${resolvedInstituteName || resolvedSponsoringInstituteId}). Personal credits untouched.`
         );
       }
+    }
     // Stage 8: Student Notification
     try {
       db.prepare(`
