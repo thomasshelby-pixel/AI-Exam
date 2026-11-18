@@ -5421,8 +5421,9 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         resolvedInstituteName: evaluation.institute_name || undefined,
         requestedEvalSource: isInstituteMaterial ? 'INSTITUTE' : 'PUBLIC',
         personalEntitlement: undefined,
-        // Recovery must never charge another personal credit. Institute usage ledger is
-        // idempotent by evaluation ID in the evaluator's completion path.
+        // The completion settlement checks the evaluation-specific ledger. An
+        // existing debit is not charged again; a prior refund is re-debited only
+        // after the reprocessed evaluation successfully completes.
         creditAlreadyConsumed: true,
         isRecoveryRetry: true,
       } as any);
@@ -5435,7 +5436,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
           `aud_${crypto.randomBytes(8).toString('hex')}`,
           String(req.user?.id || evaluation.student_id),
           evaluationId,
-          'Admin initiated a safe retry using the original PDF and exact linked reference material; personal credit deduction disabled for retry.'
+          'Admin initiated a safe retry using the original PDF and exact linked reference material; entitlement is reconciled against the original evaluation ledger only if the retry completes successfully.'
         );
       } catch (auditError) {
         console.warn('[AdminRecovery] Audit log insert failed:', auditError);
@@ -5445,8 +5446,8 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         success: true,
         code: 'EVALUATION_RECOVERY_QUEUED',
         message: reprocessNeedsReview
-          ? 'Fresh Admin reprocess queued using the original answer sheet and exact linked reference material. The previous review result was preserved in the admin audit log; no additional personal credit will be deducted.'
-          : 'Recovery retry queued using the original answer sheet and exact linked reference material. No additional personal credit will be deducted.',
+          ? 'Fresh Admin reprocess queued using the original answer sheet and exact linked reference material. The previous review result was preserved in the admin audit log. The existing debit will not be duplicated; any previously refunded entitlement will be settled only if this reprocess completes successfully.'
+          : 'Recovery retry queued using the original answer sheet and exact linked reference material. The existing debit will not be duplicated; any previously refunded entitlement will be settled only if recovery completes successfully.',
         evaluationId,
         status: 'QUEUED',
         originalPdfAvailable: true,
