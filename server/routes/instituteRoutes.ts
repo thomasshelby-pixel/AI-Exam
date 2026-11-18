@@ -278,6 +278,12 @@ router.get('/dashboard', (req: AuthRequest, res: Response) => {
         averageScore: evalStats.average_score ? Math.round(evalStats.average_score * 10) / 10 : 0,
         maxStudentsAllowed: subStatus.maxStudents,
         remainingSeats: subStatus.remainingSeats,
+        pendingInvitations: subStatus.pendingInvitations,
+        occupiedSeats: subStatus.occupiedSeats,
+        evaluationAllowance: subStatus.evaluationAllowance,
+        evaluationsUsed: subStatus.evaluationsUsed,
+        evaluationsRemaining: subStatus.evaluationsRemaining,
+        isTrial: subStatus.isTrial,
         hasActivePlan: subStatus.hasActivePlan,
         subscriptionStatus: subStatus.status,
         subscriptionPlan: subStatus.plan,
@@ -387,13 +393,6 @@ router.post('/students', (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (subStatus.activeStudents >= subStatus.maxStudents) {
-      return res.status(403).json({
-        error: `Student quota exceeded: Current plan limit is ${subStatus.maxStudents} students (${subStatus.activeStudents} active). Please upgrade your plan.`,
-        code: 'QUOTA_EXCEEDED',
-      });
-    }
-
     // Check if student user exists in users table
     const existingUser = db.prepare('SELECT id, full_name, email, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
       id: string;
@@ -420,6 +419,13 @@ router.post('/students', (req: AuthRequest, res: Response) => {
           }
           return res.status(400).json({ error: `Student ${existingUser.full_name} (${normalizedEmail}) is already actively enrolled in this institute.` });
         } else {
+          // An inactive membership must reserve a seat again before reactivation.
+          if (subStatus.remainingSeats <= 0) {
+            return res.status(403).json({
+              error: `Student quota exceeded: Current plan limit is ${subStatus.maxStudents} seats, including pending invitations. Please upgrade your plan.`,
+              code: 'QUOTA_EXCEEDED',
+            });
+          }
           // Reactivate inactive membership
           db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = ?, notes = COALESCE(?, notes), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
             .run(batchId || null, notes || null, existingMembership.id);
@@ -429,7 +435,14 @@ router.post('/students', (req: AuthRequest, res: Response) => {
         }
       }
 
-      // Create new active membership (multi-institute supported: no check blocking enrollment if student belongs to another institute!)
+      // Create a new active membership only when a free seat is available.
+      if (subStatus.remainingSeats <= 0) {
+        return res.status(403).json({
+          error: `Student quota exceeded: Current plan limit is ${subStatus.maxStudents} seats, including pending invitations. Please upgrade your plan.`,
+          code: 'QUOTA_EXCEEDED',
+        });
+      }
+      // Multi-institute supported: no check blocking enrollment if student belongs to another institute.
       const membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
       db.prepare(`
         INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
@@ -470,9 +483,22 @@ router.post('/students', (req: AuthRequest, res: Response) => {
 
       let membershipId = existingInvite?.id;
       if (existingInvite) {
+        const currentInvite = db.prepare('SELECT status FROM institute_memberships WHERE id = ?').get(existingInvite.id) as { status: string } | undefined;
+        if (String(currentInvite?.status || '').toUpperCase() !== 'PENDING' && subStatus.remainingSeats <= 0) {
+          return res.status(403).json({
+            error: `Student quota exceeded: Current plan limit is ${subStatus.maxStudents} seats, including pending invitations. Please upgrade your plan.`,
+            code: 'QUOTA_EXCEEDED',
+          });
+        }
         db.prepare("UPDATE institute_memberships SET batch_id = ?, student_name = COALESCE(?, student_name), notes = COALESCE(?, notes), status = 'PENDING' WHERE id = ?")
           .run(batchId || null, studentName || null, notes || null, existingInvite.id);
       } else {
+        if (subStatus.remainingSeats <= 0) {
+          return res.status(403).json({
+            error: `Student quota exceeded: Current plan limit is ${subStatus.maxStudents} seats, including pending invitations. Please upgrade your plan.`,
+            code: 'QUOTA_EXCEEDED',
+          });
+        }
         membershipId = `mem_${crypto.randomBytes(8).toString('hex')}`;
         db.prepare(`
           INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, notes, joined_at)
@@ -526,7 +552,7 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
     };
 
     const maxCapacity = subStatus.maxStudents;
-    const currentCount = { count: subStatus.activeStudents };
+    const currentCount = { count: subStatus.occupiedSeats };
 
     for (const item of students) {
       const email = typeof item === 'string' ? item.trim() : item?.email?.trim();
@@ -540,7 +566,7 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
 
       const normalizedEmail = email.toLowerCase();
 
-      if (currentCount.count + results.enrolled >= maxCapacity) {
+      if (currentCount.count + results.enrolled + results.invited >= maxCapacity) {
         results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
         results.skipped++;
         continue;
@@ -1554,7 +1580,24 @@ router.get('/subscription', (req: AuthRequest, res: Response) => {
       status: subStatus.status,
       maxStudents: subStatus.maxStudents,
       activeStudents: subStatus.activeStudents,
+      pendingInvitations: subStatus.pendingInvitations,
+      occupiedSeats: subStatus.occupiedSeats,
       remainingSeats: subStatus.remainingSeats,
+      evaluationAllowance: subStatus.evaluationAllowance,
+      evaluationsUsed: subStatus.evaluationsUsed,
+      evaluationsRemaining: subStatus.evaluationsRemaining,
+      isTrial: subStatus.isTrial,
+      usage: {
+        activeStudents: subStatus.activeStudents,
+        pendingInvitations: subStatus.pendingInvitations,
+        occupiedSeats: subStatus.occupiedSeats,
+        maxStudents: subStatus.maxStudents,
+        remainingSeats: subStatus.remainingSeats,
+        evaluationsUsed: subStatus.evaluationsUsed,
+        evaluationAllowance: subStatus.evaluationAllowance,
+        evaluationsRemaining: subStatus.evaluationsRemaining,
+      },
+      activeSubscription: getActiveInstituteSubscription(instituteId),
       expiresAt: subStatus.expiresAt,
       contactPerson: inst.contact_person,
       email: inst.email,
