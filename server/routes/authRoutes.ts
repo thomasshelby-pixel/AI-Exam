@@ -13,6 +13,7 @@ import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authP
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore, persistStudentAccountToFirestore, recoverStudentAccountFromFirestoreByEmail } from '../services/firestoreSyncService.js';
 import { persistInstituteAccountToFirestore, recoverInstituteAccountFromFirestoreByEmail } from '../services/instituteAccountPersistenceService.js';
+import { ensureInstituteStarterTrial, getActiveInstituteSubscription, INSTITUTE_FREE_TRIAL_PLAN_ID } from '../services/instituteTrialService.js';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
@@ -2177,6 +2178,26 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       throw localError;
     }
 
+    // Activate the one-time Free Starter Trial as part of signup, not later
+    // as a side effect of the first dashboard API request.
+    const starterTrial = ensureInstituteStarterTrial({
+      instituteId,
+      adminUserId: userId,
+      adminEmail: normalizedEmail,
+    });
+    const activeStarterTrial = getActiveInstituteSubscription(instituteId);
+    if (
+      !starterTrial.granted &&
+      (!activeStarterTrial || activeStarterTrial.plan_id !== INSTITUTE_FREE_TRIAL_PLAN_ID)
+    ) {
+      console.error('[InstituteRegister] Starter trial activation failed:', { instituteId, reason: starterTrial.reason });
+      return res.status(503).json({
+        error: 'Your institute account is saved, but the free 30-day starter trial could not be activated yet. Please retry or contact support.',
+        code: 'INSTITUTE_STARTER_TRIAL_ACTIVATION_FAILED',
+        retryable: true,
+      });
+    }
+
     const token = generateToken({
       id: userId,
       email: normalizedEmail,
@@ -2343,6 +2364,33 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
           code: 'INSTITUTE_ACCOUNT_PERSISTENCE_UNCONFIRMED',
           retryable: true,
         });
+      }
+    }
+
+    if (user.role === 'INSTITUTE_ADMIN') {
+      // Existing institutes receive the one-time starter trial at their first
+      // successful login too. Paid/trial history is respected by the service.
+      try {
+        const starterTrial = ensureInstituteStarterTrial({
+          instituteId: String(localInstitute.id),
+          adminUserId: user.id,
+          adminEmail: normalizedEmail,
+        });
+        if (starterTrial.granted) {
+          console.info('[InstituteLogin] One-time Free Starter Trial activated:', {
+            instituteId: localInstitute.id,
+            expiresAt: starterTrial.expiresAt,
+          });
+        }
+      } catch (trialError) {
+        console.error('[InstituteLogin] Starter trial activation failed:', trialError);
+        if (requiresDurableAccountPersistence()) {
+          return res.status(503).json({
+            error: 'Your institute account was restored, but the free starter trial could not be activated yet. Please retry shortly.',
+            code: 'INSTITUTE_STARTER_TRIAL_ACTIVATION_FAILED',
+            retryable: true,
+          });
+        }
       }
     }
 
