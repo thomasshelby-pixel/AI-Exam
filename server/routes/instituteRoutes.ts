@@ -535,6 +535,20 @@ router.post('/students', (req: AuthRequest, res: Response) => {
     }
   } catch (error: unknown) {
     console.error('Enroll student error:', error);
+    const message = String((error as any)?.message || '');
+    if (message.includes('INSTITUTE_STUDENT_QUOTA_EXCEEDED')) {
+      return res.status(403).json({
+        error: 'Student quota exceeded. This plan includes active students and pending invitations. Please upgrade the institute plan.',
+        code: 'QUOTA_EXCEEDED',
+      });
+    }
+    if (message.includes('INSTITUTE_SUBSCRIPTION_REQUIRED')) {
+      return res.status(403).json({
+        error: 'No active institute plan is available. Please renew or upgrade to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        subscriptionRequired: true,
+      });
+    }
     return res.status(500).json({ error: 'Failed to enroll student' });
   }
 });
@@ -586,6 +600,9 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
 
       if (user && user.role === 'STUDENT') {
         const existingMem = db.prepare('SELECT id, status FROM institute_memberships WHERE institute_id = ? AND student_id = ?').get(instituteId, user.id) as { id: string; status: string } | undefined;
+        const existingMembershipAlreadyHasSeat = Boolean(
+          existingMem && ['ACTIVE', 'PENDING'].includes(String(existingMem.status || '').toUpperCase())
+        );
 
         if (existingMem && String(existingMem.status || '').toUpperCase() === 'ACTIVE') {
           // Existing active students already occupy a seat; updating a batch must not count them twice.
@@ -594,9 +611,6 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
           continue;
         }
 
-        const existingMembershipAlreadyHasSeat = Boolean(
-          existingMem && ['ACTIVE', 'PENDING'].includes(String(existingMem.status || '').toUpperCase())
-        );
         if (!existingMembershipAlreadyHasSeat && currentCount.count + additionalSeatsConsumed >= maxCapacity) {
           results.errors.push(`Student limit reached (${maxCapacity}). Cannot enroll ${email}.`);
           results.skipped++;
