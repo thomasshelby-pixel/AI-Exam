@@ -66,7 +66,7 @@ const defaultAdapter: InstituteAccountPersistenceAdapter = {
     [{ field: 'institute_id', op: '==', value: instituteId }],
     { failOnError: true },
   ),
-  getDocument: getFirestoreDoc,
+  getDocument: <T>(collectionName: string, id: string) => getFirestoreDoc<T>(collectionName, id, { failOnError: true }),
   isTombstoned: isCloudTombstoned,
   setDocumentsAtomically: setFirestoreDocsAtomically,
 };
@@ -151,18 +151,7 @@ export async function persistInstituteAccountToFirestore(
       return 'conflict';
     }
 
-    const instituteAtId = await adapter.getDocument<Record<string, any>>('institutes', instituteId);
-    const userAtId = await adapter.getDocument<Record<string, any>>('users', userId);
-    if (
-      (instituteAtId && normalizeEmail(instituteAtId.email) !== email) ||
-      (userAtId && normalizeEmail(userAtId.email) !== email)
-    ) {
-      return 'conflict';
-    }
-
-    const writes: Array<{ collectionName: string; docId: string; data: Record<string, any> }> = [
-      { collectionName: 'institutes', docId: instituteId, data: bundle.institute },
-      { collectionName: 'users', docId: userId, data: bundle.user },
+    const batchAndAuditWrites: Array<{ collectionName: string; docId: string; data: Record<string, any> }> = [
       ...bundle.batches.map((batch) => ({
         collectionName: 'batches',
         docId: asId(batch),
@@ -174,27 +163,67 @@ export async function persistInstituteAccountToFirestore(
         data: log,
       })),
     ];
+    const baseWrites = [
+      { collectionName: 'institutes', docId: instituteId, data: bundle.institute },
+      { collectionName: 'users', docId: userId, data: bundle.user },
+    ];
+    const candidateWrites = [...baseWrites, ...batchAndAuditWrites];
+    const existingDocuments = await Promise.all(candidateWrites.map((write) =>
+      adapter.getDocument<Record<string, any>>(write.collectionName, write.docId)
+    ));
 
-    if (!await adapter.setDocumentsAtomically(writes)) return 'failed';
+    // A matching cloud document is already authoritative. Verify its identity,
+    // but never replace its newer profile/password/settings with a local SQLite
+    // snapshot simply because the administrator logged in on a fresh instance.
+    for (let index = 0; index < existingDocuments.length; index += 1) {
+      const existing = existingDocuments[index];
+      if (!existing) continue;
+      const candidate = candidateWrites[index];
+      if (asId(existing) !== candidate.docId) return 'conflict';
+      if (candidate.collectionName === 'institutes') {
+        if (normalizeEmail(existing.email) !== email) return 'conflict';
+      } else if (candidate.collectionName === 'users') {
+        if (
+          normalizeEmail(existing.email) !== email ||
+          String(existing.role || '').toUpperCase() !== 'INSTITUTE_ADMIN' ||
+          typeof existing.password_hash !== 'string' ||
+          !existing.password_hash
+        ) return 'conflict';
+      } else if (candidate.collectionName === 'batches') {
+        if (String(existing.institute_id || '') !== instituteId) return 'conflict';
+      } else if (candidate.collectionName === 'audit_logs') {
+        if (
+          String(existing.entity_id || '') !== instituteId ||
+          String(existing.action || '') !== 'INSTITUTE_SIGNUP'
+        ) return 'conflict';
+      }
+    }
 
-    const readBack = await Promise.all(writes.map((write) =>
+    const missingWrites = candidateWrites.filter((write, index) => !existingDocuments[index]);
+    if (missingWrites.length > 0 && !await adapter.setDocumentsAtomically(missingWrites)) {
+      return 'failed';
+    }
+
+    // Confirm every expected record exists after the atomic write. Identity
+    // checks intentionally permit newer Firestore fields to remain untouched.
+    const readBack = await Promise.all(candidateWrites.map((write) =>
       adapter.getDocument<Record<string, any>>(write.collectionName, write.docId)
     ));
     if (readBack.some((record, index) => {
-      if (!record || asId(record) !== writes[index].docId) return true;
-      if (writes[index].collectionName === 'institutes') {
-        return normalizeEmail(record.email) !== email ||
-          String(record.code || '') !== String(bundle.institute.code || '');
+      if (!record || asId(record) !== candidateWrites[index].docId) return true;
+      if (candidateWrites[index].collectionName === 'institutes') {
+        return normalizeEmail(record.email) !== email;
       }
-      if (writes[index].collectionName === 'users') {
+      if (candidateWrites[index].collectionName === 'users') {
         return normalizeEmail(record.email) !== email ||
           String(record.role || '').toUpperCase() !== 'INSTITUTE_ADMIN' ||
-          String(record.password_hash || '') !== String(bundle.user.password_hash || '');
+          typeof record.password_hash !== 'string' ||
+          !record.password_hash;
       }
-      if (writes[index].collectionName === 'batches') {
+      if (candidateWrites[index].collectionName === 'batches') {
         return String(record.institute_id || '') !== instituteId;
       }
-      if (writes[index].collectionName === 'audit_logs') {
+      if (candidateWrites[index].collectionName === 'audit_logs') {
         return String(record.entity_id || '') !== instituteId ||
           String(record.action || '') !== 'INSTITUTE_SIGNUP';
       }
