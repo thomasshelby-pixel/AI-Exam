@@ -64,6 +64,11 @@ import { requireFeatureAccess } from '../services/featureControlService.js';
 import { buildStudentOwnershipSql, getStudentOwnershipParams } from '../services/studentOwnershipService.js';
 import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
 import {
+  getActiveInstituteSubscription,
+  reserveInstituteEvaluationCredit,
+  releaseInstituteEvaluationCredit,
+} from '../services/instituteTrialService.js';
+import {
   getOrAssignStudentCode,
   generateCanonicalEvaluationId,
 } from '../services/studentIdentityService.js';
@@ -1141,6 +1146,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
   let facultyMockReviewRetryPrevious: any | null = null;
   let facultyMockReviewRetryOfEvaluationId: string | null = null;
   let creditAlreadyConsumed = false;
+  let instituteCreditReserved = false;
   let asyncEvaluationAccepted = false;
   let entitlementSource: 'INSTITUTE_ALLOCATION' | 'PERMANENT_FREE' | 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT' | 'FACULTY_MOCK_SPONSORED' =
     'PERSONAL_FREE';
@@ -1482,17 +1488,12 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       }
 
       // Verify institute subscription quota
-      const sub = db.prepare(`
-        SELECT evaluations_remaining, evaluations_used, status, expiry_date
-        FROM institute_subscriptions
-        WHERE institute_id = ? AND status = 'ACTIVE' AND datetime(expiry_date) > datetime('now')
-        ORDER BY datetime(expiry_date) DESC
-        LIMIT 1
-      `).get(chosenInst.institute_id) as { evaluations_remaining: number } | undefined;
+      const sub = getActiveInstituteSubscription(chosenInst.institute_id);
 
-      if (!isPermanentFreeStudent && sub && sub.evaluations_remaining <= 0) {
+      if (!isPermanentFreeStudent && (!sub || Number(sub.evaluations_remaining) <= 0)) {
         return res.status(402).json({
-          error: `Coaching institute evaluation quota for ${chosenInst.institute_name} is exhausted. Please contact institute administration.`,
+          error: `Coaching institute evaluation allowance for ${chosenInst.institute_name} is exhausted or expired. Please contact institute administration to upgrade the plan.`,
+          code: 'INSTITUTE_EVALUATION_QUOTA_EXHAUSTED',
         });
       }
 
@@ -2034,6 +2035,33 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       }
     }
 
+    // Reserve one shared institute credit before the job is accepted.
+    // This is separate from personal entitlements and never applies to permanent-free students.
+    if (entitlementSource === 'INSTITUTE_ALLOCATION' && resolvedSponsoringInstituteId) {
+      try {
+        reserveInstituteEvaluationCredit({
+          instituteId: resolvedSponsoringInstituteId,
+          studentId,
+          evaluationId,
+        });
+        instituteCreditReserved = true;
+      } catch (reservationError: any) {
+        const message = String(reservationError?.message || '');
+        db.prepare(`
+          UPDATE evaluations
+          SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND status NOT IN ('COMPLETED', 'NEEDS_REVIEW')
+        `).run(message || 'Institute evaluation allowance is exhausted.', evaluationId);
+        const quotaExhausted = message.includes('INSTITUTE_EVALUATION_QUOTA_EXHAUSTED');
+        return res.status(quotaExhausted ? 402 : 500).json({
+          error: quotaExhausted
+            ? 'Your institute has used all available evaluation credits. Please upgrade or renew the institute plan.'
+            : 'The institute evaluation credit could not be reserved. No evaluation was started; please retry.',
+          code: quotaExhausted ? 'INSTITUTE_EVALUATION_QUOTA_EXHAUSTED' : 'INSTITUTE_CREDIT_RESERVATION_FAILED',
+        });
+      }
+    }
+
     // Step E: Enqueue Asynchronous Background Evaluation
     await enqueueEvaluation({
       evaluationId,
@@ -2121,6 +2149,16 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       WHERE id = ?
         AND UPPER(COALESCE(status, '')) NOT IN ('COMPLETED', 'NEEDS_REVIEW', 'REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED')
     `).run(errMsg.slice(0, 500), evaluationId);
+
+    // A synchronous enqueue/setup failure happens before the worker owns the job.
+    // Release only an unconsumed institute reservation; completed/consumed rows are immutable.
+    if (instituteCreditReserved && !asyncEvaluationAccepted) {
+      releaseInstituteEvaluationCredit({
+        evaluationId,
+        reason: errMsg,
+      });
+      instituteCreditReserved = false;
+    }
 
     // A synchronous enqueue/setup failure happens after the acceptance-time debit
     // but before the worker owns the job. Restore that exact entitlement here.
