@@ -39,6 +39,7 @@ function createInstitute(adminEmail: string) {
 async function run() {
   const admin = createInstituteAdmin();
   const instituteId = createInstitute(admin.email);
+  let pendingStudentId = '';
 
   try {
     const granted = ensureInstituteStarterTrial({
@@ -79,7 +80,7 @@ async function run() {
       INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
       VALUES (?, ?, ?, NULL, 'ACTIVE', ?, 'Seat Test Student', CURRENT_TIMESTAMP)
     `).run(activeMembershipId, instituteId, admin.id, admin.email);
-    const pendingStudentId = `usr_trial_pending_student_${crypto.randomBytes(5).toString('hex')}`;
+    pendingStudentId = `usr_trial_pending_student_${crypto.randomBytes(5).toString('hex')}`;
     const pendingStudentEmail = `${pendingStudentId}@example.com`;
     db.prepare(`
       INSERT INTO users (id, email, password_hash, full_name, role, status)
