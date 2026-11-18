@@ -7,6 +7,7 @@ import {
   reserveInstituteEvaluationCredit,
   finalizeInstituteEvaluationCredit,
   releaseInstituteEvaluationCredit,
+  withInstituteStudentSeatReservation,
   INSTITUTE_FREE_TRIAL_DAYS,
   INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY,
   INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS,
@@ -71,6 +72,37 @@ async function run() {
     assert.equal(secondAttempt.granted, false);
     assert.equal(getActiveInstituteSubscription(instituteId)?.id, active.id);
 
+    // The seat guard counts active students and pending invitations in one
+    // write transaction, so simultaneous requests cannot oversubscribe seats.
+    const activeMembershipId = `mem_trial_active_${crypto.randomBytes(5).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+      VALUES (?, ?, ?, NULL, 'ACTIVE', ?, 'Seat Test Student', CURRENT_TIMESTAMP)
+    `).run(activeMembershipId, instituteId, admin.id, admin.email);
+    for (let i = 0; i < 49; i++) {
+      db.prepare(`
+        INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+        VALUES (?, ?, NULL, NULL, 'PENDING', ?, 'Pending Seat Test', CURRENT_TIMESTAMP)
+      `).run(`mem_trial_pending_${i}_${crypto.randomBytes(3).toString('hex')}`, `pending-${i}-${admin.id}@example.com`);
+    }
+    assert.equal(
+      Number((db.prepare(`
+        SELECT COUNT(*) AS count FROM institute_memberships
+        WHERE institute_id = ? AND status IN ('ACTIVE', 'PENDING')
+      `).get(instituteId) as any).count),
+      50
+    );
+    assert.throws(
+      () => withInstituteStudentSeatReservation(instituteId, () => {
+        db.prepare(`
+          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+          VALUES (?, ?, NULL, NULL, 'PENDING', ?, 'Over Limit', CURRENT_TIMESTAMP)
+        `).run(`mem_trial_overflow_${crypto.randomBytes(4).toString('hex')}`, `overflow-${admin.id}@example.com`);
+      }),
+      /INSTITUTE_STUDENT_QUOTA_EXCEEDED/
+    );
+    db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(instituteId);
+
     const studentId = admin.id;
     const evaluationIds = Array.from({ length: 50 }, (_, i) => `eval_trial_${i + 1}_${crypto.randomBytes(3).toString('hex')}`);
 
@@ -127,15 +159,16 @@ async function run() {
     assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_remaining), 1);
     assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_used), 49);
 
-    const retried = reserveInstituteEvaluationCredit({
-      instituteId,
-      studentId,
-      evaluationId: evaluationIds[1],
-    });
-    assert.equal(retried.alreadyReserved, false);
+    // A queue job accepted immediately before the reservation rollout may
+    // reach finalization without a reservation row. It must still charge once.
+    const legacyQueuedEvaluationId = `eval_trial_legacy_queued_${crypto.randomBytes(4).toString('hex')}`;
+    finalizeInstituteEvaluationCredit({ instituteId, studentId, evaluationId: legacyQueuedEvaluationId });
     assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_remaining), 0);
-    finalizeInstituteEvaluationCredit({ instituteId, studentId, evaluationId: evaluationIds[1] });
     assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_used), 50);
+    const legacyConsumedRow = db.prepare(
+      'SELECT action_type FROM institute_usage_ledger WHERE idempotency_key = ?'
+    ).get(`inst_eval_${legacyQueuedEvaluationId}`) as any;
+    assert.equal(legacyConsumedRow.action_type, 'CONSUMED');
 
     console.log('✅ Institute starter trial and shared quota tests passed.');
   } finally {
