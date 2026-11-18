@@ -52,9 +52,8 @@ async function run() {
     });
     assert.equal(getValidStudentCreditBalance(userId), 2);
 
-    // Regression: successful evaluation/reprocess must create a debit even
-    // when the old job flag says it was already consumed but there is no
-    // current negative ledger entry for this evaluation.
+    // A fresh, uncharged job must settle one purchased credit before
+    // COMPLETED is published when the monthly free quota is exhausted.
     const firstSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
       userId,
       evaluationId: targetEvaluationId,
@@ -97,7 +96,8 @@ async function run() {
     assert.equal(getValidStudentCreditBalance(userId), 1);
 
     // Failed first attempt is refunded; a later successful admin reprocess
-    // must re-establish exactly one debit for the same evaluation ID.
+    // keeps creditAlreadyConsumed=true, but the refund event requires one
+    // replacement debit for the same evaluation ID.
     assert.equal(
       refundEvaluationCreditAtomic({
         userId,
