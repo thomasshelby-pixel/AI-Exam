@@ -472,6 +472,24 @@ export const AdminPortal: React.FC = () => {
           break;
         }
         case 'evaluations': {
+          // Silently reconcile eligible legacy completed Admin reprocesses before
+          // loading the table. The server only charges Public personal evaluations
+          // with an explicit reprocess audit trail and an idempotent ledger guard.
+          try {
+            const autoReconciliation = await apiRequest<{
+              chargedCount?: number;
+              alreadySettledCount?: number;
+            }>('/api/admin/evaluations/auto-reconcile-reprocessed-entitlements', { method: 'POST' });
+            if (Number(autoReconciliation.chargedCount || 0) > 0) {
+              setSuccessMsg(
+                `Automatically reconciled credits for ${autoReconciliation.chargedCount} completed reprocessed evaluation(s).`
+              );
+            }
+          } catch (autoReconciliationError) {
+            // Credit repair must never prevent the Admin Evaluations table from loading.
+            console.warn('[AdminPortal] Automatic legacy credit reconciliation was unavailable:', autoReconciliationError);
+          }
+
           const queryParams = new URLSearchParams();
           if (evalSearch.trim()) queryParams.set('search', evalSearch.trim());
           if (evalLevelFilter !== 'ALL') queryParams.set('level', evalLevelFilter);
