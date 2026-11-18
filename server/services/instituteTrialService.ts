@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
+import { syncRecordToFirestore } from './firestoreSyncService.js';
 
 export const INSTITUTE_FREE_TRIAL_PLAN_ID = 'FREE_STARTER_TRIAL_V1';
 export const INSTITUTE_FREE_TRIAL_PLAN_NAME = 'Free Starter Trial';
@@ -7,6 +8,22 @@ export const INSTITUTE_FREE_TRIAL_DAYS = 30;
 export const INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY = 50;
 export const INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS = 50;
 
+function mirrorInstituteRecord(collection: string, id: string, row: Record<string, any> | undefined): void {
+  if (!row || !id) return;
+  const timestamp = new Date().toISOString();
+  void syncRecordToFirestore(collection, id, { ...row, updated_at: timestamp, _updatedAt: timestamp });
+}
+
+function mirrorInstituteSubscription(subscriptionId: string | null | undefined): void {
+  if (!subscriptionId || subscriptionId === 'LEGACY_UNMETERED') return;
+  const row = db.prepare('SELECT * FROM institute_subscriptions WHERE id = ?').get(subscriptionId) as Record<string, any> | undefined;
+  mirrorInstituteRecord('institute_subscriptions', subscriptionId, row);
+}
+
+function mirrorInstituteUsageLedger(idempotencyKey: string): void {
+  const row = db.prepare('SELECT * FROM institute_usage_ledger WHERE idempotency_key = ? LIMIT 1').get(idempotencyKey) as any;
+  if (row?.id) mirrorInstituteRecord('institute_usage_ledger', String(row.id), row);
+}
 export interface InstituteSubscriptionEntitlement {
   id: string;
   institute_id: string;
@@ -179,6 +196,15 @@ export function ensureInstituteStarterTrial(params: {
 
     db.exec('COMMIT;');
     transactionStarted = false;
+    mirrorInstituteSubscription(subscriptionId);
+    const claimRow = db.prepare('SELECT * FROM institute_trial_claims WHERE id = ?').get(claimId) as any;
+    mirrorInstituteRecord('institute_trial_claims', claimId, claimRow);
+    const instituteRow = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
+    mirrorInstituteRecord('institutes', instituteId, instituteRow);
+    const auditRow = db.prepare(
+      "SELECT * FROM audit_logs WHERE entity_id = ? AND action = 'INSTITUTE_FREE_TRIAL_ACTIVATED' ORDER BY created_at DESC LIMIT 1"
+    ).get(instituteId) as any;
+    if (auditRow?.id) mirrorInstituteRecord('audit_logs', String(auditRow.id), auditRow);
     return { granted: true, subscriptionId, expiresAt };
   } catch (error) {
     if (transactionStarted) {
@@ -279,6 +305,9 @@ export function reserveInstituteEvaluationCredit(params: {
       `).run(instituteId, instituteId, evaluationId);
       db.exec('COMMIT;');
       transactionStarted = false;
+      mirrorInstituteUsageLedger(idempotencyKey);
+      const legacyEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+      mirrorInstituteRecord('evaluations', evaluationId, legacyEvaluation);
       return {
         instituteId,
         subscriptionId: 'LEGACY_UNMETERED',
@@ -340,6 +369,10 @@ export function reserveInstituteEvaluationCredit(params: {
 
     db.exec('COMMIT;');
     transactionStarted = false;
+    mirrorInstituteSubscription(subscription.id);
+    mirrorInstituteUsageLedger(idempotencyKey);
+    const reservedEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+    mirrorInstituteRecord('evaluations', evaluationId, reservedEvaluation);
     return { instituteId, subscriptionId: subscription.id, balanceBefore, balanceAfter, alreadyReserved: false, alreadyConsumed: false };
   } catch (error) {
     if (transactionStarted) {
@@ -356,9 +389,14 @@ export function finalizeInstituteEvaluationCredit(params: {
   evaluationId: string;
 }): void {
   const key = `inst_eval_${String(params.evaluationId || '').trim()}`;
-  const current = db.prepare('SELECT * FROM institute_usage_ledger WHERE idempotency_key = ? LIMIT 1').get(key) as any;
-  // The API route must reserve before queue acceptance. The worker only finalises
-  // that reservation; it never creates a second debit if a replica is missing.
+  let current = db.prepare('SELECT * FROM institute_usage_ledger WHERE idempotency_key = ? LIMIT 1').get(key) as any;
+  // Compatibility for jobs accepted immediately before this reservation-based
+  // deployment. Older workers deducted once at completion, so create the missing
+  // idempotent reservation here rather than failing an already-running evaluation.
+  if (!current) {
+    reserveInstituteEvaluationCredit({ instituteId: params.instituteId, studentId: params.studentId, evaluationId: params.evaluationId });
+    current = db.prepare('SELECT * FROM institute_usage_ledger WHERE idempotency_key = ? LIMIT 1').get(key) as any;
+  }
   if (!current) throw new Error('INSTITUTE_EVALUATION_RESERVATION_MISSING');
   if (String(current.action_type || '').toUpperCase() === 'CONSUMED') return;
   if (String(current.action_type || '').toUpperCase() !== 'RESERVED') {
@@ -372,6 +410,7 @@ export function finalizeInstituteEvaluationCredit(params: {
     status: 'CONSUMED', studentId: params.studentId, evaluationId: params.evaluationId,
     subscriptionId: current.subscription_id || null, consumedAt: new Date().toISOString(),
   }), current.id);
+  mirrorInstituteUsageLedger(key);
 }
 
 /** Releases an unconsumed reservation after a failed or review-required run. */
@@ -409,6 +448,10 @@ export function releaseInstituteEvaluationCredit(params: { evaluationId: string;
     db.prepare('UPDATE evaluations SET consumed_from_institute_allocation = 0 WHERE id = ?').run(evaluationId);
     db.exec('COMMIT;');
     transactionStarted = false;
+    mirrorInstituteSubscription(reservation.subscription_id || null);
+    mirrorInstituteUsageLedger(key);
+    const releasedEvaluation = db.prepare('SELECT * FROM evaluations WHERE id = ?').get(evaluationId) as any;
+    mirrorInstituteRecord('evaluations', evaluationId, releasedEvaluation);
     return true;
   } catch (error) {
     if (transactionStarted) {
