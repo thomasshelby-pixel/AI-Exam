@@ -4902,6 +4902,202 @@ router.get('/evaluations', async (req: AuthRequest, res: Response) => {
 });
 
 /**
+ * Automatically repairs missing entitlements for successful Admin reprocesses
+ * that completed before completion-time settlement was deployed.
+ *
+ * This is safe to call repeatedly: each evaluation is selected only after an
+ * explicit EVALUATION_REPROCESS_STARTED audit record, personal PUBLIC scope,
+ * and completed_at later than the reprocess. A durable completion audit row
+ * makes the repair idempotent. Faculty Mock, institute, and permanent-free
+ * entitlements are excluded.
+ */
+router.post('/evaluations/auto-reconcile-reprocessed-entitlements', async (req: AuthRequest, res: Response) => {
+  try {
+    const candidates = db.prepare(`
+      SELECT
+        e.id,
+        e.student_id,
+        e.entitlement_source,
+        reprocess.created_at AS reprocess_started_at
+      FROM evaluations e
+      INNER JOIN audit_logs reprocess
+        ON reprocess.entity_id = e.id
+       AND reprocess.entity_type = 'EVALUATION'
+       AND reprocess.action = 'EVALUATION_REPROCESS_STARTED'
+      WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'COMPLETED'
+        AND UPPER(TRIM(COALESCE(e.evaluation_source, 'PUBLIC'))) = 'PUBLIC'
+        AND UPPER(TRIM(COALESCE(e.material_type, ''))) <> 'FACULTY_MOCK_TEST'
+        AND COALESCE(e.faculty_mock_test_id, '') = ''
+        AND COALESCE(e.institute_id, '') = ''
+        AND COALESCE(e.sponsoring_institute_id, '') = ''
+        AND UPPER(TRIM(COALESCE(e.material_source, ''))) <> 'INSTITUTE'
+        AND COALESCE(e.consumed_from_institute_allocation, 0) = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM institute_materials im
+          WHERE im.id = e.material_id
+            AND COALESCE(im.institute_id, '') <> ''
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM permanent_free_entitlements pfe
+          INNER JOIN users entitlement_user
+            ON LOWER(TRIM(entitlement_user.email)) = LOWER(TRIM(pfe.email))
+          WHERE entitlement_user.id = e.student_id
+            AND pfe.is_active = 1
+        )
+        AND UPPER(TRIM(COALESCE(e.entitlement_source, ''))) IN (
+          '', 'PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'
+        )
+        AND datetime(COALESCE(e.completed_at, e.updated_at, e.created_at)) >= datetime(reprocess.created_at)
+        AND reprocess.id = (
+          SELECT latest.id
+          FROM audit_logs latest
+          WHERE latest.entity_id = e.id
+            AND latest.entity_type = 'EVALUATION'
+            AND latest.action = 'EVALUATION_REPROCESS_STARTED'
+          ORDER BY datetime(latest.created_at) DESC, latest.rowid DESC
+          LIMIT 1
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM audit_logs repaired
+          WHERE repaired.entity_id = e.id
+            AND repaired.entity_type = 'EVALUATION'
+            AND repaired.action = 'EVALUATION_CREDIT_AUTO_RECONCILED'
+        )
+      ORDER BY datetime(e.completed_at) DESC
+      LIMIT 50
+    `).all() as Array<{
+      id: string;
+      student_id: string;
+      entitlement_source?: string | null;
+      reprocess_started_at?: string | null;
+    }>;
+
+    let chargedCount = 0;
+    let alreadySettledCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const candidate of candidates) {
+      const evaluationId = String(candidate.id || '').trim();
+      const studentId = String(candidate.student_id || '').trim();
+      if (!evaluationId || !studentId) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const claimAuditId = `aud_${crypto.randomBytes(8).toString('hex')}`;
+      let claimed = false;
+      try {
+        db.exec('BEGIN IMMEDIATE;');
+        const completedRepair = db.prepare(`
+          SELECT id FROM audit_logs
+          WHERE entity_id = ?
+            AND entity_type = 'EVALUATION'
+            AND action = 'EVALUATION_CREDIT_AUTO_RECONCILED'
+          LIMIT 1
+        `).get(evaluationId);
+        const activeClaim = db.prepare(`
+          SELECT id FROM audit_logs
+          WHERE entity_id = ?
+            AND entity_type = 'EVALUATION'
+            AND action = 'EVALUATION_CREDIT_AUTO_RECONCILIATION_CLAIMED'
+            AND datetime(created_at) > datetime('now', '-5 minutes')
+          ORDER BY datetime(created_at) DESC
+          LIMIT 1
+        `).get(evaluationId);
+
+        if (!completedRepair && !activeClaim) {
+          db.prepare(`
+            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+            VALUES (?, ?, 'EVALUATION_CREDIT_AUTO_RECONCILIATION_CLAIMED', 'EVALUATION', ?, ?)
+          `).run(
+            claimAuditId,
+            String(req.user?.id || studentId),
+            evaluationId,
+            'Automatic idempotent entitlement repair claimed for a completed Admin reprocess.'
+          );
+          claimed = true;
+        }
+        db.exec('COMMIT;');
+      } catch (claimError) {
+        try { db.exec('ROLLBACK;'); } catch {}
+        failedCount += 1;
+        console.warn('[AdminCreditAutoReconciliation] Could not claim evaluation:', evaluationId, claimError);
+        continue;
+      }
+
+      if (!claimed) {
+        skippedCount += 1;
+        continue;
+      }
+
+      try {
+        const settlement = await settlePersonalEntitlementForSuccessfulEvaluation({
+          userId: studentId,
+          evaluationId,
+          entitlementSource: String(candidate.entitlement_source || '').trim(),
+        });
+
+        if (!settlement) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const completionAuditId = `aud_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+          VALUES (?, ?, 'EVALUATION_CREDIT_AUTO_RECONCILED', 'EVALUATION', ?, ?)
+        `).run(
+          completionAuditId,
+          String(req.user?.id || studentId),
+          evaluationId,
+          JSON.stringify({
+            charged: settlement.charged,
+            entitlementSource: settlement.source,
+            reason: settlement.reason,
+            trigger: 'ADMIN_EVALUATIONS_PAGE_LOAD',
+            reprocessStartedAt: candidate.reprocess_started_at || null,
+          })
+        );
+
+        const auditRecord = db.prepare('SELECT * FROM audit_logs WHERE id = ?').get(completionAuditId) as any;
+        if (auditRecord) {
+          await syncRecordToFirestore('audit_logs', completionAuditId, auditRecord).catch((syncError) =>
+            console.warn('[AdminCreditAutoReconciliation] Audit mirror sync failed:', evaluationId, syncError)
+          );
+        }
+
+        if (settlement.charged) chargedCount += 1;
+        else alreadySettledCount += 1;
+      } catch (settlementError) {
+        failedCount += 1;
+        // Leave the short-lived claim in place. A later Admin Evaluations page
+        // load retries after five minutes; no permanent failure marker is written.
+        console.warn('[AdminCreditAutoReconciliation] Settlement failed:', evaluationId, settlementError);
+      }
+    }
+
+    return res.json({
+      success: true,
+      scanned: candidates.length,
+      chargedCount,
+      alreadySettledCount,
+      skippedCount,
+      failedCount,
+    });
+  } catch (error: any) {
+    console.error('[AdminCreditAutoReconciliation] Batch failed:', error);
+    return res.status(500).json({
+      success: false,
+      error: String(error?.message || 'Automatic entitlement reconciliation failed.'),
+    });
+  }
+});
+
+/**
  * Explicit, idempotent credit repair for an already completed personal evaluation.
  * This is used when a previous successful reprocess predates or missed the
  * completion-time ledger settlement. Faculty Mock, institute-sponsored and
