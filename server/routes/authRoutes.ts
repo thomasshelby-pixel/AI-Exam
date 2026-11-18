@@ -2300,8 +2300,9 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
       });
     }
 
+    let localInstitute: any = null;
     if (user.role === 'INSTITUTE_ADMIN') {
-      let localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
+      localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
 
       if (!localInstitute) {
         // Local SQLite may be a fresh deployment instance. Recover the exact
