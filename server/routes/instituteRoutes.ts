@@ -174,7 +174,7 @@ export function getInstituteSubscriptionStatus(instituteId: string): {
   const legacyPlan = String(inst.subscription_plan || '').trim();
   const noPlanKeywords = [
     '', 'NONE', 'NO_PLAN', 'INACTIVE', 'EXPIRED', 'PENDING_SELECTION', 'UNPAID',
-    'FREE', 'TRIAL_EXPIRED', 'CANCELLED', 'CANCELED', 'SUSPENDED',
+    'FREE', 'FREE_STARTER_TRIAL_V1', 'TRIAL_EXPIRED', 'CANCELLED', 'CANCELED', 'SUSPENDED',
   ];
   if (!legacyPlan || noPlanKeywords.includes(legacyPlan.toUpperCase())) {
     return {
