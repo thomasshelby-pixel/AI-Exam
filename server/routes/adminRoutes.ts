@@ -4902,12 +4902,6 @@ router.get('/evaluations', async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * Explicit, idempotent credit repair for an already completed personal evaluation.
- * This is used when a previous successful reprocess predates or missed the
- * completion-time ledger settlement. Faculty Mock, institute-sponsored and
- * permanent-free evaluations are deliberately not eligible.
- */
-/**
  * Automatically repairs missing entitlements for successful Admin reprocesses
  * that completed before completion-time settlement was deployed.
  *
@@ -5103,6 +5097,12 @@ router.post('/evaluations/auto-reconcile-reprocessed-entitlements', async (req: 
   }
 });
 
+/**
+ * Explicit, idempotent credit repair for an already completed personal evaluation.
+ * This is used when a previous successful reprocess predates or missed the
+ * completion-time ledger settlement. Faculty Mock, institute-sponsored and
+ * permanent-free evaluations are deliberately not eligible.
+ */
 router.post('/evaluations/:id/reconcile-entitlement', async (req: AuthRequest, res: Response) => {
   const requestedId = String(req.params.id || '').trim();
   try {
