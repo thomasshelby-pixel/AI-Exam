@@ -1658,6 +1658,24 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     if (finalizationUpdate.changes !== 1) {
       const latestStatus = getEvaluationStatus(evaluationId);
       if (isTerminalEvaluationStatus(latestStatus)) {
+        // Another terminal decision won after this worker restored a previously
+        // refunded debit. Return only this worker's newly created debit unless
+        // the competing worker successfully completed the same evaluation.
+        if (latestStatus !== 'COMPLETED' && successfulSettlementDebited) {
+          try {
+            const restored = refundEvaluationCreditAtomic({
+              userId: studentId,
+              evaluationId,
+              entitlementSource,
+            });
+            if (restored) {
+              db.prepare('UPDATE evaluations SET consumed_from_personal_credits = 0 WHERE id = ?').run(evaluationId);
+              await syncStudentCreditsToFirestore(studentId);
+            }
+          } catch (refundErr) {
+            console.warn(`[AsyncEval] Could not refund a newly restored debit after terminal-state race for ${evaluationId}:`, refundErr);
+          }
+        }
         console.info(`[AsyncEval] Preserving terminal state ${latestStatus} for ${evaluationId}; stale job finalization was ignored.`);
         return;
       }
