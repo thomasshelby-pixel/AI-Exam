@@ -283,11 +283,9 @@ export function finalizeInstituteEvaluationCredit(params: {
   evaluationId: string;
 }): void {
   const key = `inst_eval_${String(params.evaluationId || '').trim()}`;
-  const existing = db.prepare('SELECT * FROM institute_usage_ledger WHERE idempotency_key = ? LIMIT 1').get(key) as any;
-  if (!existing || String(existing.action_type || '').toUpperCase() === 'RELEASED') {
-    reserveInstituteEvaluationCredit(params);
-  }
   const current = db.prepare('SELECT * FROM institute_usage_ledger WHERE idempotency_key = ? LIMIT 1').get(key) as any;
+  // The API route must reserve before queue acceptance. The worker only finalises
+  // that reservation; it never creates a second debit if a replica is missing.
   if (!current) throw new Error('INSTITUTE_EVALUATION_RESERVATION_MISSING');
   if (String(current.action_type || '').toUpperCase() === 'CONSUMED') return;
   if (String(current.action_type || '').toUpperCase() !== 'RESERVED') {
