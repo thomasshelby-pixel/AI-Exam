@@ -12,11 +12,10 @@ import {
   buildStructuredAnnotations,
 } from './pdfCheckedCopyService.js';
 import {
-  consumeCreditFEFO,
-  consumeEvaluationEntitlementAtomic,
   refundEvaluationCreditAtomic,
   syncStudentCreditsToFirestore,
 } from './studentCreditService.js';
+import { settlePersonalEntitlementForSuccessfulEvaluation } from './evaluationEntitlementSettlementService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { getFirestoreDoc, queryFirestoreDocs, runFirestoreTransaction } from './firestoreDbService.js';
@@ -826,7 +825,9 @@ export function updateEvaluationProgress(
  * client tracks authoritative state from the database.
  */
 export async function executeEvaluationJob(job: EvaluationJobData): Promise<void> {
-  const { evaluationId, studentId, subjectName, entitlementSource, resolvedSponsoringInstituteId, resolvedInstituteName, requestedEvalSource, personalEntitlement } = job;
+  const { evaluationId, studentId, subjectName, entitlementSource: initialEntitlementSource, resolvedSponsoringInstituteId, resolvedInstituteName, requestedEvalSource, personalEntitlement } = job;
+  let entitlementSource = initialEntitlementSource;
+  let successfulSettlementDebited = false;
 
   console.log(`[AsyncEval] Starting background evaluation for ${evaluationId} (${subjectName}, Student: ${studentId})`);
 
@@ -1522,6 +1523,34 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       console.info(`[AsyncEval] Evaluation ${evaluationId} status: NEEDS_REVIEW (${reviewErrors.length} critical validation items flagged)`);
     }
 
+    // Reconcile the personal entitlement against the authoritative per-evaluation
+    // ledger before publishing COMPLETED. Admin reprocessing can follow a prior
+    // NEEDS_REVIEW refund; in that case the old job flag is stale and one debit
+    // must be restored. An existing negative ledger entry prevents duplicates.
+    if (
+      finalStatus === 'COMPLETED' &&
+      ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(entitlementSource || '').toUpperCase())
+    ) {
+      const settlement = await settlePersonalEntitlementForSuccessfulEvaluation({
+        userId: studentId,
+        evaluationId,
+        entitlementSource,
+      });
+
+      if (settlement?.charged) {
+        successfulSettlementDebited = true;
+        entitlementSource = settlement.source;
+        console.info(
+          `[AsyncEval] Settled ${settlement.source} entitlement for successful evaluation ${evaluationId} (${settlement.reason}).`
+        );
+      } else if (settlement) {
+        entitlementSource = settlement.source;
+        console.info(
+          `[AsyncEval] Existing entitlement debit verified for ${evaluationId}; no duplicate charge applied.`
+        );
+      }
+    }
+
     const finalizationUpdate = db.prepare(`
       UPDATE evaluations
       SET status = ?,
@@ -1681,7 +1710,10 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       return;
     }
 
-    // Stage 7: Consume Credit / Quota ONLY ON SUCCESS
+    // Stage 7: Institute-sponsored usage. Personal entitlements are settled
+    // before the COMPLETED status is committed (see the completion settlement
+    // immediately before finalizationUpdate).
+    // Institute-sponsored usage is kept separate from personal entitlements.
     if (entitlementSource === 'INSTITUTE_ALLOCATION' && resolvedSponsoringInstituteId) {
       const idempotencyKey = `inst_eval_${evaluationId}`;
       const existingLedger = db.prepare('SELECT id FROM institute_usage_ledger WHERE idempotency_key = ?').get(idempotencyKey);
@@ -1726,56 +1758,6 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
           `1 evaluation credit deducted from sponsoring institute (${resolvedInstituteName || resolvedSponsoringInstituteId}). Personal credits untouched.`
         );
       }
-    } else if (entitlementSource === 'PROMO') {
-      if (!job.creditAlreadyConsumed) {
-        // If not already deducted at acceptance time, atomically deduct now
-        consumeEvaluationEntitlementAtomic({
-          userId: studentId,
-          evaluationId,
-          forcedSource: 'PROMO',
-        });
-      } else {
-        // Already deducted atomically at acceptance time; record completion audit log
-        try {
-          db.prepare(`
-            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-            VALUES (?, ?, 'EVALUATION_COMPLETED_PROMO', 'EVALUATION', ?, ?)
-          `).run(
-            `aud_${crypto.randomBytes(8).toString('hex')}`,
-            studentId,
-            evaluationId,
-            `Evaluation completed successfully under promotional entitlement (${personalEntitlement?.referralCode || 'AI30'})`
-          );
-        } catch (auditErr) {
-          console.warn('[AsyncEval] Audit log error:', auditErr);
-        }
-      }
-    } else if (entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT') {
-      if (!job.creditAlreadyConsumed) {
-        // If not already deducted at acceptance time, atomically deduct now
-        consumeEvaluationEntitlementAtomic({
-          userId: studentId,
-          evaluationId,
-        });
-        await syncStudentCreditsToFirestore(studentId);
-      } else {
-        // Already deducted atomically at acceptance time; record completion audit log
-        try {
-          db.prepare(`
-            INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-            VALUES (?, ?, 'EVALUATION_COMPLETED_CREDIT', 'EVALUATION', ?, ?)
-          `).run(
-            `aud_${crypto.randomBytes(8).toString('hex')}`,
-            studentId,
-            evaluationId,
-            `Evaluation completed successfully under entitlement source: ${entitlementSource}`
-          );
-        } catch (auditErr) {
-          console.warn('[AsyncEval] Audit log error:', auditErr);
-        }
-      }
-    }
-
     // Stage 8: Student Notification
     try {
       db.prepare(`
