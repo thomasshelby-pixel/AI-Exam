@@ -731,9 +731,11 @@ export function resolveContextualQuestionIdentity(options: {
     if (!mappingBasis) {
       return { requiresReview: true, reason: 'The AI supplied a question ID without stating whether it came from the visible label, source content, or a verified continuation.' };
     }
-    if (mappingBasis === 'CONTINUATION' && !isContinuation) {
-      return { requiresReview: true, reason: 'The answer was mapped as a continuation but the continuation flag was not confirmed.' };
-    }
+    // A source-validated authoritativeQuestionCode paired with mappingBasis=CONTINUATION
+    // is itself explicit continuation evidence. Requiring a second boolean from the
+    // page model duplicated the same signal and incorrectly sent valid continuation
+    // pages to NEEDS_REVIEW. The parentless fallback below still requires
+    // isContinuation=true when no authoritative source ID is available.
     return {
       canonicalId: authoritativeMatch.fullQuestionCode,
       requiresReview: false,
@@ -1792,7 +1794,7 @@ async function analyzeSinglePageCoverage(
         const resolution = resolveContextualQuestionIdentity({
           questionNumber: rawQStr,
           subQuestion: rawSubStr,
-          isContinuation: Boolean(dq.isContinuation),
+          isContinuation: Boolean(dq.isContinuation || dq.mappingBasis === 'CONTINUATION'),
           parentQuestionNumberVisible: typeof dq.parentQuestionNumberVisible === 'boolean'
             ? dq.parentQuestionNumberVisible
             : undefined,
@@ -1840,7 +1842,7 @@ async function analyzeSinglePageCoverage(
             Boolean(dq.snippet)
           ),
           readabilityStatusExplicit: Boolean(dq.readabilityStatus),
-          isContinuation: Boolean(dq.isContinuation),
+          isContinuation: Boolean(dq.isContinuation || dq.mappingBasis === 'CONTINUATION'),
           pageNumber,
           snippet: dq.snippet || summary,
           ...(dq.mappingBasis && dq.mappingBasis !== 'UNCERTAIN' ? { mappingBasis: dq.mappingBasis } : {}),

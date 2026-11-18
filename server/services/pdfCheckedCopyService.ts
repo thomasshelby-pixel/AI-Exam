@@ -1146,14 +1146,17 @@ export async function generateCheckedCopyPdf(
         }
       }
 
-      // Question Score Box
+      // Question Score Box. Page-only review notices use the same compact
+      // right-margin treatment as the November 7 checked-copy reference, but an
+      // amber status and separate text rows avoid collisions with the page title.
+      const isPageReviewAnnotation = Boolean(qAnn.pageReviewOnly);
       page.drawRectangle({
         x: marginX,
         y: currY - (isMcqAnnotation ? mcqCardHeight : qHeaderHeight),
         width: marginWidth,
         height: isMcqAnnotation ? mcqCardHeight : qHeaderHeight,
-        color: rgb(1, 0.97, 0.97),
-        borderColor: redExaminer,
+        color: isPageReviewAnnotation ? rgb(1, 0.99, 0.94) : rgb(1, 0.97, 0.97),
+        borderColor: isPageReviewAnnotation ? amberExaminer : redExaminer,
         borderWidth: 1.2,
       });
 
@@ -1168,7 +1171,7 @@ export async function generateCheckedCopyPdf(
         y: currY - (isCompactMode ? 12 : 14),
         size: isCompactMode ? 8.5 : 9.5,
         font: helveticaBold,
-        color: redExaminer,
+        color: isPageReviewAnnotation ? amberExaminer : redExaminer,
       });
 
       safeDrawText(page, qAnn.reviewRequired
@@ -1176,8 +1179,10 @@ export async function generateCheckedCopyPdf(
         : qAnn.excludedFromTotal
           ? 'ALT NOT COUNTED'
           : `+${qAnn.marksAwarded.toFixed(1)} / ${qAnn.maxMarks}`, {
-        x: marginX + (isCompactMode ? 46 : 50),
-        y: currY - (isCompactMode ? 12 : 14),
+        x: marginX + (isPageReviewAnnotation ? 6 : isCompactMode ? 46 : 50),
+        y: isPageReviewAnnotation
+          ? currY - (isCompactMode ? 24 : 26)
+          : currY - (isCompactMode ? 12 : 14),
         size: qAnn.reviewRequired || qAnn.excludedFromTotal ? 6.5 : isCompactMode ? 9.5 : 10.5,
         font: helveticaBold,
         color: qAnn.reviewRequired || qAnn.excludedFromTotal ? amberExaminer : redExaminer,
@@ -1230,13 +1235,19 @@ export async function generateCheckedCopyPdf(
             ? 'FEEDBACK ONLY - ALTERNATIVE NOT INCLUDED IN TOTAL'
             : 'STEP-WISE EVALUATION', {
         x: marginX + 6,
-        y: currY - (isCompactMode ? 24 : 28),
+        y: isPageReviewAnnotation
+          ? currY - (isCompactMode ? 32 : 36)
+          : currY - (isCompactMode ? 24 : 28),
         size: qAnn.reviewRequired ? (qAnn.pageReviewOnly ? 4.8 : 5.2) : isCompactMode ? 5.8 : 6.5,
         font: helveticaBold,
         color: qAnn.reviewRequired ? amberExaminer : darkSlate,
       });
       if (qAnn.reviewRequired) {
-        let reviewY = currY - (isCompactMode ? 34 : 40);
+        let reviewY = currY - (
+          isPageReviewAnnotation
+            ? (isCompactMode ? 42 : 48)
+            : (isCompactMode ? 34 : 40)
+        );
         for (const line of reviewLines) {
           safeDrawText(page, line, {
             x: marginX + 6,

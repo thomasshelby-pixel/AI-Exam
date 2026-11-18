@@ -133,4 +133,73 @@ const flatAnswers = extractOfficialMcqKeysFromSuggestedAnswers([
 assert.equal(flatAnswers.get('1')?.officialKey, 'C', 'Existing flat answer-key format remains supported');
 assert.equal(flatAnswers.get('2')?.officialKey, 'D', 'Existing flat answer-key format remains supported');
 
+// Faculty answer-key TXT may contain a compact flat list without repeating
+// "Division A". It is safe to use only when the selected Question Paper has an
+// objective section and the Suggested Answers explicitly contains an Answer Key.
+const compactObjectiveQuestionPaper = [
+  'CA INTERMEDIATE - QUESTION PAPER',
+  'Division A - Multiple Choice Questions (6 Marks)',
+  'Each question carries 2 marks.',
+  '1. Which statement is correct?',
+  '2. Which treatment is appropriate?',
+  '3. Which option is correct?',
+  'Division B',
+  'Question 1(a) - 10 Marks',
+  'Explain the descriptive legal requirement.',
+].join('\\n');
+const compactOfficialAnswerKey = [
+  'SUGGESTED ANSWERS',
+  'ANSWER KEY',
+  '1. (b)',
+  '2. (a)',
+  '3. (d)',
+].join('\\n');
+
+const compactKeys = extractOfficialMcqKeysFromSuggestedAnswers(
+  compactOfficialAnswerKey,
+  compactObjectiveQuestionPaper,
+);
+assert.deepEqual(
+  Array.from(compactKeys.entries()).map(([number, value]) => [number, value.officialKey]),
+  [['1', 'B'], ['2', 'A'], ['3', 'D']],
+  'A compact numbered answer key can be recovered only when the Question Paper confirms Division A MCQs.',
+);
+
+const compactPaper = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  materialType: 'FACULTY_MOCK_TEST',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  questionPaperText: compactObjectiveQuestionPaper,
+  suggestedAnswersText: compactOfficialAnswerKey,
+  markingSchemeText: '',
+  officialPaperMaxMarks: 100,
+});
+assert.equal(compactPaper.mcqs.length, 3,
+  'The objective inventory should retain every MCQ from a verified compact Answer Key.');
+assert.ok(compactPaper.mcqs.every((mcq) => mcq.maximumMarks === 2),
+  'Per-MCQ maximum must come from the explicit rule inside the objective Question Paper section.');
+
+const compactScoring = evaluateAllAuthoritativeMcqs(
+  compactPaper.mcqs,
+  { '1': 'B', '2': 'A', '3': 'C' },
+  { caLevel: 'INTERMEDIATE', subjectKey: 'inter_advanced_accounting', paper: 'Paper 1' },
+);
+assert.equal(compactScoring.find((question) => question.questionNumber === 'MCQ 1')?.marksAwarded, 2);
+assert.equal(compactScoring.find((question) => question.questionNumber === 'MCQ 2')?.marksAwarded, 2);
+assert.equal(compactScoring.find((question) => question.questionNumber === 'MCQ 3')?.marksAwarded, 0);
+assert.equal(compactScoring.reduce((sum, question) => sum + question.marksAwarded, 0), 4,
+  'Verified MCQ selections must contribute their deterministic marks to the evaluation result.');
+
+// No QP objective section or no explicit Answer Key heading means no inferred
+// MCQ keys; descriptive "1(a)" answer structure must not be converted to MCQs.
+assert.equal(
+  extractOfficialMcqKeysFromSuggestedAnswers(
+    ['SUGGESTED ANSWERS', '1. (a) Descriptive answer', '2. (b) Another descriptive answer', '3. (c) Conclusion'].join('\\n'),
+    'QUESTION PAPER\\nDivision B\\nQuestion 1(a) - 5 Marks',
+  ).size,
+  0,
+  'Descriptive sub-question labels must never be reclassified as MCQ answer keys.',
+);
+
 console.log('✅ Nested Division A MCQ answer-key indexing regression passed.');
