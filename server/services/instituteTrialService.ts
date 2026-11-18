@@ -468,7 +468,11 @@ export function releaseInstituteEvaluationCredit(params: { evaluationId: string;
  * count and insert/reactivation run under the same SQLite write transaction,
  * so simultaneous single and bulk imports cannot exceed the seat limit.
  */
-export function withInstituteStudentSeatReservation<T>(instituteId: string, operation: () => T): T {
+export function withInstituteStudentSeatReservation<T>(
+  instituteId: string,
+  operation: () => T,
+  alreadyReservedMembershipId?: string,
+): T {
   let transactionStarted = false;
   try {
     db.exec('BEGIN IMMEDIATE;');
@@ -485,7 +489,12 @@ export function withInstituteStudentSeatReservation<T>(instituteId: string, oper
     const occupied = Number((db.prepare(
       "SELECT COUNT(*) AS count FROM institute_memberships WHERE institute_id = ? AND UPPER(TRIM(COALESCE(status, ''))) IN ('ACTIVE', 'PENDING')"
     ).get(instituteId) as any)?.count || 0);
-    if (capacity <= 0 || occupied >= capacity) {
+    const reservedSeat = alreadyReservedMembershipId
+      ? db.prepare(
+          "SELECT id FROM institute_memberships WHERE id = ? AND institute_id = ? AND UPPER(TRIM(COALESCE(status, ''))) IN ('ACTIVE', 'PENDING') LIMIT 1"
+        ).get(alreadyReservedMembershipId, instituteId)
+      : null;
+    if (capacity <= 0 || (occupied >= capacity && !reservedSeat)) {
       throw new Error('INSTITUTE_STUDENT_QUOTA_EXCEEDED');
     }
     const result = operation();
