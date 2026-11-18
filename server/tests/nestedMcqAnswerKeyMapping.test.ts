@@ -191,6 +191,63 @@ assert.equal(compactScoring.find((question) => question.questionNumber === 'MCQ 
 assert.equal(compactScoring.reduce((sum, question) => sum + question.marksAwarded, 0), 4,
   'Verified MCQ selections must contribute their deterministic marks to the evaluation result.');
 
+// Regression shaped around the faulty checked copy: 15 consecutive handwritten options
+// must map to 15 distinct MCQs even when the faculty TXT contains only a compact
+// ANSWER KEY list and does not repeat the Division A heading.
+const handwrittenFifteenSelections = ['B', 'A', 'B', 'C', 'D', 'D', 'B', 'A', 'D', 'B', 'C', 'A', 'C', 'C', 'D'];
+const compactFifteenOfficialKeys = ['B', 'C', 'B', 'C', 'A', 'D', 'A', 'A', 'D', 'B', 'C', 'B', 'C', 'D', 'D'];
+const compactFifteenQuestionPaper = [
+  'CA INTERMEDIATE - QUESTION PAPER',
+  'Division A - Multiple Choice Questions (15 Marks)',
+  'Each question carries 1 mark.',
+  ...Array.from({ length: 15 }, (_, index) => `${index + 1}. Objective question ${index + 1}?`),
+  'Division B',
+  'Question 1(a) - 10 Marks',
+  'Explain the descriptive legal requirement.',
+].join('\\n');
+const compactFifteenAnswerKey = [
+  'SUGGESTED ANSWERS',
+  'ANSWER KEY',
+  ...compactFifteenOfficialKeys.map((key, index) => `${index + 1}. (${key.toLowerCase()})`),
+].join('\\n');
+
+const compactFifteenPaper = getAuthoritativePaperStructure({
+  level: 'INTERMEDIATE',
+  materialType: 'FACULTY_MOCK_TEST',
+  subjectName: 'Advanced Accounting',
+  paper: 'Paper 1',
+  questionPaperText: compactFifteenQuestionPaper,
+  suggestedAnswersText: compactFifteenAnswerKey,
+  markingSchemeText: '',
+  officialPaperMaxMarks: 100,
+});
+assert.equal(compactFifteenPaper.mcqs.length, 15,
+  'The compact authoritative answer key must create 15 separate objective inventory entries.');
+assert.deepEqual(
+  compactFifteenPaper.mcqs.map((question) => question.fullQuestionCode),
+  Array.from({ length: 15 }, (_, index) => `MCQ${index + 1}`),
+  'The objective inventory must not collapse the 15 MCQs into a combined MCQ115 identity.',
+);
+assert.ok(compactFifteenPaper.mcqs.every((question) => question.maximumMarks === 1),
+  'All 15 maximum marks must come from the explicit per-question allocation in Division A.');
+
+const compactFifteenScores = evaluateAllAuthoritativeMcqs(
+  compactFifteenPaper.mcqs,
+  Object.fromEntries(handwrittenFifteenSelections.map((option, index) => [String(index + 1), option])),
+  { caLevel: 'INTERMEDIATE', subjectKey: 'inter_advanced_accounting', paper: 'Paper 1' },
+);
+assert.equal(compactFifteenScores.length, 15,
+  'Every one of the 15 visible responses must produce its own deterministic MCQ result.');
+assert.deepEqual(
+  compactFifteenScores.map((question) => question.questionNumber),
+  Array.from({ length: 15 }, (_, index) => `MCQ ${index + 1}`),
+);
+assert.equal(
+  compactFifteenScores.reduce((sum, question) => sum + question.marksAwarded, 0),
+  10,
+  'The 15 individual responses must score 10/15 for this fixed selected-option and answer-key fixture.',
+);
+
 // No QP objective section or no explicit Answer Key heading means no inferred
 // MCQ keys; descriptive "1(a)" answer structure must not be converted to MCQs.
 assert.equal(
