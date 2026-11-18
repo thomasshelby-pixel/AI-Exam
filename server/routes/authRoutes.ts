@@ -8,6 +8,7 @@ import { db, hashPassword, verifyPassword } from '../db.js';
 import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
+import { isConfiguredInstituteTestAccountMfaBypass } from '../services/mfaTestAccountBypass.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore, persistStudentAccountToFirestore, recoverStudentAccountFromFirestoreByEmail } from '../services/firestoreSyncService.js';
@@ -229,12 +230,58 @@ export async function evaluateMfaRequirementForLogin(
   message?: string;
   deviceTrusted?: boolean;
   trustToken?: string;
+  testAccountMfaBypass?: boolean;
 }> {
   // Authoritative server/database MFA state evaluation
   const authState = await getAuthoritativeUserMfaState(user.id);
   const mfaState = authState.state;
   const isEnrolled = mfaState === 'MFA_ENROLLED';
   const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
+
+  // The only supported MFA exception is an explicitly opted-in, exact-email
+  // test Institute Admin. Read the persisted account state rather than relying
+  // only on the caller's session claims. No factors or MFA records are deleted;
+  // removing the deployment flags instantly restores the standard MFA flow.
+  const persistedMfaBypassUser = db.prepare(
+    'SELECT email, role, status FROM users WHERE id = ? LIMIT 1'
+  ).get(user.id) as { email?: string; role?: string; status?: string } | undefined;
+
+  if (persistedMfaBypassUser && isConfiguredInstituteTestAccountMfaBypass(persistedMfaBypassUser)) {
+    try {
+      const auditId = `mfa_test_bypass_${crypto.randomBytes(8).toString('hex')}`;
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, 'MFA_TEST_BYPASS_USED', 'users', ?, ?)
+      `).run(
+        auditId,
+        user.id,
+        user.id,
+        JSON.stringify({
+          email: persistedMfaBypassUser.email,
+          role: persistedMfaBypassUser.role,
+          reason: 'Explicitly configured single-account test Institute Admin MFA bypass.',
+          enabledBy: 'ENABLE_TEST_ACCOUNT_MFA_BYPASS + MFA_TEST_BYPASS_EMAIL',
+        })
+      );
+      const auditRow = db.prepare('SELECT * FROM audit_logs WHERE id = ?').get(auditId) as any;
+      if (auditRow) {
+        void syncRecordToFirestore('audit_logs', auditId, auditRow).catch((error) =>
+          console.warn('[AuthMFA] Could not mirror test-account MFA bypass audit:', error)
+        );
+      }
+    } catch (auditError) {
+      console.warn('[AuthMFA] Could not record test-account MFA bypass use:', auditError);
+    }
+
+    return {
+      requireMfa: false,
+      mfaState,
+      mfaEnrolled: isEnrolled,
+      role: user.role,
+      testAccountMfaBypass: true,
+      message: 'MFA bypass is enabled for this explicitly configured test Institute Admin account.',
+    };
+  }
 
   const candidateTokens = [
     deviceContext?.trustToken,
@@ -1847,10 +1894,10 @@ router.post('/login', authLoginRateLimiter, async (req: Request, res: Response) 
         authProvider: isSocialLogin ? socialProvider : inferAuthProvider(user.password_hash),
         requiresProfileCompletion,
         hasPermanentFreeAccess: isPermanentFree,
-        mfaEnabled: authMfa.mfaEnabled,
+        mfaEnabled: authMfa.mfaEnabled && !mfaCheck.testAccountMfaBypass,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified: true,
-        mfaMandatory: isMandatoryRole,
+        mfaMandatory: isMandatoryRole && !mfaCheck.testAccountMfaBypass,
       },
       requiresProfileCompletion,
       createdViaSocialSignup,
@@ -2173,10 +2220,10 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
         fullName: user.full_name,
         role: user.role,
         status: user.status,
-        mfaEnabled: authMfa.mfaEnabled,
+        mfaEnabled: authMfa.mfaEnabled && !mfaCheck.testAccountMfaBypass,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified: true,
-        mfaMandatory: true,
+        mfaMandatory: !mfaCheck.testAccountMfaBypass,
       },
     });
   } catch (error: unknown) {
