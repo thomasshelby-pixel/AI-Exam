@@ -3,6 +3,10 @@ import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
 import { createInstituteSubscriptionOrder, verifyInstituteSubscriptionPayment, isRazorpayConfigured, getRazorpayKeyId } from '../razorpay.js';
+import {
+  ensureInstituteStarterTrial,
+  getActiveInstituteSubscription,
+} from '../services/instituteTrialService.js';
 
 const router = Router();
 
@@ -24,7 +28,14 @@ function getAdminInstituteId(req: AuthRequest): string | null {
     return firstInst ? firstInst.id : null;
   }
   const inst = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user.email) as { id: string } | undefined;
-  if (inst) return inst.id;
+  if (inst) {
+    try {
+      ensureInstituteStarterTrial({ instituteId: inst.id, adminUserId: req.user.id, adminEmail: String(req.user.email || '') });
+    } catch (trialError) {
+      console.warn('[InstituteTrial] Could not provision starter trial for existing institute:', inst.id, trialError);
+    }
+    return inst.id;
+  }
   if (req.user.email?.toLowerCase() === 'institute@apexca.edu') {
     return 'inst_apex_academy_01';
   }
@@ -33,7 +44,14 @@ function getAdminInstituteId(req: AuthRequest): string | null {
   const signupLog = db.prepare("SELECT entity_id FROM audit_logs WHERE user_id = ? AND action = 'INSTITUTE_SIGNUP' ORDER BY created_at DESC LIMIT 1").get(req.user.id) as { entity_id: string } | undefined;
   if (signupLog) {
     const instFromLog = db.prepare('SELECT id FROM institutes WHERE id = ?').get(signupLog.entity_id) as { id: string } | undefined;
-    if (instFromLog) return instFromLog.id;
+    if (instFromLog) {
+      try {
+        ensureInstituteStarterTrial({ instituteId: instFromLog.id, adminUserId: req.user.id, adminEmail: String(req.user.email || '') });
+      } catch (trialError) {
+        console.warn('[InstituteTrial] Could not provision starter trial from signup record:', instFromLog.id, trialError);
+      }
+      return instFromLog.id;
+    }
   }
 
   // If user is INSTITUTE_ADMIN but no institute record exists yet, automatically provision an initial profile
@@ -55,6 +73,11 @@ function getAdminInstituteId(req: AuthRequest): string | null {
         VALUES (?, ?, 'First Batch - Foundation & Inter', 'INTERMEDIATE', 'Primary batch for enrolled CA students')
       `).run(batchId, newInstId);
 
+      try {
+        ensureInstituteStarterTrial({ instituteId: newInstId, adminUserId: req.user.id, adminEmail: String(req.user.email || '') });
+      } catch (trialError) {
+        console.warn('[InstituteTrial] Could not activate starter trial for new institute:', newInstId, trialError);
+      }
       return newInstId;
     } catch {
       const existing = db.prepare('SELECT id FROM institutes WHERE lower(email) = lower(?)').get(req.user.email) as { id: string } | undefined;
@@ -94,93 +117,90 @@ export function getInstituteSubscriptionStatus(instituteId: string): {
   expiresAt: string | null;
   maxStudents: number;
   activeStudents: number;
+  pendingInvitations: number;
+  occupiedSeats: number;
   remainingSeats: number;
+  evaluationAllowance: number;
+  evaluationsUsed: number;
+  evaluationsRemaining: number;
+  isTrial: boolean;
   reason?: string;
 } {
   const inst = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
   if (!inst) {
     return {
-      hasActivePlan: false,
-      plan: 'NONE',
-      status: 'NOT_FOUND',
-      expiresAt: null,
-      maxStudents: 0,
-      activeStudents: 0,
-      remainingSeats: 0,
+      hasActivePlan: false, plan: 'NONE', status: 'NOT_FOUND', expiresAt: null,
+      maxStudents: 0, activeStudents: 0, pendingInvitations: 0, occupiedSeats: 0, remainingSeats: 0,
+      evaluationAllowance: 0, evaluationsUsed: 0, evaluationsRemaining: 0, isTrial: false,
       reason: 'Institute not found',
     };
   }
 
-  const activeMembersRow = db.prepare("SELECT COUNT(*) as count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'").get(instituteId) as any;
-  const activeStudents = activeMembersRow?.count || 0;
-  const maxStudents = inst.max_students || 0;
-  const remainingSeats = Math.max(0, maxStudents - activeStudents);
+  const activeStudents = Number((db.prepare(
+    "SELECT COUNT(*) AS count FROM institute_memberships WHERE institute_id = ? AND status = 'ACTIVE'"
+  ).get(instituteId) as any)?.count || 0);
+  const pendingInvitations = Number((db.prepare(
+    "SELECT COUNT(*) AS count FROM institute_memberships WHERE institute_id = ? AND status = 'PENDING'"
+  ).get(instituteId) as any)?.count || 0);
+  const occupiedSeats = activeStudents + pendingInvitations;
+  const activeSubscription = getActiveInstituteSubscription(instituteId);
+  const isTrial = String(activeSubscription?.plan_id || '').toUpperCase() === 'FREE_STARTER_TRIAL_V1';
+  const plan = String(activeSubscription?.plan_name || activeSubscription?.plan_id || inst.subscription_plan || 'NONE').trim();
+  const maxStudents = Number(activeSubscription?.student_capacity ?? inst.max_students ?? 0);
+  const remainingSeats = Math.max(0, maxStudents - occupiedSeats);
+  const expiresAt = activeSubscription?.expiry_date || inst.subscription_expires_at || null;
+  const evaluationAllowance = Number(activeSubscription?.evaluation_allowance || 0);
+  const evaluationsUsed = Number(activeSubscription?.evaluations_used || 0);
+  const evaluationsRemaining = Number(activeSubscription?.evaluations_remaining || 0);
 
-  const plan = (inst.subscription_plan || '').trim();
-  const noPlanKeywords = [
-    '',
-    'NONE',
-    'NO_PLAN',
-    'INACTIVE',
-    'EXPIRED',
-    'PENDING_SELECTION',
-    'UNPAID',
-    'FREE',
-    'TRIAL_EXPIRED',
-    'CANCELLED',
-    'CANCELED',
-    'SUSPENDED',
-  ];
-  if (!plan || noPlanKeywords.includes(plan.toUpperCase())) {
+  if (String(inst.status || '').toUpperCase() !== 'ACTIVE') {
     return {
-      hasActivePlan: false,
-      plan: plan || 'NONE',
-      status: inst.status,
-      expiresAt: inst.subscription_expires_at,
-      maxStudents,
-      activeStudents,
-      remainingSeats,
-      reason: 'No active plan associated with this institute.',
+      hasActivePlan: false, plan, status: String(inst.status || 'INACTIVE'), expiresAt,
+      maxStudents, activeStudents, pendingInvitations, occupiedSeats, remainingSeats,
+      evaluationAllowance, evaluationsUsed, evaluationsRemaining, isTrial,
+      reason: `Institute account status is ${inst.status}.`,
     };
   }
 
-  if (inst.status !== 'ACTIVE') {
+  if (activeSubscription) {
     return {
-      hasActivePlan: false,
-      plan,
-      status: inst.status,
-      expiresAt: inst.subscription_expires_at,
-      maxStudents,
-      activeStudents,
-      remainingSeats,
-      reason: `Institute account status is ${inst.status}.`,
+      hasActivePlan: true, plan, status: 'ACTIVE', expiresAt,
+      maxStudents, activeStudents, pendingInvitations, occupiedSeats, remainingSeats,
+      evaluationAllowance, evaluationsUsed, evaluationsRemaining, isTrial,
+    };
+  }
+
+  // Backward compatibility for older paid plans that predate subscription-ledger rows.
+  const legacyPlan = String(inst.subscription_plan || '').trim();
+  const noPlanKeywords = [
+    '', 'NONE', 'NO_PLAN', 'INACTIVE', 'EXPIRED', 'PENDING_SELECTION', 'UNPAID',
+    'FREE', 'TRIAL_EXPIRED', 'CANCELLED', 'CANCELED', 'SUSPENDED',
+  ];
+  if (!legacyPlan || noPlanKeywords.includes(legacyPlan.toUpperCase())) {
+    return {
+      hasActivePlan: false, plan: legacyPlan || 'NONE', status: 'NO_ACTIVE_PLAN', expiresAt,
+      maxStudents, activeStudents, pendingInvitations, occupiedSeats, remainingSeats,
+      evaluationAllowance, evaluationsUsed, evaluationsRemaining, isTrial: false,
+      reason: 'No active subscription is associated with this institute.',
     };
   }
 
   if (inst.subscription_expires_at) {
     const expiryTime = new Date(inst.subscription_expires_at).getTime();
-    if (!isNaN(expiryTime) && expiryTime <= Date.now()) {
+    if (!Number.isNaN(expiryTime) && expiryTime <= Date.now()) {
       return {
-        hasActivePlan: false,
-        plan,
-        status: 'EXPIRED',
-        expiresAt: inst.subscription_expires_at,
-        maxStudents,
-        activeStudents,
-        remainingSeats,
+        hasActivePlan: false, plan: legacyPlan, status: 'EXPIRED', expiresAt,
+        maxStudents, activeStudents, pendingInvitations, occupiedSeats, remainingSeats,
+        evaluationAllowance, evaluationsUsed, evaluationsRemaining, isTrial: false,
         reason: `Subscription plan expired on ${inst.subscription_expires_at}.`,
       };
     }
   }
 
   return {
-    hasActivePlan: true,
-    plan,
-    status: 'ACTIVE',
-    expiresAt: inst.subscription_expires_at,
-    maxStudents,
-    activeStudents,
-    remainingSeats,
+    hasActivePlan: true, plan: legacyPlan, status: 'ACTIVE', expiresAt,
+    maxStudents, activeStudents, pendingInvitations, occupiedSeats, remainingSeats,
+    evaluationAllowance, evaluationsUsed, evaluationsRemaining, isTrial: false,
   };
 }
 
