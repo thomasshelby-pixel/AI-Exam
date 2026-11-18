@@ -3331,15 +3331,15 @@ export const AdminPortal: React.FC = () => {
                                   {/* Actions: Review, View & Delete */}
                                   <td className="py-2.5 px-3 text-right">
                                     <div className="flex items-center justify-end gap-1.5">
-                                      {/* Review Action for NEEDS_REVIEW */}
-                                      {ev.status === 'NEEDS_REVIEW' && (
+                                      {/* Open the dedicated Review Workspace for review-required and completed evaluations */}
+                                      {['NEEDS_REVIEW', 'COMPLETED'].includes(String(ev.status || '').toUpperCase()) && (
                                         <button
                                           onClick={() => navigate(`/admin/evaluations/${ev.id}/review`)}
-                                          className="px-2.5 py-1 rounded-md bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer"
-                                          title="Review & Amend Evaluation"
+                                          className={`px-2.5 py-1 rounded-md ${String(ev.status || '').toUpperCase() === 'NEEDS_REVIEW' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white font-bold text-[11px] flex items-center gap-1 shadow-xs transition cursor-pointer`}
+                                          title={String(ev.status || '').toUpperCase() === 'NEEDS_REVIEW' ? 'Review & Amend Evaluation' : 'Open Evaluation Review Workspace'}
                                         >
                                           <ShieldCheck className="w-3.5 h-3.5" />
-                                          Review
+                                          {String(ev.status || '').toUpperCase() === 'NEEDS_REVIEW' ? 'Review' : 'Inspect / Credits'}
                                         </button>
                                       )}
 
