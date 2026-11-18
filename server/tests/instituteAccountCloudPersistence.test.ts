@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import {
+  ensureInstituteStarterTrial,
+  getActiveInstituteSubscription,
+  INSTITUTE_FREE_TRIAL_DAYS,
+  INSTITUTE_FREE_TRIAL_PLAN_ID,
+  INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY,
+  INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS,
+} from '../services/instituteTrialService.js';
+import {
   persistInstituteAccountToFirestore,
   recoverInstituteAccountFromFirestoreByEmail,
   type InstituteAccountPersistenceAdapter,
@@ -183,6 +191,34 @@ async function run() {
       'already-present',
       'A repeated login/recovery must not create duplicate institutes or batches.',
     );
+
+    // Every new/recovered institute admin must receive the one-time starter
+    // offer without waiting for a later dashboard route to be called.
+    const trialGrant = ensureInstituteStarterTrial({
+      instituteId,
+      adminUserId: userId,
+      adminEmail: email,
+    });
+    assert.equal(trialGrant.granted, true, 'A newly eligible institute admin receives the starter trial.');
+    const activeTrial = getActiveInstituteSubscription(instituteId);
+    assert.ok(activeTrial, 'The starter subscription should be active.');
+    assert.equal(activeTrial?.plan_id, INSTITUTE_FREE_TRIAL_PLAN_ID);
+    assert.equal(Number(activeTrial?.student_capacity), INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY);
+    assert.equal(Number(activeTrial?.evaluation_allowance), INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS);
+    assert.equal(Number(activeTrial?.evaluations_remaining), INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS);
+    assert.equal(Number(activeTrial?.evaluations_used), 0);
+    const actualTrialDays = (Date.parse(String(activeTrial?.expiry_date)) - Date.parse(String(activeTrial?.start_date))) / (24 * 60 * 60 * 1000);
+    assert.ok(Math.abs(actualTrialDays - INSTITUTE_FREE_TRIAL_DAYS) < 0.01,
+      'The starter trial lasts exactly 30 days.');
+
+    const repeatedTrialGrant = ensureInstituteStarterTrial({
+      instituteId,
+      adminUserId: userId,
+      adminEmail: email,
+    });
+    assert.equal(repeatedTrialGrant.granted, false, 'Repeated login must not grant a second trial.');
+    assert.equal(getActiveInstituteSubscription(instituteId)?.id, activeTrial?.id,
+      'The original trial and expiry are retained on repeated activation attempts.');
 
     // Login-time backfill must not replace newer authoritative cloud fields
     // with an older local SQLite snapshot.
