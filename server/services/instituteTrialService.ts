@@ -25,12 +25,13 @@ export interface InstituteSubscriptionEntitlement {
 
 export function getActiveInstituteSubscription(instituteId: string): InstituteSubscriptionEntitlement | null {
   return (db.prepare(`
-    SELECT *
-    FROM institute_subscriptions
-    WHERE institute_id = ?
-      AND status = 'ACTIVE'
-      AND datetime(expiry_date) > datetime('now')
-    ORDER BY datetime(expiry_date) DESC, datetime(created_at) DESC
+    SELECT s.*
+    FROM institute_subscriptions s
+    INNER JOIN institutes i ON i.id = s.institute_id AND i.status = 'ACTIVE'
+    WHERE s.institute_id = ?
+      AND s.status = 'ACTIVE'
+      AND datetime(s.expiry_date) > datetime('now')
+    ORDER BY datetime(s.expiry_date) DESC, datetime(s.created_at) DESC
     LIMIT 1
   `).get(instituteId) as unknown as InstituteSubscriptionEntitlement | undefined) || null;
 }
