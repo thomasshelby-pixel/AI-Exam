@@ -184,6 +184,32 @@ async function run() {
       'A repeated login/recovery must not create duplicate institutes or batches.',
     );
 
+    // Login-time backfill must not replace newer authoritative cloud fields
+    // with an older local SQLite snapshot.
+    const cloudAdmin = documents.get(`users/${userId}`)!;
+    documents.set(`users/${userId}`, {
+      ...cloudAdmin,
+      password_hash: 'rotated-cloud-password-hash',
+      full_name: 'Updated Cloud Administrator',
+    });
+    const staleLocalBundleResult = await persistInstituteAccountToFirestore({
+      institute: { ...institute, name: 'Stale Local Institute Name' },
+      user,
+      batches: [batch],
+      auditLogs: [auditLog],
+    }, adapter);
+    assert.equal(staleLocalBundleResult, 'persisted');
+    assert.equal(
+      documents.get(`users/${userId}`)?.password_hash,
+      'rotated-cloud-password-hash',
+      'A stale local password hash must never overwrite the newer Firestore credential.',
+    );
+    assert.equal(
+      documents.get(`users/${userId}`)?.full_name,
+      'Updated Cloud Administrator',
+      'A login-time persistence check must preserve newer cloud profile fields.',
+    );
+
     const missingAdapter: InstituteAccountRecoveryAdapter = {
       ...adapter,
       findInstitutesByEmail: async () => [],
