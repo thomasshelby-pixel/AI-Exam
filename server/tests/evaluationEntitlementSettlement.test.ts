@@ -4,6 +4,7 @@ import { db, initDatabase } from '../db.js';
 import {
   consumeEvaluationEntitlementAtomic,
   getValidStudentCreditBalance,
+  getStudentCreditDetailedSummary,
   recordCreditPurchase,
   refundEvaluationCreditAtomic,
 } from '../services/studentCreditService.js';
@@ -58,7 +59,6 @@ async function run() {
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
-      creditAlreadyConsumed: false,
     });
     assert.equal(firstSettlement?.charged, true);
     assert.equal(firstSettlement?.source, 'PERSONAL_PURCHASED_CREDIT');
@@ -89,20 +89,18 @@ async function run() {
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
-      creditAlreadyConsumed: true,
     });
     assert.equal(duplicateSettlement?.charged, false);
     assert.equal(duplicateSettlement?.reason, 'DEBIT_ALREADY_EXISTS');
-    assert.equal(getValidStudentCreditBalance(userId), 1);
+    assert.equal(getValidStudentCreditBalance(userId), 0);
 
     const facultyMockSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
       userId,
       evaluationId: `eval_faculty_mock_${crypto.randomBytes(4).toString('hex')}`,
       entitlementSource: 'FACULTY_MOCK_SPONSORED',
-      creditAlreadyConsumed: false,
     });
     assert.equal(facultyMockSettlement, null);
-    assert.equal(getValidStudentCreditBalance(userId), 1);
+    assert.equal(getValidStudentCreditBalance(userId), 0);
 
     // Failed first attempt is refunded; a later successful admin reprocess
     // keeps creditAlreadyConsumed=true, but the refund event requires one
@@ -115,13 +113,12 @@ async function run() {
       }),
       true,
     );
-    assert.equal(getValidStudentCreditBalance(userId), 2);
+    assert.equal(getValidStudentCreditBalance(userId), 1);
 
     const reprocessSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
-      creditAlreadyConsumed: true,
     });
     assert.equal(reprocessSettlement?.charged, true);
     assert.equal(reprocessSettlement?.reason, 'DEBIT_RESTORED_AFTER_REFUND');
@@ -131,7 +128,6 @@ async function run() {
       userId,
       evaluationId: targetEvaluationId,
       entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
-      creditAlreadyConsumed: true,
     });
     assert.equal(reprocessRetry?.charged, false);
     assert.equal(getValidStudentCreditBalance(userId), 0);
@@ -146,7 +142,7 @@ async function run() {
       }),
       true,
     );
-    assert.equal(getValidStudentCreditBalance(userId), 2);
+    assert.equal(getValidStudentCreditBalance(userId), 1);
     assert.equal(
       refundEvaluationCreditAtomic({
         userId,
@@ -155,7 +151,70 @@ async function run() {
       }),
       true,
     );
-    assert.equal(getValidStudentCreditBalance(userId), 2);
+    assert.equal(getValidStudentCreditBalance(userId), 1);
+
+    // Exact production case: two unused monthly free evaluations, no debit
+    // ledger event for a reprocessed historical evaluation, and one successful
+    // completion must move the remaining quota from 2 to 1 exactly once.
+    const freeUserId = `usr_monthly_free_settlement_${crypto.randomBytes(6).toString('hex')}`;
+    const freeEmail = `${freeUserId}@example.com`;
+    const freeEvaluationId = `eval_monthly_free_reprocess_${crypto.randomBytes(6).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, full_name, role, status)
+      VALUES (?, ?, 'hash', 'Monthly Free Settlement Test', 'STUDENT', 'ACTIVE')
+    `).run(freeUserId, freeEmail);
+    const freeRegistration = `WRO${String(crypto.randomInt(0, 10_000_000)).padStart(7, '0')}`;
+    db.prepare(`
+      INSERT INTO student_profiles (
+        user_id, icai_registration_number, ca_level,
+        free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
+        purchased_credits, paid_credits
+      ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 2, 0, 0)
+    `).run(freeUserId, freeRegistration);
+
+    try {
+      assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 2);
+      const freeSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
+        userId: freeUserId,
+        evaluationId: freeEvaluationId,
+        entitlementSource: 'PERSONAL_FREE',
+      });
+      assert.equal(freeSettlement?.charged, true);
+      assert.equal(freeSettlement?.source, 'PERSONAL_FREE');
+      assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 1);
+
+      const freeDuplicate = await settlePersonalEntitlementForSuccessfulEvaluation({
+        userId: freeUserId,
+        evaluationId: freeEvaluationId,
+        entitlementSource: 'PERSONAL_FREE',
+      });
+      assert.equal(freeDuplicate?.charged, false);
+      assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 1);
+
+      assert.equal(
+        refundEvaluationCreditAtomic({
+          userId: freeUserId,
+          evaluationId: freeEvaluationId,
+          entitlementSource: 'PERSONAL_FREE',
+        }),
+        true,
+      );
+      assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 2);
+
+      const freeReprocess = await settlePersonalEntitlementForSuccessfulEvaluation({
+        userId: freeUserId,
+        evaluationId: freeEvaluationId,
+        entitlementSource: 'PERSONAL_FREE',
+      });
+      assert.equal(freeReprocess?.charged, true);
+      assert.equal(freeReprocess?.reason, 'DEBIT_RESTORED_AFTER_REFUND');
+      assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 1);
+    } finally {
+      db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(freeUserId);
+      db.prepare('DELETE FROM student_credit_purchases WHERE user_id = ?').run(freeUserId);
+      db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(freeUserId);
+      db.prepare('DELETE FROM users WHERE id = ?').run(freeUserId);
+    }
 
     console.log('✅ Evaluation entitlement settlement tests passed.');
   } finally {
