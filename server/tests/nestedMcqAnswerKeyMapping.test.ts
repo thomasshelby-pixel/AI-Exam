@@ -253,7 +253,7 @@ assert.equal(
 const compactKeyWithDescriptiveSolutions = [
   'SUGGESTED ANSWERS',
   'ANSWER KEY',
-  ...compactFifteenOfficialKeys.map((key, index) => \`\${index + 1}. (\${key.toLowerCase()})\`),
+  ...compactFifteenOfficialKeys.map((key, index) => String(index + 1) + '. (' + key.toLowerCase() + ')'),
   'Division B',
   '1. (a) The descriptive answer begins here and must not become MCQ 1.',
   '2. (b) Another descriptive answer must not become MCQ 2.',
