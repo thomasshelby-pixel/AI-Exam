@@ -112,6 +112,27 @@ async function run() {
     assert.equal(reprocessRetry?.charged, false);
     assert.equal(getValidStudentCreditBalance(userId), 1);
 
+    // A second failed reprocess cycle must be refundable too; a historical
+    // refund from the first attempt must not block the later refund.
+    assert.equal(
+      refundEvaluationCreditAtomic({
+        userId,
+        evaluationId: targetEvaluationId,
+        entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+      }),
+      true,
+    );
+    assert.equal(getValidStudentCreditBalance(userId), 2);
+    assert.equal(
+      refundEvaluationCreditAtomic({
+        userId,
+        evaluationId: targetEvaluationId,
+        entitlementSource: 'PERSONAL_PURCHASED_CREDIT',
+      }),
+      true,
+    );
+    assert.equal(getValidStudentCreditBalance(userId), 2);
+
     console.log('✅ Evaluation entitlement settlement tests passed.');
   } finally {
     db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(userId);
