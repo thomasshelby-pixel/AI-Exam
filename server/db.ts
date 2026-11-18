@@ -1826,6 +1826,82 @@ function runMigrations() {
   addColumnIfNotExists('institute_memberships', 'sponsored_access', 'INTEGER NOT NULL DEFAULT 1');
   addColumnIfNotExists('institute_memberships', 'removed_at', 'TEXT');
 
+  // Pending email invitations exist before the student creates an account.
+  // The original schema incorrectly required student_id for every membership,
+  // while the invitation workflow correctly stores NULL until signup. Rebuild
+  // the table once, retaining every existing column, row, index and trigger.
+  try {
+    const membershipColumns = db.prepare('PRAGMA table_info(institute_memberships)').all() as Array<{
+      name: string;
+      notnull: number;
+    }>;
+    const studentIdColumn = membershipColumns.find((column) => column.name === 'student_id');
+    if (studentIdColumn?.notnull) {
+      const tableDefinition = db.prepare(`
+        SELECT sql FROM sqlite_master
+        WHERE type = 'table' AND name = 'institute_memberships'
+        LIMIT 1
+      `).get() as { sql?: string } | undefined;
+      if (!tableDefinition?.sql) {
+        throw new Error('Could not read institute_memberships schema for pending-invitation migration.');
+      }
+
+      const nullableTableSql = tableDefinition.sql
+        .replace(
+          /^CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:"?institute_memberships"?)/i,
+          'CREATE TABLE institute_memberships_nullable_migration'
+        )
+        .replace(/(["`]?student_id["`]?\\s+TEXT)\\s+NOT\\s+NULL/i, '$1');
+      if (nullableTableSql === tableDefinition.sql || /student_id["`]?\\s+TEXT\\s+NOT\\s+NULL/i.test(nullableTableSql)) {
+        throw new Error('Could not safely prepare nullable student_id migration.');
+      }
+
+      const membershipIndexesAndTriggers = db.prepare(`
+        SELECT sql FROM sqlite_master
+        WHERE tbl_name = 'institute_memberships'
+          AND type IN ('index', 'trigger')
+          AND sql IS NOT NULL
+        ORDER BY type, name
+      `).all() as Array<{ sql: string }>;
+      const columnList = membershipColumns
+        .map((column) => `"${column.name.replace(/"/g, '""')}"`)
+        .join(', ');
+
+      db.exec('PRAGMA foreign_keys = OFF;');
+      db.exec('BEGIN IMMEDIATE;');
+      try {
+        db.exec(nullableTableSql);
+        db.exec(`
+          INSERT INTO institute_memberships_nullable_migration (${columnList})
+          SELECT ${columnList} FROM institute_memberships
+        `);
+        db.exec('DROP TABLE institute_memberships;');
+        db.exec('ALTER TABLE institute_memberships_nullable_migration RENAME TO institute_memberships;');
+        for (const item of membershipIndexesAndTriggers) {
+          db.exec(item.sql);
+        }
+        db.exec('COMMIT;');
+      } catch (migrationError) {
+        try { db.exec('ROLLBACK;'); } catch {}
+        throw migrationError;
+      } finally {
+        db.exec('PRAGMA foreign_keys = ON;');
+      }
+
+      const migratedStudentId = (db.prepare('PRAGMA table_info(institute_memberships)').all() as Array<{
+        name: string;
+        notnull: number;
+      }>).find((column) => column.name === 'student_id');
+      if (!migratedStudentId || migratedStudentId.notnull !== 0) {
+        throw new Error('Pending-invitation schema migration did not make student_id nullable.');
+      }
+      console.log('[DB Migration] institute_memberships.student_id now supports pending email invitations.');
+    }
+  } catch (membershipMigrationError) {
+    console.error('[DB Migration] Could not enable pending institute invitations:', membershipMigrationError);
+    throw membershipMigrationError;
+  }
+
   // Student Subscription Validity (Preserved during suspension/revocation)
   addColumnIfNotExists('student_profiles', 'subscription_start_date', 'TEXT');
   addColumnIfNotExists('student_profiles', 'subscription_expiry_date', 'TEXT');
