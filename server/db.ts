@@ -1743,9 +1743,21 @@ function runMigrations() {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS institute_trial_claims (
+      id TEXT PRIMARY KEY,
+      institute_id TEXT NOT NULL UNIQUE,
+      normalized_email TEXT NOT NULL UNIQUE,
+      normalized_phone TEXT NOT NULL UNIQUE,
+      claimed_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (institute_id) REFERENCES institutes(id) ON DELETE CASCADE
+    );
   `);
 
   addColumnIfNotExists('institute_subscriptions', 'plan_name', 'TEXT');
+  addColumnIfNotExists('institute_usage_ledger', 'subscription_id', 'TEXT');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS legal_documents (
@@ -3751,7 +3763,13 @@ function seedSampleInstitute() {
 
   // Ensure active institutes have an active evaluation allowance record
   try {
-    const allInstitutes = db.prepare("SELECT id FROM institutes WHERE status = 'ACTIVE'").all() as Array<{ id: string }>;
+    const allInstitutes = db.prepare(`
+      SELECT id FROM institutes
+      WHERE status = 'ACTIVE'
+        AND UPPER(TRIM(COALESCE(subscription_plan, ''))) NOT IN (
+          'PENDING_SELECTION', 'NONE', 'NO_PLAN', 'FREE', 'FREE_TRIAL', 'TRIAL_EXPIRED'
+        )
+    `).all() as Array<{ id: string }>;
     for (const inst of allInstitutes) {
       const subExists = db.prepare("SELECT id FROM institute_subscriptions WHERE institute_id = ? AND status = 'ACTIVE'").get(inst.id);
       if (!subExists) {
