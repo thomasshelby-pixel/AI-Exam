@@ -116,11 +116,14 @@ async function run() {
       ...adapter,
       setDocumentsAtomically: async () => false,
     };
+    const failedInstituteId = `inst_failed_${suffix}`;
+    const failedUserId = `usr_failed_${suffix}`;
+    const failedEmail = `failed-${suffix}@example.test`;
     assert.equal(
       await persistInstituteAccountToFirestore({
-        institute: { ...institute, id: `inst_failed_${suffix}` },
-        user: { ...user, id: `usr_failed_${suffix}` },
-        batches: [{ ...batch, id: `batch_failed_${suffix}`, institute_id: `inst_failed_${suffix}` }],
+        institute: { ...institute, id: failedInstituteId, email: failedEmail },
+        user: { ...user, id: failedUserId, email: failedEmail },
+        batches: [{ ...batch, id: `batch_failed_${suffix}`, institute_id: failedInstituteId }],
         auditLogs: [],
       }, failedWriteAdapter),
       'failed',
