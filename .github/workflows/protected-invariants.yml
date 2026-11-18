@@ -30,6 +30,12 @@ jobs:
       - name: Institute account cloud persistence and deployment recovery regression
         run: node_modules/.bin/tsx server/tests/instituteAccountCloudPersistence.test.ts
 
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
       - name: Order-independent answer-sheet question mapping regression
         run: node_modules/.bin/tsx server/tests/answerSheetCoverageCircuitBreaker.test.ts
 
@@ -300,8 +306,3 @@ jobs:
       - name: Model Test TXT bulk-import regression
         run: npm run test:model-test-bulk
 
-      - name: Typecheck
-        run: npm run lint
-
-      - name: Production build
-        run: npm run build
