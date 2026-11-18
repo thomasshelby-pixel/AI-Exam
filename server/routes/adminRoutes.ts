@@ -4936,7 +4936,22 @@ router.post('/evaluations/auto-reconcile-reprocessed-entitlements', async (req: 
         AND COALESCE(e.faculty_mock_test_id, '') = ''
         AND COALESCE(e.institute_id, '') = ''
         AND COALESCE(e.sponsoring_institute_id, '') = ''
+        AND UPPER(TRIM(COALESCE(e.material_source, ''))) <> 'INSTITUTE'
         AND COALESCE(e.consumed_from_institute_allocation, 0) = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM institute_materials im
+          WHERE im.id = e.material_id
+            AND COALESCE(im.institute_id, '') <> ''
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM permanent_free_entitlements pfe
+          INNER JOIN users entitlement_user
+            ON LOWER(TRIM(entitlement_user.email)) = LOWER(TRIM(pfe.email))
+          WHERE entitlement_user.id = e.student_id
+            AND pfe.is_active = 1
+        )
         AND UPPER(TRIM(COALESCE(e.entitlement_source, ''))) IN (
           '', 'PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'
         )
