@@ -51,11 +51,19 @@ import {
 } from '../services/mfaRecoveryService.js';
 import { encryptMfaSecret, decryptMfaSecret } from '../services/mfaCryptoService.js';
 import { UserRole } from '../../src/types/index.js';
+import { isConfiguredInstituteTestAccountMfaBypass } from '../services/mfaTestAccountBypass.js';
 import { mfaRecoveryRateLimiter, mfaEnrollmentVerifyRateLimiter, mfaVerificationRateLimiter } from '../utils/rateLimiter.js';
 import { recordUserDeviceActivity } from '../services/userDeviceActivityService.js';
 import { resolveSignupPlatform } from '../services/signupPlatformService.js';
 
 const router = Router();
+
+function isTestAccountMfaBypassActive(userId: string): boolean {
+  const persistedUser = db.prepare(
+    'SELECT email, role, status FROM users WHERE id = ? LIMIT 1'
+  ).get(userId) as { email?: string; role?: string; status?: string } | undefined;
+  return Boolean(persistedUser && isConfiguredInstituteTestAccountMfaBypass(persistedUser));
+}
 
 // Ensure all MFA tables exist before handling any route
 initMfaRecoveryTables();
@@ -1331,14 +1339,16 @@ const handleCheckDeviceTrust = async (req: Request, res: Response) => {
     if (user) {
       const trustInfo = getDeviceTrustInfo(user.id, deviceId, trustToken);
       const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id);
-      const requiresTotp = Boolean(authMfaStatus.mfaEnabled && !trustInfo.isTrusted);
+      const testAccountMfaBypass = isTestAccountMfaBypassActive(user.id);
+      const mfaEnabled = Boolean(authMfaStatus.mfaEnabled && !testAccountMfaBypass);
+      const requiresTotp = Boolean(mfaEnabled && !trustInfo.isTrusted);
 
       return res.json({
         success: true,
         isTrusted: trustInfo.isTrusted,
         deviceId,
         requiresTotp,
-        mfaEnabled: authMfaStatus.mfaEnabled,
+        mfaEnabled,
         expiresAt: trustInfo.expiresAt,
         lastUsedAt: trustInfo.lastUsedAt,
         status: trustInfo.status,
@@ -1802,8 +1812,9 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
       clientClaimsFirebaseTotp,
     });
 
-    const isMandatoryRole = req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN';
-    const mfaEnabled = authMfaStatus.mfaEnabled;
+    const testAccountMfaBypass = isTestAccountMfaBypassActive(req.user.id);
+    const isMandatoryRole = (req.user.role === 'INSTITUTE_ADMIN' || req.user.role === 'SUPER_ADMIN') && !testAccountMfaBypass;
+    const mfaEnabled = Boolean(authMfaStatus.mfaEnabled && !testAccountMfaBypass);
 
     const deviceId =
       (req.headers['x-device-id'] as string)?.trim() ||
@@ -1814,9 +1825,9 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
 
     const deviceIsTrusted = !!(deviceId && trustToken && isDeviceTrusted(req.user.id, deviceId, trustToken));
 
-    const mfaVerified = isMandatoryRole
+    const mfaVerified = testAccountMfaBypass || (isMandatoryRole
       ? (mfaEnabled && (!!req.user.mfaVerified || deviceIsTrusted))
-      : (!mfaEnabled || !!req.user.mfaVerified);
+      : (!mfaEnabled || !!req.user.mfaVerified));
 
     const recoveryStatus = mfaEnabled ? getRecoveryCodeStatus(req.user.id) : null;
     const authenticators = mfaEnabled ? listAuthenticators(req.user.id) : [];
@@ -1827,9 +1838,9 @@ router.get('/status', authenticateToken, async (req: AuthRequest, res: Response)
       mfaEnabled,
       mfaVerified,
       factorType: mfaEnabled ? 'totp' : null,
-      authenticatorsCount: Math.max(authenticators.length, authMfaStatus.authenticatorsCount),
-      recoveryCodesRemaining: recoveryStatus?.remaining ?? authMfaStatus.recoveryCodesRemaining,
-      recoveryCodesTotal: recoveryStatus?.total ?? (authMfaStatus.recoveryCodesRemaining > 0 ? 10 : 0),
+      authenticatorsCount: testAccountMfaBypass ? 0 : Math.max(authenticators.length, authMfaStatus.authenticatorsCount),
+      recoveryCodesRemaining: testAccountMfaBypass ? 0 : (recoveryStatus?.remaining ?? authMfaStatus.recoveryCodesRemaining),
+      recoveryCodesTotal: testAccountMfaBypass ? 0 : (recoveryStatus?.total ?? (authMfaStatus.recoveryCodesRemaining > 0 ? 10 : 0)),
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Failed to retrieve MFA status.' });
