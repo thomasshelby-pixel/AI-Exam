@@ -5177,6 +5177,7 @@ router.get(['/institute/my-tests', '/institute-tests/my-tests'], (req: AuthReque
 
 router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   let createdEvaluationId: string | null = null;
+  let instituteCreditReserved = false;
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
@@ -5308,6 +5309,26 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     const studentProfile = db.prepare('SELECT icai_registration_number FROM student_profiles WHERE user_id = ?').get(studentId) as any;
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
+    // Reserve one institute-wide evaluation credit for this assigned test.
+    if (!isPermanentFreeStudent) {
+      try {
+        reserveInstituteEvaluationCredit({
+          instituteId: String(test.institute_id),
+          studentId,
+          evaluationId,
+        });
+        instituteCreditReserved = true;
+      } catch (reservationError: any) {
+        const message = String(reservationError?.message || '');
+        db.prepare("UPDATE evaluations SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .run(message || 'Institute evaluation allowance is exhausted.', evaluationId);
+        return res.status(402).json({
+          error: 'Your institute has used all available evaluation credits or its trial has expired. Please contact the institute administrator to upgrade.',
+          code: 'INSTITUTE_EVALUATION_QUOTA_EXHAUSTED',
+        });
+      }
+    }
+
     // Enqueue background evaluation
     await enqueueEvaluation({
       evaluationId,
@@ -5353,6 +5374,13 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     console.error('Submit institute test error:', error);
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
     if (createdEvaluationId) {
+      if (instituteCreditReserved) {
+        releaseInstituteEvaluationCredit({
+          evaluationId: createdEvaluationId,
+          reason: errMsg,
+        });
+        instituteCreditReserved = false;
+      }
       db.prepare(`
         UPDATE evaluations
         SET status = 'FAILED', progress_stage = 'FAILED', progress_percentage = 100,
@@ -5370,6 +5398,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
 // 13. Submit Answer Sheet for Institute Material (100% Institute-Sponsored, Verified Enrollment Required)
 router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit'], requireActiveInstituteEnrollmentMiddleware, async (req: AuthRequest, res: Response) => {
   let createdEvaluationId: string | null = null;
+  let instituteCreditReserved = false;
   try {
     const studentId = req.user!.id;
     const studentName = req.user!.fullName;
@@ -5469,6 +5498,26 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     const studentProfile = db.prepare('SELECT icai_registration_number FROM student_profiles WHERE user_id = ?').get(studentId) as any;
     const icaiReg = studentProfile?.icai_registration_number || 'N/A';
 
+    // Reserve one institute-wide evaluation credit for this submitted material.
+    if (!isPermanentFreeStudent) {
+      try {
+        reserveInstituteEvaluationCredit({
+          instituteId: String(material.institute_id),
+          studentId,
+          evaluationId,
+        });
+        instituteCreditReserved = true;
+      } catch (reservationError: any) {
+        const message = String(reservationError?.message || '');
+        db.prepare("UPDATE evaluations SET status = 'FAILED', error_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?")
+          .run(message || 'Institute evaluation allowance is exhausted.', evaluationId);
+        return res.status(402).json({
+          error: 'Your institute has used all available evaluation credits or its trial has expired. Please contact the institute administrator to upgrade.',
+          code: 'INSTITUTE_EVALUATION_QUOTA_EXHAUSTED',
+        });
+      }
+    }
+
     // Enqueue background evaluation
     await enqueueEvaluation({
       evaluationId,
@@ -5514,6 +5563,13 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     console.error('Submit institute material error:', error);
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing failed.';
     if (createdEvaluationId) {
+      if (instituteCreditReserved) {
+        releaseInstituteEvaluationCredit({
+          evaluationId: createdEvaluationId,
+          reason: errMsg,
+        });
+        instituteCreditReserved = false;
+      }
       db.prepare(`
         UPDATE evaluations
         SET status = 'FAILED', progress_stage = 'FAILED', progress_percentage = 100,
