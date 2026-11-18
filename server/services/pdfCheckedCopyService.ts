@@ -1070,7 +1070,11 @@ export async function generateCheckedCopyPdf(
       if (mcqFeedback) {
         const words = mcqFeedback.split(/\s+/);
         let line = '';
-        const maxLines = isCompactMode ? 2 : 5;
+        // Dense pages (e.g. a full 15-MCQ block) must retain every separate
+        // score badge inside the original page's right margin. Keep only one
+        // concise feedback line in compact mode; full explanations remain in
+        // the detailed evaluation report.
+        const maxLines = isCompactMode ? 1 : 5;
         for (const word of words) {
           if ((line + ' ' + word).trim().length <= 36) {
             line = (line + ' ' + word).trim();
