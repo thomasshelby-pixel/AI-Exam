@@ -598,15 +598,27 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
           continue;
         }
 
-        if (existingMem) {
-          db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = COALESCE(?, batch_id), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
-            .run(targetBatchId || null, existingMem.id);
-        } else {
-          const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
-          db.prepare(`
-            INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
-            VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, CURRENT_TIMESTAMP)
-          `).run(memId, instituteId, user.id, targetBatchId || null, normalizedEmail, user.full_name);
+        try {
+          if (existingMem) {
+            withInstituteStudentSeatReservation(instituteId, () => {
+              db.prepare("UPDATE institute_memberships SET status = 'ACTIVE', batch_id = COALESCE(?, batch_id), joined_at = CURRENT_TIMESTAMP WHERE id = ?")
+                .run(targetBatchId || null, existingMem.id);
+            });
+          } else {
+            const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+            withInstituteStudentSeatReservation(instituteId, () => {
+              db.prepare(`
+                INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+                VALUES (?, ?, ?, ?, 'ACTIVE', ?, ?, CURRENT_TIMESTAMP)
+              `).run(memId, instituteId, user.id, targetBatchId || null, normalizedEmail, user.full_name);
+            });
+          }
+        } catch (seatError: any) {
+          results.errors.push(String(seatError?.message || '').includes('INSTITUTE_STUDENT_QUOTA_EXCEEDED')
+            ? `Student limit reached (${maxCapacity}). Cannot enroll ${email}.`
+            : `Could not reserve a student seat for ${email}.`);
+          results.skipped++;
+          continue;
         }
         results.enrolled++;
       } else {
@@ -626,15 +638,27 @@ router.post('/students/bulk', (req: AuthRequest, res: Response) => {
           continue;
         }
 
-        if (existingInvite) {
-          db.prepare("UPDATE institute_memberships SET batch_id = COALESCE(?, batch_id), status = 'PENDING' WHERE id = ?")
-            .run(targetBatchId || null, existingInvite.id);
-        } else {
-          const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
-          db.prepare(`
-            INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
-            VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, CURRENT_TIMESTAMP)
-          `).run(memId, instituteId, targetBatchId || null, normalizedEmail, name || 'Invited Student');
+        try {
+          if (existingInvite) {
+            withInstituteStudentSeatReservation(instituteId, () => {
+              db.prepare("UPDATE institute_memberships SET batch_id = COALESCE(?, batch_id), status = 'PENDING' WHERE id = ?")
+                .run(targetBatchId || null, existingInvite.id);
+            });
+          } else {
+            const memId = `mem_${crypto.randomBytes(8).toString('hex')}`;
+            withInstituteStudentSeatReservation(instituteId, () => {
+              db.prepare(`
+                INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+                VALUES (?, ?, NULL, ?, 'PENDING', ?, ?, CURRENT_TIMESTAMP)
+              `).run(memId, instituteId, targetBatchId || null, normalizedEmail, name || 'Invited Student');
+            });
+          }
+        } catch (seatError: any) {
+          results.errors.push(String(seatError?.message || '').includes('INSTITUTE_STUDENT_QUOTA_EXCEEDED')
+            ? `Student limit reached (${maxCapacity}). Cannot invite ${email}.`
+            : `Could not reserve a student seat for ${email}.`);
+          results.skipped++;
+          continue;
         }
         results.invited++;
       }
