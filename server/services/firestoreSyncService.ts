@@ -1183,6 +1183,79 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
       }
     }
 
+    // 5c. Hydrate institute subscription and quota ledgers before any evaluation routes run.
+    const instituteSubscriptions = await readDocs<any>('institute_subscriptions');
+    for (const s of instituteSubscriptions) {
+      if (!s.id || !s.institute_id || tombstoneSet.has(`institutes_${s.institute_id}`)) continue;
+      try {
+        db.prepare(`
+          INSERT INTO institute_subscriptions (
+            id, institute_id, plan_id, plan_name, billing_cycle, price_inr,
+            student_capacity, evaluation_allowance, evaluations_used, evaluations_remaining,
+            payment_order_ref, payment_id, start_date, expiry_date, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET
+            plan_id = excluded.plan_id, plan_name = excluded.plan_name,
+            billing_cycle = excluded.billing_cycle, price_inr = excluded.price_inr,
+            student_capacity = excluded.student_capacity, evaluation_allowance = excluded.evaluation_allowance,
+            evaluations_used = excluded.evaluations_used, evaluations_remaining = excluded.evaluations_remaining,
+            payment_order_ref = excluded.payment_order_ref, payment_id = excluded.payment_id,
+            start_date = excluded.start_date, expiry_date = excluded.expiry_date, status = excluded.status,
+            updated_at = excluded.updated_at
+        `).run(
+          s.id, s.institute_id, s.plan_id, s.plan_name || null, s.billing_cycle || 'MONTHLY', Number(s.price_inr || 0),
+          Number(s.student_capacity || 0), Number(s.evaluation_allowance || 0), Number(s.evaluations_used || 0),
+          Number(s.evaluations_remaining || 0), s.payment_order_ref || null, s.payment_id || null,
+          s.start_date || null, s.expiry_date, s.status || 'ACTIVE', s.created_at || null, s.updated_at || s.created_at || null
+        );
+      } catch (subscriptionError) {
+        console.warn(`[FirestoreSync] Failed to hydrate institute subscription ${s.id}:`, subscriptionError);
+      }
+    }
+
+    const instituteUsageEntries = await readDocs<any>('institute_usage_ledger');
+    for (const usage of instituteUsageEntries) {
+      if (!usage.id || !usage.institute_id || !usage.idempotency_key || tombstoneSet.has(`institutes_${usage.institute_id}`)) continue;
+      try {
+        db.prepare(`
+          INSERT INTO institute_usage_ledger (
+            id, institute_id, student_id, evaluation_id, units_deducted, balance_before, balance_after,
+            action_type, idempotency_key, subscription_id, notes, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+          ON CONFLICT(id) DO UPDATE SET
+            action_type = excluded.action_type, balance_before = excluded.balance_before,
+            balance_after = excluded.balance_after, subscription_id = excluded.subscription_id,
+            notes = excluded.notes, created_at = excluded.created_at
+        `).run(
+          usage.id, usage.institute_id, usage.student_id, usage.evaluation_id || null,
+          Number(usage.units_deducted || 1), Number(usage.balance_before || 0), Number(usage.balance_after || 0),
+          usage.action_type || 'RESERVED', usage.idempotency_key, usage.subscription_id || null,
+          usage.notes || null, usage.created_at || null
+        );
+      } catch (usageError) {
+        console.warn(`[FirestoreSync] Failed to hydrate institute usage entry ${usage.id}:`, usageError);
+      }
+    }
+
+    // Trial claims intentionally survive institute deletion/expiry so the one-time
+    // starter offer cannot be reclaimed by recreating an institute account.
+    const instituteTrialClaims = await readDocs<any>('institute_trial_claims');
+    for (const claim of instituteTrialClaims) {
+      if (!claim.id || !claim.admin_user_id || !claim.admin_email || !claim.institute_id) continue;
+      try {
+        db.prepare(`
+          INSERT INTO institute_trial_claims (id, institute_id, admin_user_id, admin_email, subscription_id, claimed_at, expires_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            subscription_id = excluded.subscription_id, claimed_at = excluded.claimed_at, expires_at = excluded.expires_at
+        `).run(
+          claim.id, claim.institute_id, claim.admin_user_id, String(claim.admin_email).toLowerCase(),
+          claim.subscription_id, claim.claimed_at, claim.expires_at
+        );
+      } catch (claimError) {
+        console.warn(`[FirestoreSync] Failed to hydrate institute trial claim ${claim.id}:`, claimError);
+      }
+    }
     // 6. Hydrate Evaluation Materials (ICAI Question Papers, Suggested Answers, Rubrics)
     // First remove any tombstoned materials from local SQLite
     for (const t of tombstones) {
