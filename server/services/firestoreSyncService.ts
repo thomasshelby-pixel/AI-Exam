@@ -593,6 +593,94 @@ export async function permanentlyDeleteFromFirestore(
  * 2. Permanently deleted records remain deleted (tombstone check).
  * 3. Never overwrites newer records.
  */
+/**
+ * Restore one institute from the authoritative Firestore snapshot.
+ *
+ * A malformed/duplicate legacy row is quarantined rather than taking the
+ * entire Cloud Run instance offline. Firestore collection read failures remain
+ * fatal in production through readDocs(..., { failOnError: true }); login-time
+ * recovery separately verifies an institute's exact identity before access.
+ */
+export function hydrateInstituteRecordFromFirestore(inst: Record<string, any>): boolean {
+  const id = String(inst?.id || '').trim();
+  const name = String(inst?.name || '').trim();
+  const code = String(inst?.code || '').trim();
+  const email = String(inst?.email || '').trim().toLowerCase();
+  if (!id || !name || !code || !email) {
+    console.warn('[FirestoreSync] Quarantining malformed institute record during hydration:', {
+      id: id || null,
+      hasName: Boolean(name),
+      hasCode: Boolean(code),
+      hasEmail: Boolean(email),
+    });
+    return false;
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO institutes (id, name, code, logo_url, email, phone, address, website, contact_person, status, subscription_plan, subscription_expires_at, max_students, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        code = excluded.code,
+        email = excluded.email,
+        status = excluded.status,
+        subscription_plan = excluded.subscription_plan,
+        max_students = excluded.max_students,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      id, name, code, inst.logo_url || '', email, inst.phone || '', inst.address || '',
+      inst.website || '', inst.contact_person || '', inst.status || 'ACTIVE',
+      inst.subscription_plan || 'INSTITUTIONAL_PRO', inst.subscription_expires_at || null,
+      inst.max_students || 500, inst.created_at || null
+    );
+    return true;
+  } catch (error) {
+    // Typical causes are a legacy duplicate email/code or a local identity
+    // already owned by another institute. Never overwrite that other identity.
+    console.warn(`[FirestoreSync] Quarantining institute ${id}; SQLite identity conflict during hydration:`, error);
+    return false;
+  }
+}
+
+/**
+ * Restore one batch only when its parent institute is available locally.
+ * A bad/legacy batch row must not prevent unrelated service traffic from
+ * starting; the authenticated institute recovery path handles exact repair.
+ */
+export function hydrateInstituteBatchRecordFromFirestore(batch: Record<string, any>): boolean {
+  const id = String(batch?.id || '').trim();
+  const instituteId = String(batch?.institute_id || '').trim();
+  const name = String(batch?.name || '').trim();
+  if (!id || !instituteId || !name) {
+    console.warn('[FirestoreSync] Quarantining malformed institute batch during hydration:', {
+      id: id || null,
+      instituteId: instituteId || null,
+      hasName: Boolean(name),
+    });
+    return false;
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO batches (id, institute_id, name, course_level, description, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        course_level = excluded.course_level,
+        description = excluded.description,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(
+      id, instituteId, name, batch.course_level || 'INTERMEDIATE',
+      batch.description || '', batch.created_at || null
+    );
+    return true;
+  } catch (error) {
+    console.warn(`[FirestoreSync] Quarantining institute batch ${id}; parent/identity conflict during hydration:`, error);
+    return false;
+  }
+}
+
 export async function hydrateFromFirestore(options: { requireComplete?: boolean } = {}): Promise<void> {
   const requireComplete = options.requireComplete === true;
   const fdb = getFirestoreDb();
@@ -1125,52 +1213,14 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
         console.log(`[FirestoreSync] Skipping tombstoned institute during hydration: ${inst.id}`);
         continue;
       }
-      try {
-        db.prepare(`
-          INSERT INTO institutes (id, name, code, logo_url, email, phone, address, website, contact_person, status, subscription_plan, subscription_expires_at, max_students, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-          ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            code = excluded.code,
-            email = excluded.email,
-            status = excluded.status,
-            subscription_plan = excluded.subscription_plan,
-            max_students = excluded.max_students,
-            updated_at = CURRENT_TIMESTAMP
-        `).run(
-          inst.id, inst.name, inst.code || '', inst.logo_url || '', inst.email || '',
-          inst.phone || '', inst.address || '', inst.website || '', inst.contact_person || '',
-          inst.status || 'ACTIVE', inst.subscription_plan || 'INSTITUTIONAL_PRO',
-          inst.subscription_expires_at || null, inst.max_students || 500, inst.created_at || null
-        );
-      } catch (error) {
-        console.warn(`[FirestoreSync] Failed to hydrate institute ${inst.id}:`, error);
-        if (requireComplete) {
-          throw new Error(`Complete Firestore hydration could not restore institute ${inst.id}.`);
-        }
-      }
+      hydrateInstituteRecordFromFirestore(inst);
     }
 
     // 5. Hydrate Batches
     const batches = await readDocs<any>('batches');
     for (const b of batches) {
       if (tombstoneSet.has(`batches_${b.id}`)) continue;
-      try {
-        db.prepare(`
-          INSERT INTO batches (id, institute_id, name, course_level, description, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-          ON CONFLICT(id) DO UPDATE SET
-            name = excluded.name,
-            course_level = excluded.course_level,
-            description = excluded.description,
-            updated_at = CURRENT_TIMESTAMP
-        `).run(b.id, b.institute_id, b.name, b.course_level || 'INTERMEDIATE', b.description || '', b.created_at || null);
-      } catch (error) {
-        console.warn(`[FirestoreSync] Failed to hydrate institute batch ${b.id}:`, error);
-        if (requireComplete) {
-          throw new Error(`Complete Firestore hydration could not restore institute batch ${b.id}.`);
-        }
-      }
+      hydrateInstituteBatchRecordFromFirestore(b);
     }
 
     // 5b. Hydrate Institute Memberships
