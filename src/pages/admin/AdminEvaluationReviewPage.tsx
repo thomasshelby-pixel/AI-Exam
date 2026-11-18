@@ -108,6 +108,9 @@ interface EvaluationReviewData {
     evaluation_source?: string;
     entitlement_source?: string;
     faculty_mock_test_id?: string | null;
+    institute_id?: string | null;
+    sponsoring_institute_id?: string | null;
+    consumed_from_institute_allocation?: number;
     status: string;
     total_marks: number;
     maximum_marks: number;
@@ -497,10 +500,16 @@ export const AdminEvaluationReviewPage: React.FC<AdminEvaluationReviewPageProps>
 
         <div className="flex items-center gap-2 flex-wrap">
           {String(evaluation.status || '').toUpperCase() === 'COMPLETED' &&
-            ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(evaluation.entitlement_source || '').toUpperCase()) &&
+            (
+              ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(evaluation.entitlement_source || '').toUpperCase()) ||
+              (!String(evaluation.entitlement_source || '').trim() && String(evaluation.evaluation_source || 'PUBLIC').toUpperCase() === 'PUBLIC')
+            ) &&
             String(evaluation.evaluation_source || 'PUBLIC').toUpperCase() !== 'FACULTY_MOCK' &&
             String(evaluation.material_type || '').toUpperCase() !== 'FACULTY_MOCK_TEST' &&
-            !evaluation.faculty_mock_test_id && (
+            !evaluation.faculty_mock_test_id &&
+            !evaluation.institute_id &&
+            !evaluation.sponsoring_institute_id &&
+            Number(evaluation.consumed_from_institute_allocation || 0) === 0 && (
               <button
                 onClick={runCreditReconciliation}
                 disabled={saving}

@@ -209,6 +209,28 @@ async function run() {
       assert.equal(freeReprocess?.charged, true);
       assert.equal(freeReprocess?.reason, 'DEBIT_RESTORED_AFTER_REFUND');
       assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 1);
+
+      // Legacy PUBLIC evaluations may predate entitlement_source persistence.
+      // Admin reconciliation must infer the current personal entitlement and
+      // still remain idempotent for the same evaluation ID.
+      const legacyPublicEvaluationId = `eval_legacy_public_${crypto.randomBytes(6).toString('hex')}`;
+      const legacyPublicSettlement = await settlePersonalEntitlementForSuccessfulEvaluation({
+        userId: freeUserId,
+        evaluationId: legacyPublicEvaluationId,
+        entitlementSource: '',
+      });
+      assert.equal(legacyPublicSettlement?.charged, true);
+      assert.equal(legacyPublicSettlement?.source, 'PERSONAL_FREE');
+      assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 0);
+
+      const legacyPublicRetry = await settlePersonalEntitlementForSuccessfulEvaluation({
+        userId: freeUserId,
+        evaluationId: legacyPublicEvaluationId,
+        entitlementSource: '',
+      });
+      assert.equal(legacyPublicRetry?.charged, false);
+      assert.equal(legacyPublicRetry?.reason, 'DEBIT_ALREADY_EXISTS');
+      assert.equal(getStudentCreditDetailedSummary(freeUserId).freeEvaluationsRemaining, 0);
     } finally {
       db.prepare('DELETE FROM credit_ledger WHERE student_id = ?').run(freeUserId);
       db.prepare('DELETE FROM student_credit_purchases WHERE user_id = ?').run(freeUserId);

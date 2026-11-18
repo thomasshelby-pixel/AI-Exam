@@ -4912,7 +4912,8 @@ router.post('/evaluations/:id/reconcile-entitlement', async (req: AuthRequest, r
   try {
     const evaluation = db.prepare(`
       SELECT id, student_id, status, evaluation_source, material_type,
-             faculty_mock_test_id, entitlement_source
+             faculty_mock_test_id, entitlement_source, institute_id,
+             sponsoring_institute_id, consumed_from_institute_allocation
       FROM evaluations
       WHERE id = ? OR display_id = ?
       LIMIT 1
@@ -4948,11 +4949,21 @@ router.post('/evaluations/:id/reconcile-entitlement', async (req: AuthRequest, r
     }
 
     const entitlementSource = String(evaluation.entitlement_source || '').trim().toUpperCase();
-    if (!['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource)) {
+    const hasInstituteAllocation =
+      Boolean(evaluation.institute_id) ||
+      Boolean(evaluation.sponsoring_institute_id) ||
+      Number(evaluation.consumed_from_institute_allocation || 0) > 0;
+    const isKnownPersonalEntitlement = ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(entitlementSource);
+    const canInferLegacyPublicEntitlement =
+      !entitlementSource &&
+      evaluationSource === 'PUBLIC' &&
+      !hasInstituteAllocation;
+
+    if (hasInstituteAllocation || (!isKnownPersonalEntitlement && !canInferLegacyPublicEntitlement)) {
       return res.status(409).json({
         success: false,
         code: 'PERSONAL_ENTITLEMENT_NOT_APPLICABLE',
-        error: `This evaluation uses ${entitlementSource || 'an unknown'} entitlement and is not eligible for personal credit reconciliation.`,
+        error: `This evaluation uses ${entitlementSource || (hasInstituteAllocation ? 'an institute allocation' : 'an unknown')} entitlement and is not eligible for personal credit reconciliation.`,
         entitlementSource: entitlementSource || null,
       });
     }
