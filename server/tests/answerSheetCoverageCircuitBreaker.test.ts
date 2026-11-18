@@ -514,6 +514,30 @@ async function run() {
   assert.equal(contentMatchBeatsPreviousPage.canonicalId, 'Q3(a)', 'A source-content match must not inherit the preceding page parent.');
   assert.equal(contentMatchBeatsPreviousPage.requiresReview, false);
 
+  const continuationWithAuthoritativeIdButMissingFlag = resolveContextualQuestionIdentity({
+    subQuestion: 'ii',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q2(a)',
+    isContinuation: false,
+    authoritativeQuestionCode: 'Q2(a)',
+    mappingBasis: 'CONTINUATION',
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(continuationWithAuthoritativeIdButMissingFlag.canonicalId, 'Q2(a)',
+    'A validated canonical source ID and CONTINUATION mapping basis must not require a duplicate continuation boolean.');
+  assert.equal(continuationWithAuthoritativeIdButMissingFlag.requiresReview, false);
+
+  const bareContinuationWithoutSourceIdStillNeedsConfirmation = resolveContextualQuestionIdentity({
+    subQuestion: 'ii',
+    parentQuestionNumberVisible: false,
+    previousActiveQuestion: 'Q2(a)',
+    isContinuation: false,
+    mappingBasis: 'CONTINUATION',
+    paperSubQuestions: arbitraryOrderStructure.subQuestions,
+  });
+  assert.equal(bareContinuationWithoutSourceIdStillNeedsConfirmation.requiresReview, true,
+    'A parentless continuation without an authoritative source ID must still require independent confirmation.');
+
   const visibleQ6dMappedToQ2dBySourceContent = resolveContextualQuestionIdentity({
     questionNumber: '6',
     subQuestion: 'd',

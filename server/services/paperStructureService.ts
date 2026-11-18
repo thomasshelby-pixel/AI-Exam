@@ -337,7 +337,10 @@ function extractObjectiveQuestionPaperBlock(questionPaperText: string): string {
  * Extracts verified MCQ answer keys, explanations, and statutory provisions
  * directly from the authoritative Suggested Answers text stored on the server.
  */
-export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?: string): Map<string, {
+export function extractOfficialMcqKeysFromSuggestedAnswers(
+  suggestedAnswersText?: string,
+  questionPaperText?: string,
+): Map<string, {
   officialKey: string;
   explanation: string;
   provision?: string;
@@ -361,13 +364,45 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   // MCQ keys are accepted only when the source explicitly identifies an objective section.
   // Otherwise a descriptive heading like "Question 1(a)" can be mistaken for MCQ 1.
   const mcqSectionHeader = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b|Section\s*A\b[\s\S]{0,120}(?:MCQ|Objective))/i;
-  if (!mcqSectionHeader.test(suggestedAnswersText)) return result;
+  const hasSuggestedMcqSection = mcqSectionHeader.test(suggestedAnswersText);
+  const questionPaperHasObjectiveSection = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b|Section\s*A\b[\s\S]{0,120}(?:MCQ|Objective))/i
+    .test(String(questionPaperText || ''));
+  // Some faculty answer-key files list only "1. (B), 2. (C) ..." and omit the
+  // Division A heading. Accept that narrow format only when the selected QP
+  // independently proves an objective section AND the answer file explicitly
+  // calls itself an Answer Key. This must never reinterpret descriptive Q1(a)
+  // / Q2(b) solution headings as MCQ keys.
+  const answerKeyHeading = /(?:MCQ|OBJECTIVE|MULTIPLE\s+CHOICE)?\s*ANSWER\s+KEY\b/i
+    .exec(suggestedAnswersText.slice(0, 1500));
+  const questionPaperAnchoredAnswerKey = !hasSuggestedMcqSection &&
+    questionPaperHasObjectiveSection &&
+    Boolean(answerKeyHeading);
+  if (!hasSuggestedMcqSection && !questionPaperAnchoredAnswerKey) return result;
+
+  // A compact key may be embedded in a larger TXT Suggested Answers document.
+  // Restrict this fallback to the text after its explicit ANSWER KEY heading and
+  // stop before Division B / descriptive solutions. Otherwise a later heading
+  // such as "1. (a)" in a descriptive answer could overwrite MCQ 1's key.
+  let compactAnswerKeyText = '';
+  if (questionPaperAnchoredAnswerKey && answerKeyHeading) {
+    const afterAnswerKeyHeading = suggestedAnswersText.slice(
+      answerKeyHeading.index + answerKeyHeading[0].length,
+    );
+    const descriptiveStart = /(?:^|\r?\n)\s*(?:DIVISION\s+B\b|SECTION\s+B\b|DESCRIPTIVE\s+(?:ANSWERS?|QUESTIONS?)\b|(?:QUESTION|Q\.?)\s*\d{1,2}\s*\(\s*[a-z0-9]+\s*\))/i
+      .exec(afterAnswerKeyHeading);
+    compactAnswerKeyText = (descriptiveStart
+      ? afterAnswerKeyHeading.slice(0, descriptiveStart.index)
+      : afterAnswerKeyHeading).trim();
+    if (!compactAnswerKeyText) return result;
+  }
 
   const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
   const blocks: string[] = [];
   let blockMatch: RegExpExecArray | null;
   while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) blocks.push(blockMatch[0]);
-  const searchTexts = blocks.length > 0 ? blocks : [suggestedAnswersText];
+  const searchTexts = blocks.length > 0
+    ? blocks
+    : [questionPaperAnchoredAnswerKey ? compactAnswerKeyText : suggestedAnswersText];
   // ICAI answer keys sometimes group four MCQs inside each numbered question:
   // 1. (i) (a), then (ii) (d), (iii) (c), (iv) (c), followed by 4. (b).
   // Student answer sheets number these sequentially, so Q1(iv) is MCQ 4.
@@ -422,6 +457,7 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
   const parsedBlocks = searchTexts.map(parseBlock);
   if (parsedBlocks.some((block) => block.hasNestedGroups)) {
     const flattened = parsedBlocks.flatMap((block) => block.entries);
+    if (questionPaperAnchoredAnswerKey && flattened.length < 3) return result;
     flattened.forEach((entry, index) => {
       const qNum = String(index + 1);
       const explanation = entry.explanation || ('Suggested answer for ' + entry.sourceLabel + ': option (' + entry.key + ').');
@@ -454,6 +490,10 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(suggestedAnswersText?
         sourceQuestionLabel: `Question ${qNum}`,
       });
     }
+  }
+  if (questionPaperAnchoredAnswerKey && result.size < 3) {
+    // A short/ambiguous list is not enough to establish an objective key.
+    return new Map();
   }
   return result;
 }
@@ -1033,6 +1073,28 @@ function getSourceBackedMcqMaximumMarks(
 
   // Source-backed rules can define a uniform allocation for all MCQs.
   const combined = sources.join('\n');
+  // Plain "Each question carries 2 marks" is safe only inside the
+  // authoritative objective block; the same wording in Division B must not
+  // become an MCQ allocation.
+  const objectiveUniformRules = [
+    /\b(?:each|every)\s+(?:(?:MCQ|multiple[- ]choice|objective)\s+)?question\s+(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
+    /\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per)\s+(?:question|MCQ)\b/i,
+  ];
+  for (const source of sources) {
+    const heading = objectiveHeading.exec(source);
+    if (!heading) continue;
+    const objectiveText = source.slice(heading.index);
+    const endMatch = descriptiveHeading.exec(objectiveText.slice(heading[0].length));
+    const objectiveBlock = endMatch
+      ? objectiveText.slice(0, heading[0].length + endMatch.index)
+      : objectiveText;
+    for (const rule of objectiveUniformRules) {
+      const match = objectiveBlock.match(rule);
+      const marks = match ? Number(match[1]) : 0;
+      if (Number.isFinite(marks) && marks > 0) return marks;
+    }
+  }
+
   const sharedRules = [
     /\b(?:each|every)\s+(?:MCQs?|multiple[- ]choice|objective)\s*(?:(?:question|item)s?\s*)?(?:carries?|carry|is\s+(?:worth|of))\s+([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\b/i,
     /\b(?:MCQ|multiple[- ]choice|objective)\s+(?:question|item)s?\b[^\n.]{0,60}\b([0-9]+(?:\.[0-9]+)?)\s*(?:Marks?|M)\s*(?:each|per\s+question)\b/i,
@@ -1167,7 +1229,10 @@ function auditSourceMarkAllocations(options: {
   compareAllocations(questionPaperAllocations, suggestedAnswerAllocations, 'Question Paper', 'Suggested Answers');
   compareAllocations(markingSchemeAllocations, suggestedAnswerAllocations, 'Marking Scheme', 'Suggested Answers');
 
-  const mcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const mcqKeys = extractOfficialMcqKeysFromSuggestedAnswers(
+    options.suggestedAnswersText,
+    options.questionPaperText,
+  );
   for (const questionNumber of mcqKeys.keys()) {
     const questionPaperMarks = getSourceBackedMcqMaximumMarks(questionNumber, {
       questionPaperText: options.questionPaperText,
@@ -1275,7 +1340,10 @@ function buildGenericPaperStructure(options: {
   }
 
   // Check if any MCQs are in the suggested answers
-  const parsedMcqs = extractOfficialMcqKeysFromSuggestedAnswers(options.suggestedAnswersText);
+  const parsedMcqs = extractOfficialMcqKeysFromSuggestedAnswers(
+    options.suggestedAnswersText,
+    options.questionPaperText,
+  );
   const mcqs: PaperStructureSubQuestion[] = [];
   for (const [qNum, data] of parsedMcqs.entries()) {
     mcqs.push({
