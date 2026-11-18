@@ -75,18 +75,17 @@ export function ensureInstituteStarterTrial(params: {
 
   const noPaidPlanValues = ['', 'NONE', 'NO_PLAN', 'PENDING_SELECTION', 'FREE', 'TRIAL_EXPIRED'];
   const admin = db.prepare(`
-    SELECT id, email, role, status, email_verified FROM users WHERE id = ? LIMIT 1
+    SELECT id, email, role, status FROM users WHERE id = ? LIMIT 1
   `).get(adminUserId) as any;
   if (
     !admin ||
     String(admin.email || '').trim().toLowerCase() !== adminEmail ||
     !['INSTITUTE_ADMIN', 'INSTITUTE'].includes(String(admin.role || '').trim().toUpperCase()) ||
     String(admin.status || '').trim().toUpperCase() !== 'ACTIVE' ||
-    Number(admin.email_verified || 0) !== 1
-  ) return { granted: false, reason: 'VERIFIED_ACTIVE_INSTITUTE_ADMIN_REQUIRED' };
+  ) return { granted: false, reason: 'ACTIVE_INSTITUTE_ADMIN_REQUIRED' };
 
-  const institute = db.prepare('SELECT id, status, subscription_plan FROM institutes WHERE id = ?').get(instituteId) as any;
-  if (!institute || String(institute.status || '').trim().toUpperCase() !== 'ACTIVE') {
+  const institute = db.prepare('SELECT id, email, status, subscription_plan FROM institutes WHERE id = ?').get(instituteId) as any;
+  if (!institute || String(institute.status || '').trim().toUpperCase() !== 'ACTIVE' || String(institute.email || '').trim().toLowerCase() !== adminEmail) {
     return { granted: false, reason: 'ACTIVE_INSTITUTE_REQUIRED' };
   }
   if (!noPaidPlanValues.includes(String(institute.subscription_plan || '').trim().toUpperCase())) {
@@ -112,8 +111,8 @@ export function ensureInstituteStarterTrial(params: {
     db.exec('BEGIN IMMEDIATE;');
     transactionStarted = true;
 
-    const lockedInstitute = db.prepare('SELECT id, status, subscription_plan FROM institutes WHERE id = ?').get(instituteId) as any;
-    const lockedAdmin = db.prepare('SELECT id, email, role, status, email_verified FROM users WHERE id = ?').get(adminUserId) as any;
+    const lockedInstitute = db.prepare('SELECT id, email, status, subscription_plan FROM institutes WHERE id = ?').get(instituteId) as any;
+    const lockedAdmin = db.prepare('SELECT id, email, role, status FROM users WHERE id = ?').get(adminUserId) as any;
     const claimExists = db.prepare(`
       SELECT id FROM institute_trial_claims
       WHERE admin_user_id = ? OR lower(admin_email) = ? OR institute_id = ? LIMIT 1
@@ -124,9 +123,9 @@ export function ensureInstituteStarterTrial(params: {
       !lockedInstitute ||
       String(lockedInstitute.status || '').toUpperCase() !== 'ACTIVE' ||
       !lockedAdmin ||
-      Number(lockedAdmin.email_verified || 0) !== 1 ||
       String(lockedAdmin.status || '').toUpperCase() !== 'ACTIVE' ||
       String(lockedAdmin.email || '').trim().toLowerCase() !== adminEmail ||
+      String(lockedInstitute.email || '').trim().toLowerCase() !== adminEmail ||
       !['INSTITUTE_ADMIN', 'INSTITUTE'].includes(String(lockedAdmin.role || '').trim().toUpperCase()) ||
       claimExists ||
       subscriptionExists ||
