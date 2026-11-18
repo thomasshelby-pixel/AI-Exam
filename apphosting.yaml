@@ -38,3 +38,13 @@ env:
     value: https://caexamcheckerai.com
     availability:
       - RUNTIME
+  # Temporary account-scoped MFA exception for the institute test account only.
+  # The backend additionally requires role=INSTITUTE_ADMIN and status=ACTIVE.
+  - variable: ENABLE_TEST_ACCOUNT_MFA_BYPASS
+    value: "true"
+    availability:
+      - RUNTIME
+  - variable: MFA_TEST_BYPASS_EMAIL
+    value: test@gmail.com
+    availability:
+      - RUNTIME
