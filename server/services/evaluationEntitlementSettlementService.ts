@@ -70,7 +70,13 @@ export async function settlePersonalEntitlementForSuccessfulEvaluation(params: {
   // itself is atomic and evaluation-ID idempotent; it selects the currently
   // applicable promo/free/purchased entitlement in the established priority.
   const consumed = consumeEvaluationEntitlementAtomic({ userId, evaluationId });
-  await syncStudentCreditsToFirestore(userId);
+  // Local ledger mutation is authoritative. A mirror outage must not turn a
+  // successful debit into a failed worker run after the charge was committed.
+  try {
+    await syncStudentCreditsToFirestore(userId);
+  } catch (syncError) {
+    console.warn('[EvaluationEntitlementSettlement] Credit mirror sync failed after local settlement:', syncError);
+  }
 
   return {
     charged: true,
