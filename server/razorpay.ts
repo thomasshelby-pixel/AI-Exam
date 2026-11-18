@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { recordCreditPurchase } from './services/studentCreditService.js';
 import { safeTimingCompare } from './utils/cryptoSecurity.js';
 import { grantFacultyMockPaidCopy } from './services/facultyMockEntitlementService.js';
+import { syncRecordToFirestore } from './services/firestoreSyncService.js';
 
 function getCleanEnv(name: string): string {
   const val = process.env[name] || '';
@@ -952,6 +953,29 @@ export function verifyInstituteSubscriptionPayment(params: VerifyInstitutePaymen
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch {}
     throw error;
+  }
+
+  // Subscription mutations must survive App Hosting instance replacement.
+  // Mirror all current/history rows for this institute, including the trial row
+  // just marked EXPIRED and the newly activated paid plan.
+  const mirrorTimestamp = new Date().toISOString();
+  const subscriptionRows = db.prepare(
+    'SELECT * FROM institute_subscriptions WHERE institute_id = ?'
+  ).all(instituteId) as Array<Record<string, any>>;
+  for (const subscriptionRow of subscriptionRows) {
+    void syncRecordToFirestore('institute_subscriptions', String(subscriptionRow.id), {
+      ...subscriptionRow,
+      updated_at: mirrorTimestamp,
+      _updatedAt: mirrorTimestamp,
+    });
+  }
+  const updatedInstitute = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
+  if (updatedInstitute) {
+    void syncRecordToFirestore('institutes', instituteId, {
+      ...updatedInstitute,
+      updated_at: mirrorTimestamp,
+      _updatedAt: mirrorTimestamp,
+    });
   }
 
   return {

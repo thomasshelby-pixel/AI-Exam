@@ -1,0 +1,216 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { db, initDatabase } from '../db.js';
+import {
+  ensureInstituteStarterTrial,
+  getActiveInstituteSubscription,
+  reserveInstituteEvaluationCredit,
+  finalizeInstituteEvaluationCredit,
+  releaseInstituteEvaluationCredit,
+  withInstituteStudentSeatReservation,
+  INSTITUTE_FREE_TRIAL_DAYS,
+  INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY,
+  INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS,
+} from '../services/instituteTrialService.js';
+
+initDatabase();
+
+function createInstituteAdmin() {
+  const id = `usr_institute_trial_${crypto.randomBytes(6).toString('hex')}`;
+  const email = `${id}@example.com`;
+  db.prepare(`
+    INSERT INTO users (id, email, password_hash, full_name, role, status)
+    VALUES (?, ?, 'hash', 'Institute Trial Test Admin', 'INSTITUTE_ADMIN', 'ACTIVE')
+  `).run(id, email);
+  // Institute signup/login currently does not set the general email_verified flag.
+  return { id, email };
+}
+
+function createInstitute(adminEmail: string) {
+  const id = `inst_trial_${crypto.randomBytes(6).toString('hex')}`;
+  db.prepare(`
+    INSERT INTO institutes (
+      id, name, code, email, phone, contact_person, status, subscription_plan, max_students
+    ) VALUES (?, 'Starter Trial Test Institute', ?, ?, '9999999999', 'Trial Admin', 'ACTIVE', 'NONE', 50)
+  `).run(id, `TRIAL-${crypto.randomBytes(3).toString('hex').toUpperCase()}`, adminEmail);
+  return id;
+}
+
+async function run() {
+  const admin = createInstituteAdmin();
+  const instituteId = createInstitute(admin.email);
+  let pendingStudentId = '';
+
+  try {
+    const granted = ensureInstituteStarterTrial({
+      instituteId,
+      adminUserId: admin.id,
+      adminEmail: admin.email,
+    });
+    assert.equal(granted.granted, true);
+    assert.ok(granted.subscriptionId);
+    assert.ok(granted.expiresAt);
+
+    const active = getActiveInstituteSubscription(instituteId);
+    assert.ok(active);
+    assert.equal(active.plan_id, 'FREE_STARTER_TRIAL_V1');
+    assert.equal(active.plan_name, 'Free Starter Trial');
+    assert.equal(active.billing_cycle, 'TRIAL');
+    assert.equal(Number(active.price_inr), 0);
+    assert.equal(Number(active.student_capacity), INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY);
+    assert.equal(Number(active.evaluation_allowance), INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS);
+    assert.equal(Number(active.evaluations_used), 0);
+    assert.equal(Number(active.evaluations_remaining), 50);
+
+    const trialDays = (Date.parse(active.expiry_date) - Date.parse(active.start_date)) / (24 * 60 * 60 * 1000);
+    assert.ok(Math.abs(trialDays - INSTITUTE_FREE_TRIAL_DAYS) < 0.01);
+
+    const secondAttempt = ensureInstituteStarterTrial({
+      instituteId,
+      adminUserId: admin.id,
+      adminEmail: admin.email,
+    });
+    assert.equal(secondAttempt.granted, false);
+    assert.equal(getActiveInstituteSubscription(instituteId)?.id, active.id);
+
+    // The seat guard counts active students and pending invitations in one
+    // write transaction, so simultaneous requests cannot oversubscribe seats.
+    const activeMembershipId = `mem_trial_active_${crypto.randomBytes(5).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+      VALUES (?, ?, ?, NULL, 'ACTIVE', ?, 'Seat Test Student', CURRENT_TIMESTAMP)
+    `).run(activeMembershipId, instituteId, admin.id, admin.email);
+    pendingStudentId = `usr_trial_pending_student_${crypto.randomBytes(5).toString('hex')}`;
+    const pendingStudentEmail = `${pendingStudentId}@example.com`;
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, full_name, role, status)
+      VALUES (?, ?, 'hash', 'Pending Seat Student', 'STUDENT', 'ACTIVE')
+    `).run(pendingStudentId, pendingStudentEmail);
+    let pendingMembershipId = '';
+    for (let i = 0; i < 49; i++) {
+      const membershipId = `mem_trial_pending_${i}_${crypto.randomBytes(3).toString('hex')}`;
+      if (i === 0) pendingMembershipId = membershipId;
+      db.prepare(`
+        INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+        VALUES (?, ?, ?, NULL, 'PENDING', ?, 'Pending Seat Test', CURRENT_TIMESTAMP)
+      `).run(
+        membershipId,
+        instituteId,
+        i === 0 ? pendingStudentId : null,
+        i === 0 ? pendingStudentEmail : `pending-${i}-${admin.id}@example.com`
+      );
+    }
+    assert.equal(
+      Number((db.prepare(`
+        SELECT COUNT(*) AS count FROM institute_memberships
+        WHERE institute_id = ? AND status IN ('ACTIVE', 'PENDING')
+      `).get(instituteId) as any).count),
+      50
+    );
+    // An existing pending invitation already owns a seat; completing its signup
+    // must be allowed at capacity without increasing occupied seats.
+    withInstituteStudentSeatReservation(instituteId, () => {
+      db.prepare("UPDATE institute_memberships SET status = 'ACTIVE' WHERE id = ?").run(pendingMembershipId);
+    }, pendingMembershipId);
+    assert.equal(
+      Number((db.prepare(`
+        SELECT COUNT(*) AS count FROM institute_memberships
+        WHERE institute_id = ? AND status IN ('ACTIVE', 'PENDING')
+      `).get(instituteId) as any).count),
+      50
+    );
+    assert.throws(
+      () => withInstituteStudentSeatReservation(instituteId, () => {
+        db.prepare(`
+          INSERT INTO institute_memberships (id, institute_id, student_id, batch_id, status, invited_email, student_name, joined_at)
+          VALUES (?, ?, NULL, NULL, 'PENDING', ?, 'Over Limit', CURRENT_TIMESTAMP)
+        `).run(`mem_trial_overflow_${crypto.randomBytes(4).toString('hex')}`, `overflow-${admin.id}@example.com`);
+      }),
+      /INSTITUTE_STUDENT_QUOTA_EXCEEDED/
+    );
+    db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(instituteId);
+
+    const studentId = admin.id;
+    const evaluationIds = Array.from({ length: 50 }, (_, i) => `eval_trial_${i + 1}_${crypto.randomBytes(3).toString('hex')}`);
+
+    for (const evaluationId of evaluationIds) {
+      const reservation = reserveInstituteEvaluationCredit({
+        instituteId,
+        studentId,
+        evaluationId,
+      });
+      assert.equal(reservation.alreadyReserved, false);
+      assert.equal(reservation.alreadyConsumed, false);
+    }
+
+    const exhausted = getActiveInstituteSubscription(instituteId);
+    assert.ok(exhausted);
+    assert.equal(Number(exhausted.evaluations_used), 50);
+    assert.equal(Number(exhausted.evaluations_remaining), 0);
+
+    assert.throws(
+      () => reserveInstituteEvaluationCredit({
+        instituteId,
+        studentId,
+        evaluationId: `eval_trial_over_limit_${crypto.randomBytes(4).toString('hex')}`,
+      }),
+      /INSTITUTE_EVALUATION_QUOTA_EXHAUSTED/,
+    );
+
+    // Duplicate reservation for the same evaluation must not deduct twice.
+    const duplicate = reserveInstituteEvaluationCredit({
+      instituteId,
+      studentId,
+      evaluationId: evaluationIds[0],
+    });
+    assert.equal(duplicate.alreadyReserved, true);
+    assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_remaining), 0);
+
+    // Successful completion finalises the reservation; repeated completion is idempotent.
+    finalizeInstituteEvaluationCredit({ instituteId, studentId, evaluationId: evaluationIds[0] });
+    finalizeInstituteEvaluationCredit({ instituteId, studentId, evaluationId: evaluationIds[0] });
+    const consumedRow = db.prepare(
+      'SELECT action_type FROM institute_usage_ledger WHERE idempotency_key = ?'
+    ).get(`inst_eval_${evaluationIds[0]}`) as any;
+    assert.equal(consumedRow.action_type, 'CONSUMED');
+    assert.equal(releaseInstituteEvaluationCredit({
+      evaluationId: evaluationIds[0],
+      reason: 'Already completed',
+    }), false);
+
+    // Needs-review / failed run releases one pending reservation; a real retry can reserve it again.
+    assert.equal(releaseInstituteEvaluationCredit({
+      evaluationId: evaluationIds[1],
+      reason: 'Needs review',
+    }), true);
+    assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_remaining), 1);
+    assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_used), 49);
+
+    // A queue job accepted immediately before the reservation rollout may
+    // reach finalization without a reservation row. It must still charge once.
+    const legacyQueuedEvaluationId = `eval_trial_legacy_queued_${crypto.randomBytes(4).toString('hex')}`;
+    finalizeInstituteEvaluationCredit({ instituteId, studentId, evaluationId: legacyQueuedEvaluationId });
+    assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_remaining), 0);
+    assert.equal(Number(getActiveInstituteSubscription(instituteId)?.evaluations_used), 50);
+    const legacyConsumedRow = db.prepare(
+      'SELECT action_type FROM institute_usage_ledger WHERE idempotency_key = ?'
+    ).get(`inst_eval_${legacyQueuedEvaluationId}`) as any;
+    assert.equal(legacyConsumedRow.action_type, 'CONSUMED');
+
+    console.log('✅ Institute starter trial and shared quota tests passed.');
+  } finally {
+    db.prepare('DELETE FROM institute_usage_ledger WHERE institute_id = ?').run(instituteId);
+    db.prepare('DELETE FROM institute_trial_claims WHERE institute_id = ?').run(instituteId);
+    db.prepare('DELETE FROM institute_subscriptions WHERE institute_id = ?').run(instituteId);
+    db.prepare('DELETE FROM institute_memberships WHERE institute_id = ?').run(instituteId);
+    db.prepare('DELETE FROM institutes WHERE id = ?').run(instituteId);
+    db.prepare('DELETE FROM student_profiles WHERE user_id = ?').run(admin.id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(pendingStudentId);
+    db.prepare('DELETE FROM users WHERE id = ?').run(admin.id);
+  }
+}
+
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

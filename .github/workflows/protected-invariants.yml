@@ -244,6 +244,9 @@ jobs:
       - name: Successful evaluation entitlement settlement regression
         run: node_modules/.bin/tsx server/tests/evaluationEntitlementSettlement.test.ts
 
+      - name: Institute starter trial and shared evaluation quota regression
+        run: node_modules/.bin/tsx server/tests/instituteTrialService.test.ts
+
       - name: Admin NEEDS_REVIEW reprocess preflight regression
         run: node_modules/.bin/tsx server/tests/adminNeedsReviewReprocess.test.ts
 

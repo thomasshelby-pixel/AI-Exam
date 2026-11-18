@@ -16,6 +16,10 @@ import {
   syncStudentCreditsToFirestore,
 } from './studentCreditService.js';
 import { settlePersonalEntitlementForSuccessfulEvaluation } from './evaluationEntitlementSettlementService.js';
+import {
+  finalizeInstituteEvaluationCredit,
+  releaseInstituteEvaluationCredit,
+} from './instituteTrialService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
 import { getFirestoreDoc, queryFirestoreDocs, runFirestoreTransaction } from './firestoreDbService.js';
@@ -1708,6 +1712,15 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     }
 
     if (finalStatus !== 'COMPLETED') {
+      // A review-required result does not consume institute quota. Release the
+      // acceptance-time reservation so a corrected retry can use the same credit.
+      if (entitlementSource === 'INSTITUTE_ALLOCATION') {
+        releaseInstituteEvaluationCredit({
+          evaluationId,
+          reason: 'Evaluation requires review; institute credit returned.',
+        });
+      }
+
       // The personal entitlement was charged when the upload was accepted.
       // Return it when the system could not produce a verified final result.
       if (
@@ -1745,54 +1758,24 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
       return;
     }
 
-    // Stage 7: Institute-sponsored usage. Personal entitlements are settled
-    // before the COMPLETED status is committed (see the completion settlement
-    // immediately before finalizationUpdate).
-    // Institute-sponsored usage is kept separate from personal entitlements.
+    // Stage 7: Finalise the institute credit reserved at upload acceptance.
+    // The shared ledger is idempotent; this does not create a second deduction.
     if (entitlementSource === 'INSTITUTE_ALLOCATION' && resolvedSponsoringInstituteId) {
-      const idempotencyKey = `inst_eval_${evaluationId}`;
-      const existingLedger = db.prepare('SELECT id FROM institute_usage_ledger WHERE idempotency_key = ?').get(idempotencyKey);
-      if (!existingLedger) {
-        db.prepare(`
-          UPDATE institute_subscriptions
-          SET evaluations_used = evaluations_used + 1,
-              evaluations_remaining = MAX(0, evaluations_remaining - 1)
-          WHERE institute_id = ? AND status = 'ACTIVE'
-        `).run(resolvedSponsoringInstituteId);
-
-        db.prepare(`
-          INSERT INTO institute_usage_ledger (
-            id, institute_id, student_id, evaluation_id, usage_type,
-            evaluations_deducted, description, idempotency_key
-          ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-        `).run(
-          `usg_${crypto.randomBytes(8).toString('hex')}`,
-          resolvedSponsoringInstituteId,
-          studentId,
-          evaluationId,
-          requestedEvalSource === 'PUBLIC' ? 'STUDENT_PUBLIC_EVALUATION' : 'STUDENT_EVALUATION',
-          `Sponsored ${requestedEvalSource} Evaluation (${subjectName}) for student`,
-          idempotencyKey
-        );
-
-        db.prepare(`
-          UPDATE evaluations
-          SET consumed_from_institute_allocation = 1,
-              consumed_from_personal_credits = 0
-          WHERE id = ?
-        `).run(evaluationId);
-
-        db.prepare(`
-          INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
-          VALUES (?, ?, ?, 'EVALUATION', ?, ?)
-        `).run(
-          `aud_${crypto.randomBytes(8).toString('hex')}`,
-          studentId,
-          requestedEvalSource === 'PUBLIC' ? 'EVALUATION_PUBLIC_INSTITUTE_SPONSORED' : 'EVALUATION_INSTITUTE_SPONSORED',
-          evaluationId,
-          `1 evaluation credit deducted from sponsoring institute (${resolvedInstituteName || resolvedSponsoringInstituteId}). Personal credits untouched.`
-        );
-      }
+      finalizeInstituteEvaluationCredit({
+        instituteId: resolvedSponsoringInstituteId,
+        studentId,
+        evaluationId,
+      });
+      db.prepare(`
+        INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details)
+        VALUES (?, ?, ?, 'EVALUATION', ?, ?)
+      `).run(
+        `aud_${crypto.randomBytes(8).toString('hex')}`,
+        studentId,
+        requestedEvalSource === 'PUBLIC' ? 'EVALUATION_PUBLIC_INSTITUTE_SPONSORED' : 'EVALUATION_INSTITUTE_SPONSORED',
+        evaluationId,
+        `One shared institute evaluation credit consumed from ${resolvedInstituteName || resolvedSponsoringInstituteId}. Personal credits untouched.`
+      );
     }
     // Stage 8: Student Notification
     try {
@@ -1826,6 +1809,12 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     const errMsg = error instanceof Error ? error.message : 'Evaluation processing encountered an unexpected issue.';
     const currentStatus = getEvaluationStatus(evaluationId);
     if (isTerminalEvaluationStatus(currentStatus)) {
+      if (currentStatus !== 'COMPLETED' && entitlementSource === 'INSTITUTE_ALLOCATION') {
+        releaseInstituteEvaluationCredit({
+          evaluationId,
+          reason: `Evaluation ended in ${currentStatus}; institute credit returned.`,
+        });
+      }
       // Preserve the terminal evaluation state, but reconcile any entitlement
       // left debited by an earlier/competing failure path. The credit ledger makes
       // this safe to call repeatedly and refuses refunds without a matching debit.
@@ -1866,6 +1855,12 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     if (failureUpdate.changes !== 1) {
       const latestStatus = getEvaluationStatus(evaluationId);
       if (isTerminalEvaluationStatus(latestStatus)) {
+        if (latestStatus !== 'COMPLETED' && entitlementSource === 'INSTITUTE_ALLOCATION') {
+          releaseInstituteEvaluationCredit({
+            evaluationId,
+            reason: `Concurrent finalisation preserved ${latestStatus}; institute credit returned.`,
+          });
+        }
         if (
           latestStatus !== 'COMPLETED' &&
           (successfulSettlementDebited || !job.isRecoveryRetry) &&
@@ -1895,6 +1890,13 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     }
 
     await releaseFacultyMockCopyAccessForFailedEvaluation(evaluationId);
+
+    if (entitlementSource === 'INSTITUTE_ALLOCATION') {
+      releaseInstituteEvaluationCredit({
+        evaluationId,
+        reason: errMsg,
+      });
+    }
 
     // Refund only after successfully recording this job's FAILED transition.
     if ((successfulSettlementDebited || (job.creditAlreadyConsumed && !job.isRecoveryRetry)) && (entitlementSource === 'PROMO' || entitlementSource === 'PERSONAL_FREE' || entitlementSource === 'PERSONAL_PURCHASED_CREDIT')) {

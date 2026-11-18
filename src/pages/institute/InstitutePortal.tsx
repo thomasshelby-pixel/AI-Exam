@@ -2696,7 +2696,9 @@ export const InstitutePortal: React.FC = () => {
               </div>
 
               <div className="p-2.5 rounded bg-indigo-50/60 border border-indigo-100 text-[11px] text-indigo-900">
-                Each enrolled student receives 100% sponsored, unlimited evaluations under your institute's active subscription.
+                {subscriptionData?.isTrial
+                  ? 'Free Starter Trial: enrol up to 50 students and use 50 shared evaluation credits total across the institute. The credits are one-time and do not reset monthly; trial validity is 30 days.'
+                  : 'Student enrolment and sponsored answer-sheet checking are subject to your active institute plan’s available seat and evaluation-credit allowances.'}
               </div>
 
               <div className="flex gap-2 justify-end pt-2">

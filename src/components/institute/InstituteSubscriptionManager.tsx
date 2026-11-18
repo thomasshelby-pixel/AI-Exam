@@ -66,13 +66,24 @@ interface SubscriptionData {
     activeStudents: number;
     maxStudents: number;
     remainingSeats: number;
-    monthlyEvaluationsUsed: number;
-    maxEvaluationsPerMonth: number;
+    monthlyEvaluationsUsed?: number;
+    maxEvaluationsPerMonth?: number;
+    pendingInvitations?: number;
+    occupiedSeats?: number;
+    evaluationsUsed?: number;
+    evaluationAllowance?: number;
+    evaluationsRemaining?: number;
   };
   availablePlans?: PlanItem[];
   activeSubscription?: any;
   plan?: string;
   status?: string;
+  isTrial?: boolean;
+  evaluationAllowance?: number;
+  evaluationsUsed?: number;
+  evaluationsRemaining?: number;
+  pendingInvitations?: number;
+  occupiedSeats?: number;
   activeStudents?: number;
   maxStudents?: number;
   remainingSeats?: number;
@@ -98,14 +109,22 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
     activeStudents: data.activeStudents || 0,
     maxStudents: data.maxStudents || 100,
     remainingSeats: data.remainingSeats || 0,
-    monthlyEvaluationsUsed: 0,
-    maxEvaluationsPerMonth: 500,
+    pendingInvitations: data.pendingInvitations || 0,
+    occupiedSeats: data.occupiedSeats ?? data.activeStudents ?? 0,
+    evaluationsUsed: data.evaluationsUsed || 0,
+    evaluationAllowance: data.evaluationAllowance || 50,
+    evaluationsRemaining: data.evaluationsRemaining || 0,
   };
+  const occupiedSeats = usage.occupiedSeats ?? (usage.activeStudents + (usage.pendingInvitations || 0));
+  const evaluationsUsed = usage.evaluationsUsed ?? usage.monthlyEvaluationsUsed ?? 0;
+  const evaluationAllowance = usage.evaluationAllowance ?? usage.maxEvaluationsPerMonth ?? 0;
+  const evaluationsRemaining = usage.evaluationsRemaining ?? Math.max(0, evaluationAllowance - evaluationsUsed);
+  const hasTrackedEvaluationAllowance = evaluationAllowance > 0;
 
-  const studentPercent = Math.min(100, Math.round((usage.activeStudents / Math.max(1, usage.maxStudents)) * 100));
+  const studentPercent = Math.min(100, Math.round((occupiedSeats / Math.max(1, usage.maxStudents)) * 100));
   const evalPercent = Math.min(
     100,
-    Math.round((usage.monthlyEvaluationsUsed / Math.max(1, usage.maxEvaluationsPerMonth)) * 100)
+    Math.round((evaluationsUsed / Math.max(1, evaluationAllowance)) * 100)
   );
 
   const handleSubscribe = async (plan: PlanItem) => {
@@ -209,14 +228,19 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                 {data.currentPlan?.name || data.plan || 'Standard Partner'}
               </span>
+              {data.isTrial && (
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  FREE TRIAL
+                </span>
+              )}
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 {data.status || 'ACTIVE'}
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Active license expires on:{' '}
+              {data.isTrial ? 'One-time 30-day starter trial expires on:' : 'Active license expires on:'}{' '}
               <span className="font-semibold text-slate-700">
-                {data.expiresAt ? formatDateIST(data.expiresAt) : 'Annual Continuous Partner'}
+                {data.expiresAt ? formatDateIST(data.expiresAt) : 'No expiry recorded'}
               </span>
             </p>
           </div>
@@ -230,6 +254,16 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
           </button>
         </div>
 
+        {data.isTrial && (
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-xs text-emerald-900">
+            <p className="font-bold">Your one-time free institute trial is active</p>
+            <p className="mt-1">
+              Enrol up to 50 students and use 50 shared answer-sheet evaluation credits during the 30-day trial.
+              The 50 evaluation credits are shared by all enrolled students and do not reset monthly.
+            </p>
+          </div>
+        )}
+
         {/* Quota Meters */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
@@ -238,7 +272,7 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
                 <Users className="w-4 h-4 text-blue-600" /> Student Seat Quota
               </span>
               <span className="font-mono font-bold text-slate-900">
-                {usage.activeStudents} / {usage.maxStudents} ({studentPercent}%)
+                {occupiedSeats} / {usage.maxStudents} ({studentPercent}%)
               </span>
             </div>
             <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
@@ -251,6 +285,7 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
             </div>
             <div className="flex justify-between text-[11px] text-slate-500 pt-1">
               <span>Remaining Seats: {usage.remainingSeats}</span>
+              {(usage.pendingInvitations || 0) > 0 && <span>{usage.pendingInvitations} pending invitation(s)</span>}
               {studentPercent > 80 && <span className="text-amber-600 font-semibold">Seat capacity nearing limit</span>}
             </div>
           </div>
@@ -258,10 +293,10 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2">
             <div className="flex justify-between text-xs">
               <span className="text-slate-600 font-medium flex items-center gap-1.5">
-                <Zap className="w-4 h-4 text-emerald-600" /> Monthly Evaluation Quota
+                <Zap className="w-4 h-4 text-emerald-600" /> {data.isTrial ? 'Shared Trial Evaluation Credits' : hasTrackedEvaluationAllowance ? 'Evaluation Credit Allowance' : 'Legacy Plan Evaluation Access'}
               </span>
               <span className="font-mono font-bold text-slate-900">
-                {usage.monthlyEvaluationsUsed} / {usage.maxEvaluationsPerMonth} ({evalPercent}%)
+                {hasTrackedEvaluationAllowance ? `${evaluationsUsed} / ${evaluationAllowance} (${evalPercent}%)` : 'Legacy plan'}
               </span>
             </div>
             <div className="w-full h-2.5 rounded-full bg-slate-200 overflow-hidden">
@@ -273,8 +308,12 @@ export const InstituteSubscriptionManager: React.FC<InstituteSubscriptionManager
               />
             </div>
             <div className="flex justify-between text-[11px] text-slate-500 pt-1">
-              <span>Auto-renews monthly</span>
-              <span>ICAI Exam Pattern Checked Copy</span>
+              <span>
+                {hasTrackedEvaluationAllowance
+                  ? `${evaluationsRemaining} evaluation credit(s) remaining`
+                  : 'Usage is managed under your existing institute plan'}
+              </span>
+              <span>{data.isTrial ? 'One-time shared allowance' : 'Plan allowance'} • ICAI Checked Copy</span>
             </div>
           </div>
         </div>
