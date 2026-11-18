@@ -372,18 +372,37 @@ export function extractOfficialMcqKeysFromSuggestedAnswers(
   // independently proves an objective section AND the answer file explicitly
   // calls itself an Answer Key. This must never reinterpret descriptive Q1(a)
   // / Q2(b) solution headings as MCQ keys.
-  const hasExplicitAnswerKeyHeading = /(?:MCQ|OBJECTIVE|MULTIPLE\s+CHOICE)?\s*ANSWER\s+KEY\b/i
-    .test(suggestedAnswersText.slice(0, 1500));
+  const answerKeyHeading = /(?:MCQ|OBJECTIVE|MULTIPLE\s+CHOICE)?\s*ANSWER\s+KEY\b/i
+    .exec(suggestedAnswersText.slice(0, 1500));
   const questionPaperAnchoredAnswerKey = !hasSuggestedMcqSection &&
     questionPaperHasObjectiveSection &&
-    hasExplicitAnswerKeyHeading;
+    Boolean(answerKeyHeading);
   if (!hasSuggestedMcqSection && !questionPaperAnchoredAnswerKey) return result;
+
+  // A compact key may be embedded in a larger TXT Suggested Answers document.
+  // Restrict this fallback to the text after its explicit ANSWER KEY heading and
+  // stop before Division B / descriptive solutions. Otherwise a later heading
+  // such as "1. (a)" in a descriptive answer could overwrite MCQ 1's key.
+  let compactAnswerKeyText = '';
+  if (questionPaperAnchoredAnswerKey && answerKeyHeading) {
+    const afterAnswerKeyHeading = suggestedAnswersText.slice(
+      answerKeyHeading.index + answerKeyHeading[0].length,
+    );
+    const descriptiveStart = /(?:^|\r?\n)\s*(?:DIVISION\s+B\b|SECTION\s+B\b|DESCRIPTIVE\s+(?:ANSWERS?|QUESTIONS?)\b|(?:QUESTION|Q\.?)\s*\d{1,2}\s*\(\s*[a-z0-9]+\s*\))/i
+      .exec(afterAnswerKeyHeading);
+    compactAnswerKeyText = (descriptiveStart
+      ? afterAnswerKeyHeading.slice(0, descriptiveStart.index)
+      : afterAnswerKeyHeading).trim();
+    if (!compactAnswerKeyText) return result;
+  }
 
   const divARegex = /(?:Division\s*A\b|Multiple\s*Choice\s*Questions\b|Objective(?:\s*Type)?\s*Questions\b)[\s\S]*?(?=(?:Division\s*B\b|Section\s*B\b|Descriptive\s*Questions\b|$))/gi;
   const blocks: string[] = [];
   let blockMatch: RegExpExecArray | null;
   while ((blockMatch = divARegex.exec(suggestedAnswersText)) !== null) blocks.push(blockMatch[0]);
-  const searchTexts = blocks.length > 0 ? blocks : [suggestedAnswersText];
+  const searchTexts = blocks.length > 0
+    ? blocks
+    : [questionPaperAnchoredAnswerKey ? compactAnswerKeyText : suggestedAnswersText];
   // ICAI answer keys sometimes group four MCQs inside each numbered question:
   // 1. (i) (a), then (ii) (d), (iii) (c), (iv) (c), followed by 4. (b).
   // Student answer sheets number these sequentially, so Q1(iv) is MCQ 4.
