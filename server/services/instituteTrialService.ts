@@ -250,14 +250,24 @@ export function reserveInstituteEvaluationCredit(params: {
         evaluationId,
         reservedAt: new Date().toISOString(),
       });
-      const ledgerId = `usg_${crypto.randomBytes(8).toString('hex')}`;
-      db.prepare(`
-        INSERT INTO institute_usage_ledger (
-          id, institute_id, student_id, evaluation_id, units_deducted,
-          balance_before, balance_after, action_type, idempotency_key,
-          subscription_id, notes, created_at
-        ) VALUES (?, ?, ?, ?, 1, 0, 0, 'RESERVED', ?, NULL, ?, CURRENT_TIMESTAMP)
-      `).run(ledgerId, instituteId, studentId, evaluationId, idempotencyKey, notes);
+      if (existing) {
+        db.prepare(`
+          UPDATE institute_usage_ledger
+          SET institute_id = ?, student_id = ?, evaluation_id = ?, units_deducted = 1,
+              balance_before = 0, balance_after = 0, action_type = 'RESERVED',
+              subscription_id = NULL, notes = ?, created_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(instituteId, studentId, evaluationId, notes, existing.id);
+      } else {
+        const ledgerId = `usg_${crypto.randomBytes(8).toString('hex')}`;
+        db.prepare(`
+          INSERT INTO institute_usage_ledger (
+            id, institute_id, student_id, evaluation_id, units_deducted,
+            balance_before, balance_after, action_type, idempotency_key,
+            subscription_id, notes, created_at
+          ) VALUES (?, ?, ?, ?, 1, 0, 0, 'RESERVED', ?, NULL, ?, CURRENT_TIMESTAMP)
+        `).run(ledgerId, instituteId, studentId, evaluationId, idempotencyKey, notes);
+      }
       db.prepare(`
         UPDATE evaluations
         SET institute_id = COALESCE(institute_id, ?),
