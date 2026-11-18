@@ -22,13 +22,14 @@ async function run() {
     INSERT INTO users (id, email, password_hash, full_name, role, status)
     VALUES (?, ?, 'hash', 'Entitlement Settlement Test', 'STUDENT', 'ACTIVE')
   `).run(userId, email);
+  const registrationNumber = `WRO${String(crypto.randomInt(0, 10_000_000)).padStart(7, '0')}`;
   db.prepare(`
     INSERT INTO student_profiles (
       user_id, icai_registration_number, ca_level,
       free_evaluations_used, monthly_free_evaluations_used, monthly_free_evaluations_limit,
       purchased_credits, paid_credits
-    ) VALUES (?, `WRO${String(crypto.randomInt(0, 10_000_000)).padStart(7, '0')}`, 'INTERMEDIATE', 0, 0, 2, 0, 0)
-  `).run(userId);
+    ) VALUES (?, ?, 'INTERMEDIATE', 0, 0, 2, 0, 0)
+  `).run(userId, registrationNumber);
 
   try {
     // Exhaust the two monthly free evaluations first, matching production
