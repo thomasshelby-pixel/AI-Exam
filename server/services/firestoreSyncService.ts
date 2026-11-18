@@ -618,16 +618,15 @@ export function hydrateInstituteRecordFromFirestore(inst: Record<string, any>): 
 
   try {
     db.prepare(`
-      INSERT INTO institutes (id, name, code, logo_url, email, phone, address, website, contact_person, status, subscription_plan, subscription_expires_at, max_students, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      INSERT INTO institutes (id, name, code, logo_url, email, phone, address, website, contact_person, status, subscription_plan, subscription_expires_at, max_students, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         code = excluded.code,
         email = excluded.email,
         status = excluded.status,
         subscription_plan = excluded.subscription_plan,
-        max_students = excluded.max_students,
-        updated_at = CURRENT_TIMESTAMP
+        max_students = excluded.max_students
     `).run(
       id, name, code, inst.logo_url || '', email, inst.phone || '', inst.address || '',
       inst.website || '', inst.contact_person || '', inst.status || 'ACTIVE',
@@ -663,13 +662,12 @@ export function hydrateInstituteBatchRecordFromFirestore(batch: Record<string, a
 
   try {
     db.prepare(`
-      INSERT INTO batches (id, institute_id, name, course_level, description, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+      INSERT INTO batches (id, institute_id, name, course_level, description, created_at)
+      VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         course_level = excluded.course_level,
-        description = excluded.description,
-        updated_at = CURRENT_TIMESTAMP
+        description = excluded.description
     `).run(
       id, instituteId, name, batch.course_level || 'INTERMEDIATE',
       batch.description || '', batch.created_at || null
