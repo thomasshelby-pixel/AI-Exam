@@ -9,6 +9,9 @@ export const INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY = 50;
 export const INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS = 50;
 
 function mirrorInstituteRecord(collection: string, id: string, row: Record<string, any> | undefined): void {
+  // Protected regression tests use disposable SQLite fixtures and must never
+  // attempt to read/write the live shared Firestore database from CI.
+  if (process.env.CI === 'true' || process.env.NODE_ENV === 'test') return;
   if (!row || !id) return;
   const timestamp = new Date().toISOString();
   void syncRecordToFirestore(collection, id, { ...row, updated_at: timestamp, _updatedAt: timestamp });
