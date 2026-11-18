@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, requireRole, AuthRequest } from '../auth.js';
+import { recoverInstituteAccountFromFirestoreByEmail } from '../services/instituteAccountPersistenceService.js';
 import { createInstituteSubscriptionOrder, verifyInstituteSubscriptionPayment, isRazorpayConfigured, getRazorpayKeyId } from '../razorpay.js';
 import {
   ensureInstituteStarterTrial,
@@ -15,8 +16,51 @@ const router = Router();
 router.use(authenticateToken);
 router.use(requireRole('INSTITUTE_ADMIN', 'SUPER_ADMIN'));
 
+// Restore the authenticated institute's exact cloud-backed profile before any
+// institute route can auto-provision or display a local-only replacement.
+router.use(async (req: AuthRequest, res: Response, next) => {
+  const user = req.user;
+  const role = String(user?.role || '').toUpperCase();
+  if (!user || role !== 'INSTITUTE_ADMIN') return next();
+
+  const email = String(user.email || '').trim().toLowerCase();
+  const localInstitute = db.prepare('SELECT id FROM institutes WHERE lower(email) = ?').get(email) as { id: string } | undefined;
+  if (localInstitute) return next();
+
+  const recovery = await recoverInstituteAccountFromFirestoreByEmail(email, user.id);
+  if (recovery === 'recovered' || recovery === 'already-present') return next();
+
+  if (recovery === 'not-found') {
+    // The original account is absent from the authoritative cloud store.
+    // Do not silently fabricate a new "{name} Academy" profile.
+    (req as any).instituteRecoveryStatus = 'not-found';
+    return next();
+  }
+
+  const isDurableRuntime = process.env.NODE_ENV === 'production' ||
+    Boolean(process.env.FIREBASE_APP_HOSTING) ||
+    process.env.USE_FIREBASE_ADMIN === 'true' ||
+    Boolean(process.env.K_SERVICE && !process.env.K_SERVICE.startsWith('ais-dev'));
+
+  if (recovery === 'conflict') {
+    return res.status(409).json({
+      error: 'Your institute profile conflicts with existing cloud records. No replacement profile was created.',
+      code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
+    });
+  }
+  if (isDurableRuntime) {
+    return res.status(503).json({
+      error: 'Your original institute profile could not be safely restored from the durable account store. Please retry shortly.',
+      code: 'INSTITUTE_ACCOUNT_RECOVERY_UNAVAILABLE',
+      retryable: true,
+    });
+  }
+  return next();
+});
+
 // Helper to get the institute ID for the authenticated admin
 function getAdminInstituteId(req: AuthRequest): string | null {
+  if ((req as any).instituteRecoveryStatus === 'not-found') return null;
   if (!req.user) return null;
   const roleNorm = (req.user.role || '').toUpperCase().replace(/\s+/g, '_');
   if (roleNorm === 'SUPER_ADMIN' || roleNorm === 'ADMIN') {
