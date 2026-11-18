@@ -1848,11 +1848,11 @@ function runMigrations() {
 
       const nullableTableSql = tableDefinition.sql
         .replace(
-          /^CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(?:"?institute_memberships"?)/i,
+          /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"?institute_memberships"?)/i,
           'CREATE TABLE institute_memberships_nullable_migration'
         )
-        .replace(/(["`]?student_id["`]?\\s+TEXT)\\s+NOT\\s+NULL/i, '$1');
-      if (nullableTableSql === tableDefinition.sql || /student_id["`]?\\s+TEXT\\s+NOT\\s+NULL/i.test(nullableTableSql)) {
+        .replace(/(["`]?student_id["`]?\s+TEXT)\s+NOT\s+NULL/i, '$1');
+      if (nullableTableSql === tableDefinition.sql || /student_id["`]?\s+TEXT\s+NOT\s+NULL/i.test(nullableTableSql)) {
         throw new Error('Could not safely prepare nullable student_id migration.');
       }
 
