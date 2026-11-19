@@ -13,7 +13,7 @@ import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authP
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore, persistStudentAccountToFirestore, recoverStudentAccountFromFirestoreByEmail } from '../services/firestoreSyncService.js';
 import { persistInstituteAccountToFirestore, recoverInstituteAccountFromFirestoreByEmail } from '../services/instituteAccountPersistenceService.js';
-import { ensureInstituteStarterTrial, getActiveInstituteSubscription, INSTITUTE_FREE_TRIAL_PLAN_ID } from '../services/instituteTrialService.js';
+import { ensureInstituteStarterTrial, getActiveInstituteSubscription, persistActiveInstituteStarterTrialToFirestore, INSTITUTE_FREE_TRIAL_PLAN_ID } from '../services/instituteTrialService.js';
 import { prepareOrphanedTestInstituteAdminForRegistration, clearOrphanedTestInstituteTrialClaims } from '../services/instituteTestReactivationService.js';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
@@ -2312,6 +2312,17 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
         retryable: true,
       });
     }
+    if (
+      isApprovedTestInstituteAdminEmail(normalizedEmail) &&
+      (!activeStarterTrial || activeStarterTrial.plan_id !== INSTITUTE_FREE_TRIAL_PLAN_ID ||
+        !await persistActiveInstituteStarterTrialToFirestore(instituteId))
+    ) {
+      return res.status(503).json({
+        error: 'Your test institute account is saved, but its free 30-day trial could not be durably verified. Please retry shortly.',
+        code: 'INSTITUTE_TEST_STARTER_TRIAL_PERSISTENCE_UNCONFIRMED',
+        retryable: true,
+      });
+    }
 
     const token = generateToken({
       id: userId,
@@ -2553,6 +2564,13 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
             return res.status(503).json({
               error: 'Your test institute account is signed in, but its free 30-day trial is not active yet. Please retry or contact support.',
               code: 'INSTITUTE_TEST_STARTER_TRIAL_NOT_ACTIVE',
+              retryable: true,
+            });
+          }
+          if (!await persistActiveInstituteStarterTrialToFirestore(String(localInstitute.id))) {
+            return res.status(503).json({
+              error: 'Your test institute trial is active locally, but its cloud persistence could not be verified. Please retry shortly.',
+              code: 'INSTITUTE_TEST_STARTER_TRIAL_PERSISTENCE_UNCONFIRMED',
               retryable: true,
             });
           }
