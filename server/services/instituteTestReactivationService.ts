@@ -137,6 +137,16 @@ export async function prepareOrphanedTestInstituteAdminForRegistration(
     }
     if (await adapter.isUserTombstoned(userId)) return 'conflict';
 
+    const existingUserDocument = await adapter.getUserDocument(userId);
+    if (
+      existingUserDocument &&
+      (
+        String(existingUserDocument.id || '') !== userId ||
+        normalizeEmail(existingUserDocument.email) !== email ||
+        String(existingUserDocument.role || '').toUpperCase() !== 'INSTITUTE_ADMIN'
+      )
+    ) return 'conflict';
+
     // Re-apply the new password/profile to the same orphaned admin document.
     // Reusing the exact user ID avoids creating a second cloud identity for this email.
     if (!await adapter.setUserDocument(userId, userRecord)) return 'failed';
