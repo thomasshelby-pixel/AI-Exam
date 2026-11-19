@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { randomBytes } from 'node:crypto';
+import { resolveJwtSecret } from './config/jwtSecret.js';
 import jwt from 'jsonwebtoken';
 import { db } from './db.js';
 import { setFirestoreDoc } from './services/firestoreDbService.js';
@@ -8,16 +8,7 @@ import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from 
 import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
 import { getLegalConsentStatus } from './services/legalConsentService.js';
 
-const configuredJwtSecret = process.env.JWT_SECRET?.trim();
-
-if (process.env.NODE_ENV === 'production' && !configuredJwtSecret) {
-  throw new Error('FATAL SECURITY ERROR: JWT_SECRET environment variable is missing. Configure it as a production secret before starting the server.');
-}
-
-// Never fall back to a source-controlled signing key. In non-production
-// environments an ephemeral key is generated for this process only; local
-// sessions will intentionally expire when the development server restarts.
-export const JWT_SECRET = configuredJwtSecret || randomBytes(64).toString('hex');
+export const JWT_SECRET = resolveJwtSecret();
 
 export interface AuthRequest extends Request {
   user?: {
