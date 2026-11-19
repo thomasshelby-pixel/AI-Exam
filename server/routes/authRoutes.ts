@@ -2853,6 +2853,27 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       });
     }
 
+    // Every App Hosting instance must independently recognize the one explicitly
+    // designated test admin. Do not depend on an earlier login's best-effort mirror
+    // having reached Firestore before this /me request lands on another instance.
+    if (
+      user.role === 'INSTITUTE_ADMIN' &&
+      user.status === 'ACTIVE' &&
+      isApprovedTestInstituteAdminEmail(user.email) &&
+      String(user.account_classification || '').toUpperCase() !== 'TEST'
+    ) {
+      db.prepare(
+        "UPDATE users SET account_classification = 'TEST', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND lower(email) = ? AND role = 'INSTITUTE_ADMIN' AND status = 'ACTIVE'"
+      ).run(user.id, user.email.toLowerCase());
+      user.account_classification = 'TEST';
+      const persistedTestUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(user.id) as any;
+      if (persistedTestUser) {
+        void syncRecordToFirestore('users', user.id, persistedTestUser).catch((error) =>
+          console.warn('[AuthMe] Could not mirror designated test-account classification:', error)
+        );
+      }
+    }
+
     const isPermanentFree = checkPermanentFreeAccess(user.email);
 
     let profileData: Record<string, unknown> = {};
