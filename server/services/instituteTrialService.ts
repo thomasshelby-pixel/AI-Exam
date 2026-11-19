@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { db } from '../db.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
+import { getFirestoreDoc, setFirestoreDocsAtomically } from './firestoreDbService.js';
 
 export const INSTITUTE_FREE_TRIAL_PLAN_ID = 'FREE_STARTER_TRIAL_V1';
 export const INSTITUTE_FREE_TRIAL_PLAN_NAME = 'Free Starter Trial';
@@ -217,6 +218,77 @@ export function ensureInstituteStarterTrial(params: {
       return { granted: false, reason: 'STARTER_TRIAL_ALREADY_CLAIMED' };
     }
     throw error;
+  }
+}
+
+/**
+ * Durably persists the designated test Institute Admin's active starter trial.
+ * The normal synchronous grant remains the single source of truth; this wrapper
+ * verifies the subscription, one-time claim and updated institute profile in
+ * Firestore before the test login/signup is allowed to report the trial active.
+ */
+export async function persistActiveInstituteStarterTrialToFirestore(
+  instituteIdValue: string,
+): Promise<boolean> {
+  const instituteId = String(instituteIdValue || '').trim();
+  if (!instituteId) return false;
+
+  try {
+    const subscription = getActiveInstituteSubscription(instituteId);
+    if (!subscription || subscription.plan_id !== INSTITUTE_FREE_TRIAL_PLAN_ID) return false;
+
+    const institute = db.prepare('SELECT * FROM institutes WHERE id = ? LIMIT 1').get(instituteId) as any;
+    const claim = db.prepare(
+      'SELECT * FROM institute_trial_claims WHERE institute_id = ? AND subscription_id = ? LIMIT 1'
+    ).get(instituteId, subscription.id) as any;
+    const audit = db.prepare(
+      "SELECT * FROM audit_logs WHERE entity_id = ? AND action = 'INSTITUTE_FREE_TRIAL_ACTIVATED' ORDER BY created_at DESC LIMIT 1"
+    ).get(instituteId) as any;
+
+    if (
+      !institute ||
+      String(institute.status || '').toUpperCase() !== 'ACTIVE' ||
+      String(institute.subscription_plan || '').toUpperCase() !== INSTITUTE_FREE_TRIAL_PLAN_ID ||
+      Number(institute.max_students || 0) !== INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY ||
+      !claim ||
+      !audit
+    ) return false;
+
+    const writes = [
+      { collectionName: 'institutes', docId: instituteId, data: institute },
+      { collectionName: 'institute_subscriptions', docId: subscription.id, data: subscription as unknown as Record<string, any> },
+      { collectionName: 'institute_trial_claims', docId: String(claim.id), data: claim },
+      { collectionName: 'audit_logs', docId: String(audit.id), data: audit },
+    ];
+    if (!await setFirestoreDocsAtomically(writes)) return false;
+
+    const [cloudInstitute, cloudSubscription, cloudClaim, cloudAudit] = await Promise.all([
+      getFirestoreDoc<Record<string, any>>('institutes', instituteId, { failOnError: true }),
+      getFirestoreDoc<Record<string, any>>('institute_subscriptions', subscription.id, { failOnError: true }),
+      getFirestoreDoc<Record<string, any>>('institute_trial_claims', String(claim.id), { failOnError: true }),
+      getFirestoreDoc<Record<string, any>>('audit_logs', String(audit.id), { failOnError: true }),
+    ]);
+
+    return Boolean(
+      cloudInstitute &&
+      String(cloudInstitute.id || '') === instituteId &&
+      String(cloudInstitute.subscription_plan || '').toUpperCase() === INSTITUTE_FREE_TRIAL_PLAN_ID &&
+      Number(cloudInstitute.max_students || 0) === INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY &&
+      cloudSubscription &&
+      String(cloudSubscription.id || '') === subscription.id &&
+      String(cloudSubscription.plan_id || '') === INSTITUTE_FREE_TRIAL_PLAN_ID &&
+      Number(cloudSubscription.student_capacity || 0) === INSTITUTE_FREE_TRIAL_STUDENT_CAPACITY &&
+      Number(cloudSubscription.evaluation_allowance || 0) === INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS &&
+      Number(cloudSubscription.evaluations_remaining || 0) === INSTITUTE_FREE_TRIAL_EVALUATION_CREDITS &&
+      cloudClaim &&
+      String(cloudClaim.subscription_id || '') === subscription.id &&
+      String(cloudClaim.institute_id || '') === instituteId &&
+      cloudAudit &&
+      String(cloudAudit.entity_id || '') === instituteId
+    );
+  } catch (error) {
+    console.warn('[InstituteTrial] Durable starter-trial Firestore persistence failed:', error);
+    return false;
   }
 }
 

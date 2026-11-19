@@ -1,13 +1,25 @@
+export const APPROVED_TEST_INSTITUTE_ADMIN_EMAIL = 'test@gmail.com';
+
 export interface MfaTestBypassCandidate {
   email?: string | null;
   role?: string | null;
   status?: string | null;
+  account_classification?: string | null;
+}
+
+/** True only for the single email intentionally reserved as the test institute. */
+export function isApprovedTestInstituteAdminEmail(value: unknown): boolean {
+  return String(value || '').trim().toLowerCase() === APPROVED_TEST_INSTITUTE_ADMIN_EMAIL;
 }
 
 /**
- * Explicit, reversible MFA exception for one controlled test Institute Admin.
- * Both deployment settings are required so adding an email alone cannot disable
- * MFA. This never applies to Super Admin, other admins, or student accounts.
+ * Narrow MFA exception for the designated test Institute Admin.
+ *
+ * Production env flags may explicitly enable the bypass, but this account must
+ * also be marked TEST in the persisted user registry. The fixed test address is
+ * intentionally supported as a fallback because Firebase App Hosting may not
+ * have the repo's local YAML environment values applied to an already-created
+ * backend. No other account can use this fallback.
  */
 export function isConfiguredInstituteTestAccountMfaBypass(
   user: MfaTestBypassCandidate,
@@ -18,10 +30,12 @@ export function isConfiguredInstituteTestAccountMfaBypass(
   const accountEmail = String(user.email || '').trim().toLowerCase();
   const role = String(user.role || '').trim().toUpperCase();
   const status = String(user.status || '').trim().toUpperCase();
+  const classification = String(user.account_classification || '').trim().toUpperCase();
+  const explicitlyConfigured = enabled && configuredEmail.length > 0 && accountEmail === configuredEmail;
+  const designatedTestAccount = isApprovedTestInstituteAdminEmail(accountEmail);
 
-  return enabled &&
-    configuredEmail.length > 0 &&
-    accountEmail === configuredEmail &&
-    role === 'INSTITUTE_ADMIN' &&
-    status === 'ACTIVE';
+  return role === 'INSTITUTE_ADMIN' &&
+    status === 'ACTIVE' &&
+    classification === 'TEST' &&
+    (explicitlyConfigured || designatedTestAccount);
 }

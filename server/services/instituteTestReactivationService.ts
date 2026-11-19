@@ -95,6 +95,7 @@ export async function prepareOrphanedTestInstituteAdminForRegistration(
       email,
       role: 'INSTITUTE_ADMIN',
       status: 'ACTIVE',
+      account_classification: 'TEST',
     })
   ) return 'not-eligible';
 
@@ -186,6 +187,7 @@ export async function clearOrphanedTestInstituteTrialClaims(
       email,
       role: 'INSTITUTE_ADMIN',
       status: 'ACTIVE',
+      account_classification: 'TEST',
     })
   ) return 'not-eligible';
 

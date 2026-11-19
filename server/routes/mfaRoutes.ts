@@ -60,8 +60,8 @@ const router = Router();
 
 function isTestAccountMfaBypassActive(userId: string): boolean {
   const persistedUser = db.prepare(
-    'SELECT email, role, status FROM users WHERE id = ? LIMIT 1'
-  ).get(userId) as { email?: string; role?: string; status?: string } | undefined;
+    'SELECT email, role, status, account_classification FROM users WHERE id = ? LIMIT 1'
+  ).get(userId) as { email?: string; role?: string; status?: string; account_classification?: string } | undefined;
   return Boolean(persistedUser && isConfiguredInstituteTestAccountMfaBypass(persistedUser));
 }
 

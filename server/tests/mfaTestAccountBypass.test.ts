@@ -5,22 +5,23 @@ const enabledEnv = {
   ENABLE_TEST_ACCOUNT_MFA_BYPASS: 'true',
   MFA_TEST_BYPASS_EMAIL: 'test@gmail.com',
 };
+const designatedTestAdmin = {
+  email: 'test@gmail.com',
+  role: 'INSTITUTE_ADMIN',
+  status: 'ACTIVE',
+  account_classification: 'TEST',
+};
 
 assert.equal(
-  isConfiguredInstituteTestAccountMfaBypass({
-    email: 'test@gmail.com',
-    role: 'INSTITUTE_ADMIN',
-    status: 'ACTIVE',
-  }, enabledEnv),
+  isConfiguredInstituteTestAccountMfaBypass(designatedTestAdmin, enabledEnv),
   true,
-  'The explicitly configured active test Institute Admin may bypass MFA.',
+  'The designated active TEST Institute Admin may bypass MFA.',
 );
 
 assert.equal(
   isConfiguredInstituteTestAccountMfaBypass({
+    ...designatedTestAdmin,
     email: 'TEST@gmail.com',
-    role: 'INSTITUTE_ADMIN',
-    status: 'ACTIVE',
   }, enabledEnv),
   true,
   'The exact allowlisted email comparison is case-insensitive.',
@@ -28,9 +29,8 @@ assert.equal(
 
 assert.equal(
   isConfiguredInstituteTestAccountMfaBypass({
+    ...designatedTestAdmin,
     email: 'another@gmail.com',
-    role: 'INSTITUTE_ADMIN',
-    status: 'ACTIVE',
   }, enabledEnv),
   false,
   'Other Institute Admin accounts must keep mandatory MFA.',
@@ -38,9 +38,8 @@ assert.equal(
 
 assert.equal(
   isConfiguredInstituteTestAccountMfaBypass({
-    email: 'test@gmail.com',
+    ...designatedTestAdmin,
     role: 'SUPER_ADMIN',
-    status: 'ACTIVE',
   }, enabledEnv),
   false,
   'The test exception must never apply to Super Admin.',
@@ -48,8 +47,7 @@ assert.equal(
 
 assert.equal(
   isConfiguredInstituteTestAccountMfaBypass({
-    email: 'test@gmail.com',
-    role: 'INSTITUTE_ADMIN',
+    ...designatedTestAdmin,
     status: 'SUSPENDED',
   }, enabledEnv),
   false,
@@ -58,22 +56,36 @@ assert.equal(
 
 assert.equal(
   isConfiguredInstituteTestAccountMfaBypass({
-    email: 'test@gmail.com',
-    role: 'INSTITUTE_ADMIN',
-    status: 'ACTIVE',
-  }, { MFA_TEST_BYPASS_EMAIL: 'test@gmail.com' }),
+    ...designatedTestAdmin,
+    account_classification: 'NORMAL',
+  }, enabledEnv),
   false,
-  'The email alone is insufficient without explicit deployment opt-in.',
+  'The designated email must also be persisted as a TEST account.',
+);
+
+assert.equal(
+  isConfiguredInstituteTestAccountMfaBypass(designatedTestAdmin, {}),
+  true,
+  'The exact designated TEST account must still work when App Hosting has not injected optional YAML flags.',
 );
 
 assert.equal(
   isConfiguredInstituteTestAccountMfaBypass({
-    email: 'test@gmail.com',
-    role: 'INSTITUTE_ADMIN',
-    status: 'ACTIVE',
-  }, { ...enabledEnv, MFA_TEST_BYPASS_EMAIL: 'other@gmail.com' }),
+    ...designatedTestAdmin,
+    email: 'another@gmail.com',
+    account_classification: 'TEST',
+  }, { ENABLE_TEST_ACCOUNT_MFA_BYPASS: 'true', MFA_TEST_BYPASS_EMAIL: 'another@gmail.com' }),
+  true,
+  'An alternate email is supported only when explicitly configured and TEST-classified.',
+);
+
+assert.equal(
+  isConfiguredInstituteTestAccountMfaBypass({
+    ...designatedTestAdmin,
+    email: 'another@gmail.com',
+  }, { MFA_TEST_BYPASS_EMAIL: 'another@gmail.com' }),
   false,
-  'The bypass cannot be transferred to an unconfigured address.',
+  'An email setting without explicit enablement and TEST classification is insufficient.',
 );
 
 console.log('✅ Test Institute Admin MFA bypass guard tests passed.');

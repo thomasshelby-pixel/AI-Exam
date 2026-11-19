@@ -8,12 +8,12 @@ import { db, hashPassword, verifyPassword } from '../db.js';
 import { generateToken, generateMfaSessionToken, authenticateToken, authenticateRevocationToken, optionalAuthenticateToken, AuthRequest, checkPermanentFreeAccess, JWT_SECRET } from '../auth.js';
 import { isDeviceLimitExceeded, createOrRefreshDeviceSession, revokeDeviceSession, revokeAllSessionsForUser, getSafeDeviceName, getActiveDeviceCount, MAX_STUDENT_DEVICES } from '../services/sessionService.js';
 import { UserRole } from '../../src/types/index.js';
-import { isConfiguredInstituteTestAccountMfaBypass } from '../services/mfaTestAccountBypass.js';
+import { isConfiguredInstituteTestAccountMfaBypass, isApprovedTestInstituteAdminEmail } from '../services/mfaTestAccountBypass.js';
 import { isAuthPortalRoleAllowed, parseAuthPortalScope } from '../services/authPortalRole.js';
 import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../services/emailService.js';
 import { syncRecordToFirestore, persistStudentAccountToFirestore, recoverStudentAccountFromFirestoreByEmail } from '../services/firestoreSyncService.js';
 import { persistInstituteAccountToFirestore, recoverInstituteAccountFromFirestoreByEmail } from '../services/instituteAccountPersistenceService.js';
-import { ensureInstituteStarterTrial, getActiveInstituteSubscription, INSTITUTE_FREE_TRIAL_PLAN_ID } from '../services/instituteTrialService.js';
+import { ensureInstituteStarterTrial, getActiveInstituteSubscription, persistActiveInstituteStarterTrialToFirestore, INSTITUTE_FREE_TRIAL_PLAN_ID } from '../services/instituteTrialService.js';
 import { prepareOrphanedTestInstituteAdminForRegistration, clearOrphanedTestInstituteTrialClaims } from '../services/instituteTestReactivationService.js';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
@@ -245,9 +245,32 @@ export async function evaluateMfaRequirementForLogin(
   // test Institute Admin. Read the persisted account state rather than relying
   // only on the caller's session claims. No factors or MFA records are deleted;
   // removing the deployment flags instantly restores the standard MFA flow.
-  const persistedMfaBypassUser = db.prepare(
-    'SELECT email, role, status FROM users WHERE id = ? LIMIT 1'
-  ).get(user.id) as { email?: string; role?: string; status?: string } | undefined;
+  let persistedMfaBypassUser = db.prepare(
+    'SELECT email, role, status, account_classification FROM users WHERE id = ? LIMIT 1'
+  ).get(user.id) as { email?: string; role?: string; status?: string; account_classification?: string } | undefined;
+
+  // Promote only the exact, user-designated test email in the Institute Admin
+  // portal. This also repairs accounts registered before the TEST classification
+  // was added and avoids depending on optional App Hosting YAML env injection.
+  if (
+    persistedMfaBypassUser &&
+    isApprovedTestInstituteAdminEmail(persistedMfaBypassUser.email) &&
+    String(persistedMfaBypassUser.role || '').toUpperCase() === 'INSTITUTE_ADMIN' &&
+    String(persistedMfaBypassUser.status || '').toUpperCase() === 'ACTIVE'
+  ) {
+    db.prepare(
+      "UPDATE users SET account_classification = 'TEST', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(user.id);
+    persistedMfaBypassUser = db.prepare(
+      'SELECT email, role, status, account_classification FROM users WHERE id = ? LIMIT 1'
+    ).get(user.id) as typeof persistedMfaBypassUser;
+    const persistedFullUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(user.id) as any;
+    if (persistedFullUser) {
+      void syncRecordToFirestore('users', user.id, persistedFullUser).catch((error) =>
+        console.warn('[AuthMFA] Could not persist designated test-account classification:', error)
+      );
+    }
+  }
 
   if (persistedMfaBypassUser && isConfiguredInstituteTestAccountMfaBypass(persistedMfaBypassUser)) {
     try {
@@ -2021,6 +2044,7 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
               email: normalizedEmail,
               role: existingUser.role,
               status: existingUser.status,
+              account_classification: 'TEST',
             })
           ) {
             // Reuse the orphaned test admin ID; never create a second user document
@@ -2098,7 +2122,7 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       phone: String(phone).trim(),
       role: 'INSTITUTE_ADMIN',
       status: 'ACTIVE',
-      account_classification: reactivatedTestAdminId ? 'TEST' : 'NORMAL',
+      account_classification: (reactivatedTestAdminId || isApprovedTestInstituteAdminEmail(normalizedEmail)) ? 'TEST' : 'NORMAL',
       signup_platform: getSignupPlatform(req),
       mfa_enabled: 0,
       mfa_reset_required: 0,
@@ -2147,14 +2171,6 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
         });
       }
 
-      const trialClaimReset = await clearOrphanedTestInstituteTrialClaims(normalizedEmail, reactivatedTestAdminId);
-      if (trialClaimReset !== 'cleared') {
-        return res.status(503).json({
-          error: 'The test account was identified, but its previous test trial claim could not be safely reset. Please retry shortly.',
-          code: 'TEST_INSTITUTE_TRIAL_RESET_UNAVAILABLE',
-          retryable: true,
-        });
-      }
     }
 
     // Do not acknowledge a production signup until Firestore has atomically
@@ -2258,6 +2274,25 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       await revokeAllSessionsForUser(reactivatedTestAdminId);
     }
 
+    // Clear only the designated test account's previous orphaned claim after
+    // its new admin and institute rows are committed. This also covers a fresh
+    // registration where the old local admin row was already gone.
+    if (isApprovedTestInstituteAdminEmail(normalizedEmail)) {
+      const testUser = db.prepare(
+        'SELECT email, role, status, account_classification FROM users WHERE id = ? LIMIT 1'
+      ).get(userId) as any;
+      if (testUser && isConfiguredInstituteTestAccountMfaBypass(testUser)) {
+        const trialClaimReset = await clearOrphanedTestInstituteTrialClaims(normalizedEmail, userId);
+        if (trialClaimReset !== 'cleared') {
+          return res.status(503).json({
+            error: 'Your test institute account is saved, but its previous trial claim could not be safely reset. Please retry shortly.',
+            code: 'INSTITUTE_TEST_TRIAL_RESET_UNAVAILABLE',
+            retryable: true,
+          });
+        }
+      }
+    }
+
     // Activate the one-time Free Starter Trial as part of signup, not later
     // as a side effect of the first dashboard API request.
     const starterTrial = ensureInstituteStarterTrial({
@@ -2274,6 +2309,17 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       return res.status(503).json({
         error: 'Your institute account is saved, but the free 30-day starter trial could not be activated yet. Please retry or contact support.',
         code: 'INSTITUTE_STARTER_TRIAL_ACTIVATION_FAILED',
+        retryable: true,
+      });
+    }
+    if (
+      isApprovedTestInstituteAdminEmail(normalizedEmail) &&
+      (!activeStarterTrial || activeStarterTrial.plan_id !== INSTITUTE_FREE_TRIAL_PLAN_ID ||
+        !await persistActiveInstituteStarterTrialToFirestore(instituteId))
+    ) {
+      return res.status(503).json({
+        error: 'Your test institute account is saved, but its free 30-day trial could not be durably verified. Please retry shortly.',
+        code: 'INSTITUTE_TEST_STARTER_TRIAL_PERSISTENCE_UNCONFIRMED',
         retryable: true,
       });
     }
@@ -2380,6 +2426,18 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
       });
     }
 
+    if (user.role === 'INSTITUTE_ADMIN' && isApprovedTestInstituteAdminEmail(normalizedEmail)) {
+      db.prepare(
+        "UPDATE users SET account_classification = 'TEST', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND email = ? AND role = 'INSTITUTE_ADMIN' AND status = 'ACTIVE'"
+      ).run(user.id, normalizedEmail);
+      const persistedTestUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(user.id) as any;
+      if (persistedTestUser) {
+        void syncRecordToFirestore('users', user.id, persistedTestUser).catch((error) =>
+          console.warn('[InstituteLogin] Could not persist designated test-account classification:', error)
+        );
+      }
+    }
+
     let localInstitute: any = null;
     if (user.role === 'INSTITUTE_ADMIN') {
       localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
@@ -2456,6 +2514,32 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
     }
 
     if (user.role === 'INSTITUTE_ADMIN') {
+      // A designated test signup may have persisted the institute but failed before
+      // activating its first trial. Repair that one narrowly defined state. Never
+      // clear claims for an institute with a subscription row or a non-pending plan,
+      // so an expired 30-day test trial cannot be refreshed by logging in again.
+      if (isApprovedTestInstituteAdminEmail(normalizedEmail)) {
+        const plan = String(localInstitute.subscription_plan || '').trim().toUpperCase();
+        const subscriptionHistory = db.prepare(
+          'SELECT id FROM institute_subscriptions WHERE institute_id = ? LIMIT 1'
+        ).get(localInstitute.id);
+        if (['', 'NONE', 'NO_PLAN', 'PENDING_SELECTION'].includes(plan) && !subscriptionHistory) {
+          const testUser = db.prepare(
+            'SELECT email, role, status, account_classification FROM users WHERE id = ? LIMIT 1'
+          ).get(user.id) as any;
+          if (testUser && isConfiguredInstituteTestAccountMfaBypass(testUser)) {
+            const trialClaimReset = await clearOrphanedTestInstituteTrialClaims(normalizedEmail, user.id);
+            if (trialClaimReset !== 'cleared') {
+              return res.status(503).json({
+                error: 'Your institute account is restored, but its previous test trial claim could not be safely reset.',
+                code: 'INSTITUTE_TEST_TRIAL_RESET_UNAVAILABLE',
+                retryable: true,
+              });
+            }
+          }
+        }
+      }
+
       // Existing institutes receive the one-time starter trial at their first
       // successful login too. Paid/trial history is respected by the service.
       try {
@@ -2469,6 +2553,27 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
             instituteId: localInstitute.id,
             expiresAt: starterTrial.expiresAt,
           });
+        }
+        if (isApprovedTestInstituteAdminEmail(normalizedEmail)) {
+          const activeStarterTrial = getActiveInstituteSubscription(String(localInstitute.id));
+          if (!activeStarterTrial || activeStarterTrial.plan_id !== INSTITUTE_FREE_TRIAL_PLAN_ID) {
+            console.error('[InstituteLogin] Designated test account has no active starter trial:', {
+              instituteId: localInstitute.id,
+              reason: starterTrial.reason || 'ACTIVE_TEST_TRIAL_NOT_FOUND',
+            });
+            return res.status(503).json({
+              error: 'Your test institute account is signed in, but its free 30-day trial is not active yet. Please retry or contact support.',
+              code: 'INSTITUTE_TEST_STARTER_TRIAL_NOT_ACTIVE',
+              retryable: true,
+            });
+          }
+          if (!await persistActiveInstituteStarterTrialToFirestore(String(localInstitute.id))) {
+            return res.status(503).json({
+              error: 'Your test institute trial is active locally, but its cloud persistence could not be verified. Please retry shortly.',
+              code: 'INSTITUTE_TEST_STARTER_TRIAL_PERSISTENCE_UNCONFIRMED',
+              retryable: true,
+            });
+          }
         }
       } catch (trialError) {
         console.error('[InstituteLogin] Starter trial activation failed:', trialError);
