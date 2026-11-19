@@ -34,6 +34,7 @@ export interface InstituteAccountPersistenceAdapter {
   findInstitutesByEmail(email: string): Promise<Array<Record<string, any>>>;
   findUsersByEmail(email: string): Promise<Array<Record<string, any>>>;
   findBatchesByInstituteId(instituteId: string): Promise<Array<Record<string, any>>>;
+  findInstituteSignupAuditLogs?(adminUserId: string): Promise<Array<Record<string, any>>>;
   getDocument<T>(collectionName: string, id: string): Promise<T | null>;
   isTombstoned(collectionName: string, id: string): Promise<boolean>;
   setDocumentsAtomically(
@@ -41,9 +42,7 @@ export interface InstituteAccountPersistenceAdapter {
   ): Promise<boolean>;
 }
 
-export interface InstituteAccountRecoveryAdapter extends Omit<InstituteAccountPersistenceAdapter, 'setDocumentsAtomically'> {
-  findInstituteSignupAuditLogs?(adminUserId: string): Promise<Array<Record<string, any>>>;
-}
+export interface InstituteAccountRecoveryAdapter extends Omit<InstituteAccountPersistenceAdapter, 'setDocumentsAtomically'> {}
 
 const defaultAdapter: InstituteAccountPersistenceAdapter = {
   isConfigured: () => {
