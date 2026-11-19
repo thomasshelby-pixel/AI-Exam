@@ -7,6 +7,7 @@ import { User, UserRole } from '../src/types/index.js';
 import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from './services/studentCreditService.js';
 import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
 import { getLegalConsentStatus } from './services/legalConsentService.js';
+import { isConfiguredInstituteTestAccountMfaBypass } from './services/mfaTestAccountBypass.js';
 
 export const JWT_SECRET = resolveJwtSecret();
 
@@ -560,7 +561,7 @@ export function requireRole(...allowedRoles: (UserRole | UserRole[])[]) {
     // Server-Side Role-Based MFA Policy Enforcement
     // INSTITUTE_ADMIN, SUPER_ADMIN, and MCQ_ADMIN must have verified MFA to access privileged routes
     if (isInstitute || isSuperAdmin || userRole === 'MCQ_ADMIN') {
-      const dbUser = db.prepare('SELECT mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { mfa_enabled: number } | undefined;
+      const dbUser = db.prepare('SELECT email, role, status, account_classification, mfa_enabled FROM users WHERE id = ?').get(req.user.id) as { email: string; role: string; status: string; account_classification: string; mfa_enabled: number } | undefined;
 
       const rawCookies = (req as any).cookies || {};
       const deviceId =
@@ -580,9 +581,17 @@ export function requireRole(...allowedRoles: (UserRole | UserRole[])[]) {
 
       // Super Admin's MFA verification is centralized through the main Super Admin authentication session.
       // If the Super Admin is authenticated and mfaVerified is true (or device is trusted), they have satisfied Super Admin MFA.
-      const isMfaSatisfied = isSuperAdmin
+      // The designated test Institute Admin must be exempted consistently
+      // at every protected API route, not only at login and in the portal UI.
+      // This remains exact-email + active-role + TEST-classification scoped.
+      const isDesignatedTestInstituteAdmin =
+        isInstitute &&
+        Boolean(dbUser) &&
+        isConfiguredInstituteTestAccountMfaBypass(dbUser);
+
+      const isMfaSatisfied = isDesignatedTestInstituteAdmin || (isSuperAdmin
         ? isMfaVerified
-        : (Boolean(dbUser?.mfa_enabled) && isMfaVerified);
+        : (Boolean(dbUser?.mfa_enabled) && isMfaVerified));
 
       if (!isMfaSatisfied) {
         return res.status(403).json({
