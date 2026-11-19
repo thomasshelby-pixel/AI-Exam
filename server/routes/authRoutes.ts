@@ -1051,7 +1051,7 @@ router.post('/verify-otp', otpVerifyRateLimiter, async (req: Request, res: Respo
       });
     }
 
-    const userId = reactivatedTestAdminId || `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
     const signupPlatform = regData.signupPlatform && regData.signupPlatform !== 'UNKNOWN'
       ? regData.signupPlatform
       : getSignupPlatform(req);
