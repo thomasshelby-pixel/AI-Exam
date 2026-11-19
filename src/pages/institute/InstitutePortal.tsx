@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext.js';
 import { logMfaDiagnostic, getFirebaseEnrolledTotpFactors } from '../../lib/firebaseAuth.js';
 import { apiRequest } from '../../api/client.js';
 import { formatDateIST, formatDateTimeIST } from '../../utils/timezone.js';
+import { isInstituteMfaGateRequired } from '../../utils/instituteMfaGate.js';
 import { InstituteSubscriptionManager } from '../../components/institute/InstituteSubscriptionManager.js';
 import { MfaSecuritySettingsCard } from '../../components/auth/MfaSecuritySettingsCard.js';
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
@@ -706,7 +707,9 @@ export const InstitutePortal: React.FC = () => {
 
   // Check institute administrative MFA requirement
   const normUserRole = (user?.role || '').toUpperCase().replace(/\s+/g, '_');
-  const isMfaMandatoryRole = normUserRole === 'INSTITUTE_ADMIN' || normUserRole === 'INSTITUTE';
+  // Respect the server's explicit MFA exemption. Undefined remains fail-closed
+  // for older user payloads; only authoritative mfaMandatory=false skips the gate.
+  const isMfaMandatoryRole = isInstituteMfaGateRequired(user);
   const isMfaEnrolled = Boolean(user?.mfaEnabled);
   const isMfaVerified = user?.mfaVerified === true;
   const isMfaBlocked = isMfaMandatoryRole && (!isMfaEnrolled || !isMfaVerified);
