@@ -30,6 +30,9 @@ jobs:
       - name: JWT secret configuration security regression
         run: node_modules/.bin/tsx server/tests/jwtSecretConfiguration.test.ts
 
+      - name: Security hardening policy regression
+        run: node_modules/.bin/tsx server/tests/securityHardeningPolicy.test.ts
+
       - name: Institute account cloud persistence and deployment recovery regression
         run: node_modules/.bin/tsx server/tests/instituteAccountCloudPersistence.test.ts
 
