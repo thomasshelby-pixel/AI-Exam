@@ -80,8 +80,8 @@ async function run() {
     db.prepare('DELETE FROM institutes WHERE email = ?').run(email);
     db.prepare('DELETE FROM users WHERE id = ?').run(userId);
     db.prepare(`
-      INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
-      VALUES (?, ?, 'old-test-password-hash', 'Old Test Admin', '9999999999', 'INSTITUTE_ADMIN', 'ACTIVE')
+      INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification)
+      VALUES (?, ?, 'old-test-password-hash', 'Old Test Admin', '9999999999', 'INSTITUTE_ADMIN', 'ACTIVE', 'TEST')
     `).run(userId, email);
 
     // A local orphaned admin may be reused only when the exact configured test
@@ -184,6 +184,7 @@ async function run() {
 
     console.log('PASS: exact test-email re-registration is isolated; old test claim reset preserves other institutes.');
   } finally {
+    db.prepare('DELETE FROM audit_logs WHERE entity_id = ? AND action = ?').run(instituteId, 'INSTITUTE_FREE_TRIAL_ACTIVATED');
     db.prepare('DELETE FROM institute_trial_claims WHERE institute_id = ? OR id IN (?, ?)').run(instituteId, claimId, otherClaimId);
     db.prepare('DELETE FROM institute_subscriptions WHERE institute_id = ?').run(instituteId);
     db.prepare('DELETE FROM institutes WHERE id = ?').run(instituteId);
