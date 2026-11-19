@@ -30,6 +30,9 @@ jobs:
       - name: Institute account cloud persistence and deployment recovery regression
         run: node_modules/.bin/tsx server/tests/instituteAccountCloudPersistence.test.ts
 
+      - name: Legacy institute placeholder identity recovery regression
+        run: node_modules/.bin/tsx server/tests/instituteLegacyPlaceholderRecovery.test.ts
+
       - name: Institute hydration conflict startup regression
         run: node_modules/.bin/tsx server/tests/instituteHydrationConflictStartup.test.ts
 

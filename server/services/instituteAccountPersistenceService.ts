@@ -34,6 +34,7 @@ export interface InstituteAccountPersistenceAdapter {
   findInstitutesByEmail(email: string): Promise<Array<Record<string, any>>>;
   findUsersByEmail(email: string): Promise<Array<Record<string, any>>>;
   findBatchesByInstituteId(instituteId: string): Promise<Array<Record<string, any>>>;
+  findInstituteSignupAuditLogs?(adminUserId: string): Promise<Array<Record<string, any>>>;
   getDocument<T>(collectionName: string, id: string): Promise<T | null>;
   isTombstoned(collectionName: string, id: string): Promise<boolean>;
   setDocumentsAtomically(
@@ -64,6 +65,11 @@ const defaultAdapter: InstituteAccountPersistenceAdapter = {
   findBatchesByInstituteId: (instituteId) => queryFirestoreDocs<Record<string, any>>(
     'batches',
     [{ field: 'institute_id', op: '==', value: instituteId }],
+    { failOnError: true },
+  ),
+  findInstituteSignupAuditLogs: (adminUserId) => queryFirestoreDocs<Record<string, any>>(
+    'audit_logs',
+    [{ field: 'user_id', op: '==', value: adminUserId }],
     { failOnError: true },
   ),
   getDocument: <T>(collectionName: string, id: string) => getFirestoreDoc<T>(collectionName, id, { failOnError: true }),
@@ -239,6 +245,99 @@ export async function persistInstituteAccountToFirestore(
   }
 }
 
+/**
+ * The pre-recovery institute dashboard used to create a temporary
+ * "{Admin Name} Academy" record when the original profile was missing locally.
+ * Identify only that very specific, empty placeholder shape; never treat a
+ * normally registered institute as disposable.
+ */
+function isLegacyAutoProvisionedPlaceholder(
+  institute: Record<string, any> | undefined,
+  admin: Record<string, any> | undefined,
+): boolean {
+  if (!institute || !admin) return false;
+  const adminName = String(admin.full_name || '').trim();
+  const expectedName = `${adminName || 'CA'} Academy`;
+  const plan = String(institute.subscription_plan || '').trim().toUpperCase();
+  const phone = String(institute.phone || '').trim();
+  const adminPhone = String(admin.phone || '9999999999').trim();
+  return (
+    String(institute.name || '').trim() === expectedName &&
+    /^INST-[A-F0-9]{6}$/i.test(String(institute.code || '').trim()) &&
+    normalizeEmail(institute.email) === normalizeEmail(admin.email) &&
+    String(institute.contact_person || '').trim() === (adminName || 'Administrator') &&
+    (!String(institute.address || '').trim()) &&
+    (!String(institute.website || '').trim()) &&
+    (!phone || phone === adminPhone) &&
+    ['NONE', 'FREE_STARTER_TRIAL_V1'].includes(plan)
+  );
+}
+
+function hasOperationalInstituteData(instituteId: string): boolean {
+  const checks: Array<{ table: string; sql: string }> = [
+    { table: 'institute_memberships', sql: 'SELECT COUNT(*) AS count FROM institute_memberships WHERE institute_id = ?' },
+    { table: 'institute_materials', sql: 'SELECT COUNT(*) AS count FROM institute_materials WHERE institute_id = ?' },
+    { table: 'institute_tests', sql: 'SELECT COUNT(*) AS count FROM institute_tests WHERE institute_id = ?' },
+    { table: 'institute_assignments', sql: 'SELECT COUNT(*) AS count FROM institute_assignments WHERE institute_id = ?' },
+    { table: 'student_profiles', sql: 'SELECT COUNT(*) AS count FROM student_profiles WHERE institute_id = ?' },
+    { table: 'evaluations', sql: 'SELECT COUNT(*) AS count FROM evaluations WHERE institute_id = ?' },
+    { table: 'evaluation_materials', sql: 'SELECT COUNT(*) AS count FROM evaluation_materials WHERE institute_id = ?' },
+  ];
+  for (const check of checks) {
+    const result = db.prepare(check.sql).get(instituteId) as { count?: number };
+    if (Number(result?.count || 0) > 0) return true;
+  }
+  return false;
+}
+
+function hasInstituteSignupAuditForId(instituteId: string): boolean {
+  return Boolean(db.prepare(`
+    SELECT id FROM audit_logs
+    WHERE entity_type = 'INSTITUTE'
+      AND entity_id = ?
+      AND action = 'INSTITUTE_SIGNUP'
+    LIMIT 1
+  `).get(instituteId));
+}
+
+/**
+ * Select a single canonical Institute record for an admin. If old deployments
+ * created extra placeholder records, the original INSTITUTE_SIGNUP audit entry
+ * wins; otherwise a unique non-placeholder record is required.
+ */
+function selectCanonicalInstitute(
+  institutes: Array<Record<string, any>>,
+  user: Record<string, any>,
+  signupAuditLogs: Array<Record<string, any>>,
+): Record<string, any> | null {
+  const candidates = institutes.filter((record) =>
+    normalizeEmail(record.email) === normalizeEmail(user.email) &&
+    String(record.status || '').toUpperCase() !== 'RECOVERED_DUPLICATE'
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  const candidateIds = new Set(candidates.map(asId));
+  const signupIds = Array.from(new Set(signupAuditLogs
+    .filter((log) =>
+      String(log.action || '').toUpperCase() === 'INSTITUTE_SIGNUP' &&
+      String(log.entity_type || '').toUpperCase() === 'INSTITUTE' &&
+      candidateIds.has(String(log.entity_id || ''))
+    )
+    .map((log) => String(log.entity_id || ''))
+  ));
+  if (signupIds.length === 1) {
+    const selected = candidates.find((record) => asId(record) === signupIds[0]);
+    const duplicates = candidates.filter((record) => asId(record) !== signupIds[0]);
+    if (selected && duplicates.every((record) => isLegacyAutoProvisionedPlaceholder(record, user))) {
+      return selected;
+    }
+  }
+
+  const nonPlaceholders = candidates.filter((record) => !isLegacyAutoProvisionedPlaceholder(record, user));
+  return nonPlaceholders.length === 1 ? nonPlaceholders[0] : null;
+}
+
 function insertCloudUser(user: Record<string, any>): void {
   db.prepare(`
     INSERT INTO users (
@@ -323,27 +422,34 @@ export async function recoverInstituteAccountFromFirestoreByEmail(
   if (!adapter.isConfigured()) return 'unconfigured';
 
   try {
-    const [institutes, users] = await Promise.all([
+    const [matchingInstitutes, users] = await Promise.all([
       adapter.findInstitutesByEmail(email),
       adapter.findUsersByEmail(email),
     ]);
-    if (institutes.length === 0 && users.length === 0) return 'not-found';
-    if (institutes.length !== 1 || users.length !== 1) return 'conflict';
+    if (matchingInstitutes.length === 0 && users.length === 0) return 'not-found';
+    if (users.length !== 1) return 'conflict';
 
-    const institute = institutes[0];
     const user = users[0];
-    const instituteId = asId(institute);
     const userId = asId(user);
     if (
-      !instituteId ||
       !userId ||
-      normalizeEmail(institute.email) !== email ||
       normalizeEmail(user.email) !== email ||
       String(user.role || '').toUpperCase() !== 'INSTITUTE_ADMIN' ||
       (expectedUserId && userId !== expectedUserId) ||
       typeof user.password_hash !== 'string' ||
       !user.password_hash
-    ) {
+    ) return 'conflict';
+
+    const signupAuditLogs = adapter.findInstituteSignupAuditLogs
+      ? await adapter.findInstituteSignupAuditLogs(userId)
+      : [];
+    const institute = selectCanonicalInstitute(matchingInstitutes, user, signupAuditLogs);
+    if (!institute) return matchingInstitutes.length === 0 ? 'not-found' : 'conflict';
+
+    const instituteId = asId(institute);
+    if (!instituteId) return 'conflict';
+    const duplicateCloudInstitutes = matchingInstitutes.filter((record) => asId(record) !== instituteId);
+    if (!duplicateCloudInstitutes.every((record) => isLegacyAutoProvisionedPlaceholder(record, user))) {
       return 'conflict';
     }
 
@@ -358,7 +464,7 @@ export async function recoverInstituteAccountFromFirestoreByEmail(
     ]);
     if (tombstones.some(Boolean)) return 'conflict';
 
-    const localUser = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(userId) as any;
+    const localUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
     const userByEmail = db.prepare('SELECT id FROM users WHERE lower(email) = ?').get(email) as any;
     if (userByEmail && String(userByEmail.id) !== userId) return 'conflict';
     if (
@@ -367,13 +473,29 @@ export async function recoverInstituteAccountFromFirestoreByEmail(
         String(localUser.role || '').toUpperCase() !== 'INSTITUTE_ADMIN')
     ) return 'conflict';
 
-    const localInstitute = db.prepare('SELECT id, code, email FROM institutes WHERE id = ?').get(instituteId) as any;
-    const instituteByEmail = db.prepare('SELECT id FROM institutes WHERE lower(email) = ?').get(email) as any;
+    const localInstitute = db.prepare('SELECT * FROM institutes WHERE id = ?').get(instituteId) as any;
+    const localInstituteByEmail = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(email) as any;
+    const localPlaceholder = localInstituteByEmail && String(localInstituteByEmail.id) !== instituteId
+      ? localInstituteByEmail
+      : null;
+
+    if (localPlaceholder) {
+      const hasMatchingOriginalSignup = hasInstituteSignupAuditForId(String(localPlaceholder.id));
+      if (
+        !isLegacyAutoProvisionedPlaceholder(localPlaceholder, user) ||
+        hasMatchingOriginalSignup ||
+        hasOperationalInstituteData(String(localPlaceholder.id))
+      ) return 'conflict';
+    }
+
     const instituteByCode = db.prepare('SELECT id FROM institutes WHERE code = ?').get(String(institute.code || '')) as any;
+    if (instituteByCode && String(instituteByCode.id) !== instituteId && String(instituteByCode.id) !== String(localPlaceholder?.id || '')) {
+      return 'conflict';
+    }
     if (
-      (instituteByEmail && String(instituteByEmail.id) !== instituteId) ||
-      (instituteByCode && String(instituteByCode.id) !== instituteId) ||
-      (localInstitute && normalizeEmail(localInstitute.email) !== email)
+      localInstitute &&
+      (normalizeEmail(localInstitute.email) !== email ||
+        String(localInstitute.code || '') !== String(institute.code || ''))
     ) return 'conflict';
 
     const localBatchIds = new Set(
@@ -382,18 +504,117 @@ export async function recoverInstituteAccountFromFirestoreByEmail(
     );
     for (const batch of cloudBatches) {
       const localById = db.prepare('SELECT institute_id FROM batches WHERE id = ?').get(asId(batch)) as any;
-      if (localById && String(localById.institute_id) !== instituteId) return 'conflict';
+      if (localById && String(localById.institute_id) !== instituteId && String(localById.institute_id) !== String(localPlaceholder?.id || '')) {
+        return 'conflict';
+      }
     }
 
     const missingLocalData = !localUser || !localInstitute ||
+      Boolean(localPlaceholder) ||
       cloudBatches.some((batch) => !localBatchIds.has(asId(batch)));
 
     db.exec('BEGIN IMMEDIATE');
     try {
+      if (localPlaceholder) {
+        const placeholderId = String(localPlaceholder.id);
+        const placeholderAlias = `recovered+${placeholderId}@invalid.caexamcheckerai.com`;
+
+        // Retain the old row as a disabled audit shell, but release its email so
+        // the original Cloud Firestore institute can be restored without a
+        // duplicate-email collision.
+        db.prepare(`
+          UPDATE institutes
+          SET email = ?, status = 'RECOVERED_DUPLICATE',
+              subscription_plan = 'RECOVERED_DUPLICATE', max_students = 0
+          WHERE id = ?
+        `).run(placeholderAlias, placeholderId);
+
+        // Insert the canonical parent before moving foreign-key-backed
+        // subscription and usage rows away from the placeholder.
+        if (!localInstitute) insertCloudInstitute(institute);
+
+        const canonicalSubscriptions = db.prepare(
+          'SELECT id FROM institute_subscriptions WHERE institute_id = ? LIMIT 1'
+        ).get(instituteId);
+        if (!canonicalSubscriptions) {
+          // Preserve a one-time starter trial that the old auto-provision path
+          // may already have granted against the temporary institute ID.
+          db.prepare(
+            'UPDATE institute_subscriptions SET institute_id = ? WHERE institute_id = ?'
+          ).run(instituteId, placeholderId);
+        } else {
+          db.prepare(`
+            UPDATE institute_subscriptions
+            SET status = 'SUPERSEDED', updated_at = CURRENT_TIMESTAMP
+            WHERE institute_id = ? AND status = 'ACTIVE'
+          `).run(placeholderId);
+        }
+
+        db.prepare(
+          'UPDATE institute_usage_ledger SET institute_id = ? WHERE institute_id = ?'
+        ).run(instituteId, placeholderId);
+
+        const legacyClaim = db.prepare(
+          'SELECT * FROM institute_trial_claims WHERE institute_id = ? LIMIT 1'
+        ).get(placeholderId) as any;
+        if (legacyClaim) {
+          const canonicalClaim = db.prepare(
+            'SELECT id FROM institute_trial_claims WHERE institute_id = ? LIMIT 1'
+          ).get(instituteId);
+          if (!canonicalClaim) {
+            db.prepare('UPDATE institute_trial_claims SET institute_id = ? WHERE id = ?')
+              .run(instituteId, legacyClaim.id);
+          }
+        }
+
+        db.prepare(`
+          UPDATE audit_logs SET entity_id = ?
+          WHERE entity_id = ? AND user_id = ? AND action = 'INSTITUTE_FREE_TRIAL_ACTIVATED'
+        `).run(instituteId, placeholderId, userId);
+      }
+
       if (!localUser) insertCloudUser(user);
-      if (!localInstitute) insertCloudInstitute(institute);
+      if (!localInstitute && !localPlaceholder) insertCloudInstitute(institute);
       for (const batch of cloudBatches) {
-        if (!localBatchIds.has(asId(batch))) insertCloudBatch(batch);
+        const batchId = asId(batch);
+        if (localBatchIds.has(batchId)) continue;
+        const oldPlaceholderBatch = localPlaceholder
+          ? db.prepare('SELECT institute_id FROM batches WHERE id = ?').get(batchId) as any
+          : null;
+        if (oldPlaceholderBatch && String(oldPlaceholderBatch.institute_id) === String(localPlaceholder.id)) {
+          db.prepare(`
+            UPDATE batches
+            SET institute_id = ?, name = ?, course_level = ?, description = ?
+            WHERE id = ?
+          `).run(
+            instituteId,
+            String(batch.name || 'Institute Batch'),
+            String(batch.course_level || 'INTERMEDIATE'),
+            String(batch.description || ''),
+            batchId,
+          );
+        } else if (!oldPlaceholderBatch) {
+          insertCloudBatch(batch);
+        } else {
+          throw new Error(`Institute batch identity conflict while recovering ${batchId}.`);
+        }
+      }
+
+      // When moving an earlier placeholder trial, preserve its entitlement on
+      // the canonical institute only if that institute had no subscription.
+      const activeSubscription = db.prepare(`
+        SELECT plan_id, student_capacity, expiry_date
+        FROM institute_subscriptions
+        WHERE institute_id = ? AND status = 'ACTIVE'
+        ORDER BY datetime(expiry_date) DESC
+        LIMIT 1
+      `).get(instituteId) as any;
+      if (activeSubscription) {
+        db.prepare(`
+          UPDATE institutes
+          SET subscription_plan = ?, max_students = ?, subscription_expires_at = ?
+          WHERE id = ?
+        `).run(activeSubscription.plan_id, activeSubscription.student_capacity, activeSubscription.expiry_date, instituteId);
       }
 
       const restoredUser = db.prepare('SELECT id, email, role FROM users WHERE id = ?').get(userId) as any;
