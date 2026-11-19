@@ -14,6 +14,7 @@ import { sendPasswordResetEmail, sendPasswordChangedConfirmation } from '../serv
 import { syncRecordToFirestore, persistStudentAccountToFirestore, recoverStudentAccountFromFirestoreByEmail } from '../services/firestoreSyncService.js';
 import { persistInstituteAccountToFirestore, recoverInstituteAccountFromFirestoreByEmail } from '../services/instituteAccountPersistenceService.js';
 import { ensureInstituteStarterTrial, getActiveInstituteSubscription, INSTITUTE_FREE_TRIAL_PLAN_ID } from '../services/instituteTrialService.js';
+import { prepareOrphanedTestInstituteAdminForRegistration, clearOrphanedTestInstituteTrialClaims } from '../services/instituteTestReactivationService.js';
 import { getFirestoreDb, getFirestoreDoc, getAllFirestoreDocs, queryFirestoreDocs, isTombstoned } from '../services/firestoreDbService.js';
 import { validateSrn } from '../utils/srnValidator.js';
 import { normalizePhoneNumber, normalizePhoneToE164, maskPhoneNumber, generateOtpCode, hashOtpCode, sendSmsOtp } from '../services/smsService.js';
@@ -1989,13 +1990,16 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
-    const existingUser = db.prepare('SELECT id, role FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
+    let reactivatedTestAdminId: string | null = null;
+    const existingUser = db.prepare('SELECT id, role, status FROM users WHERE lower(email) = ?').get(normalizedEmail) as {
       id: string;
       role: string;
+      status: string;
     } | undefined;
 
-    // An earlier local registration may have missed its cloud mirror. Repair its
-    // exact identity rather than generating a replacement institute/admin.
+    // An orphaned admin row is normally blocked: deleting its institute profile
+    // must not silently create a different identity. The only exception is the
+    // explicitly configured test Institute Admin account (test@gmail.com).
     if (existingUser) {
       if (String(existingUser.role || '').toUpperCase() === 'INSTITUTE_ADMIN') {
         const localInstitute = db.prepare('SELECT * FROM institutes WHERE lower(email) = ?').get(normalizedEmail) as any;
@@ -2010,7 +2014,19 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
               code: 'INSTITUTE_ACCOUNT_RECOVERY_CONFLICT',
             });
           }
-          if (requiresDurableAccountPersistence()) {
+
+          if (
+            recovery === 'not-found' &&
+            isConfiguredInstituteTestAccountMfaBypass({
+              email: normalizedEmail,
+              role: existingUser.role,
+              status: existingUser.status,
+            })
+          ) {
+            // Reuse the orphaned test admin ID; never create a second user document
+            // with the same email. The service rechecks Firestore identity and tombstones.
+            reactivatedTestAdminId = existingUser.id;
+          } else if (requiresDurableAccountPersistence()) {
             return res.status(503).json({
               error: 'The existing institute profile could not be safely restored. Please sign in or contact support; do not register again.',
               code: 'INSTITUTE_ACCOUNT_RECOVERY_UNAVAILABLE',
@@ -2044,14 +2060,16 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
           }
         }
       }
-      return res.status(400).json({ error: 'An account with this email address already exists. Please sign in.' });
+      if (!reactivatedTestAdminId) {
+        return res.status(400).json({ error: 'An account with this email address already exists. Please sign in.' });
+      }
     }
 
     const instituteId = `inst_${crypto.randomBytes(8).toString('hex')}`;
     const codePrefix = String(instituteName).replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'INST';
     const instituteCode = `${codePrefix}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
     const batchId = `batch_${crypto.randomBytes(8).toString('hex')}`;
-    const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const userId = reactivatedTestAdminId || `usr_${crypto.randomBytes(8).toString('hex')}`;
     const auditId = `log_${crypto.randomBytes(8).toString('hex')}`;
     const createdAt = new Date().toISOString();
     const passwordHash = hashPassword(password);
@@ -2080,10 +2098,14 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       phone: String(phone).trim(),
       role: 'INSTITUTE_ADMIN',
       status: 'ACTIVE',
-      account_classification: 'NORMAL',
+      account_classification: reactivatedTestAdminId ? 'TEST' : 'NORMAL',
       signup_platform: getSignupPlatform(req),
       mfa_enabled: 0,
       mfa_reset_required: 0,
+      mfa_phone: null,
+      mfa_enrolled_at: null,
+      totp_secret: null,
+      pending_totp_secret: null,
       created_at: createdAt,
       updated_at: createdAt,
     };
@@ -2104,6 +2126,36 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       details: `Registered institute ${instituteRecord.name}`,
       created_at: createdAt,
     };
+
+    if (reactivatedTestAdminId) {
+      const reactivation = await prepareOrphanedTestInstituteAdminForRegistration({
+        email: normalizedEmail,
+        userId: reactivatedTestAdminId,
+        userRecord: userRecord,
+      });
+      if (reactivation === 'conflict') {
+        return res.status(409).json({
+          error: 'The test administrator identity has a conflicting or deleted cloud record. Please contact support.',
+          code: 'TEST_INSTITUTE_REACTIVATION_CONFLICT',
+        });
+      }
+      if (reactivation !== 'prepared') {
+        return res.status(503).json({
+          error: 'The orphaned test administrator could not be safely reactivated. Please retry shortly.',
+          code: 'TEST_INSTITUTE_REACTIVATION_UNAVAILABLE',
+          retryable: true,
+        });
+      }
+
+      const trialClaimReset = await clearOrphanedTestInstituteTrialClaims(normalizedEmail, reactivatedTestAdminId);
+      if (trialClaimReset !== 'cleared') {
+        return res.status(503).json({
+          error: 'The test account was identified, but its previous test trial claim could not be safely reset. Please retry shortly.',
+          code: 'TEST_INSTITUTE_TRIAL_RESET_UNAVAILABLE',
+          retryable: true,
+        });
+      }
+    }
 
     // Do not acknowledge a production signup until Firestore has atomically
     // stored and read back the institute, admin, batch and signup audit record.
@@ -2155,14 +2207,36 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
         batchRecord.description, batchRecord.created_at,
       );
 
-      db.prepare(`
-        INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, signup_platform, mfa_enabled, mfa_reset_required, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
-      `).run(
-        userRecord.id, userRecord.email, userRecord.password_hash, userRecord.full_name, userRecord.phone,
-        userRecord.role, userRecord.status, userRecord.account_classification, userRecord.signup_platform,
-        userRecord.mfa_enabled, userRecord.mfa_reset_required, userRecord.created_at,
-      );
+      if (reactivatedTestAdminId) {
+        const updated = db.prepare(`
+          UPDATE users
+          SET password_hash = ?, full_name = ?, phone = ?, role = 'INSTITUTE_ADMIN',
+              status = 'ACTIVE', account_classification = 'TEST', signup_platform = ?,
+              mfa_enabled = 0, mfa_reset_required = 0, mfa_phone = NULL,
+              mfa_enrolled_at = NULL, totp_secret = NULL, pending_totp_secret = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND lower(email) = ? AND role = 'INSTITUTE_ADMIN' AND status = 'ACTIVE'
+        `).run(
+          userRecord.password_hash,
+          userRecord.full_name,
+          userRecord.phone,
+          userRecord.signup_platform,
+          reactivatedTestAdminId,
+          normalizedEmail,
+        );
+        if (Number(updated.changes || 0) !== 1) {
+          throw new Error('The existing test admin row changed during re-registration.');
+        }
+      } else {
+        db.prepare(`
+          INSERT INTO users (id, email, password_hash, full_name, phone, role, status, account_classification, signup_platform, mfa_enabled, mfa_reset_required, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP)
+        `).run(
+          userRecord.id, userRecord.email, userRecord.password_hash, userRecord.full_name, userRecord.phone,
+          userRecord.role, userRecord.status, userRecord.account_classification, userRecord.signup_platform,
+          userRecord.mfa_enabled, userRecord.mfa_reset_required, userRecord.created_at,
+        );
+      }
 
       db.prepare(`
         INSERT INTO audit_logs (id, user_id, action, entity_type, entity_id, details, created_at)
@@ -2176,6 +2250,12 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       try { db.exec('ROLLBACK'); } catch {}
       // The cloud copy remains authoritative and can heal the local runtime on login.
       throw localError;
+    }
+
+    if (reactivatedTestAdminId) {
+      // Old sessions belong to the previous test registration and must not
+      // remain valid after the credentials/profile are reset.
+      await revokeAllSessionsForUser(reactivatedTestAdminId);
     }
 
     // Activate the one-time Free Starter Trial as part of signup, not later
