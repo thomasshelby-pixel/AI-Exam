@@ -172,6 +172,7 @@ async function run() {
     const unsafeUserId = `usr_unsafe_placeholder_${suffix.toLowerCase()}`;
     const unsafeCanonicalId = `inst_unsafe_canonical_${suffix.toLowerCase()}`;
     const unsafePlaceholderId = `inst_unsafe_placeholder_${suffix.toLowerCase()}`;
+    const unsafeCode = `INST-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
     const unsafeCanonical = {
       ...canonical,
       id: unsafeCanonicalId,
@@ -182,6 +183,7 @@ async function run() {
       ...cloudPlaceholder,
       id: unsafePlaceholderId,
       email: unsafeEmail,
+      code: unsafeCode,
     };
     const unsafeUser = { ...user, id: unsafeUserId, email: unsafeEmail };
     const unsafeAdapter: InstituteAccountRecoveryAdapter = {
@@ -208,7 +210,7 @@ async function run() {
         id, name, code, logo_url, email, phone, address, website,
         contact_person, status, subscription_plan, max_students
       ) VALUES (?, 'Test Admin Academy', ?, '', ?, '9999999999', '', '', 'Test Admin', 'ACTIVE', 'NONE', 50)
-    `).run(unsafePlaceholderId, `INST-${suffix.slice(0, 6)}`, unsafeEmail);
+    `).run(unsafePlaceholderId, unsafeCode, unsafeEmail);
     db.prepare(`
       INSERT INTO institute_assignments (
         id, institute_id, title, subject_key, subject_name, maximum_marks, deadline
