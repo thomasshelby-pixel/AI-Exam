@@ -245,9 +245,32 @@ export async function evaluateMfaRequirementForLogin(
   // test Institute Admin. Read the persisted account state rather than relying
   // only on the caller's session claims. No factors or MFA records are deleted;
   // removing the deployment flags instantly restores the standard MFA flow.
-  const persistedMfaBypassUser = db.prepare(
+  let persistedMfaBypassUser = db.prepare(
     'SELECT email, role, status, account_classification FROM users WHERE id = ? LIMIT 1'
   ).get(user.id) as { email?: string; role?: string; status?: string; account_classification?: string } | undefined;
+
+  // Promote only the exact, user-designated test email in the Institute Admin
+  // portal. This also repairs accounts registered before the TEST classification
+  // was added and avoids depending on optional App Hosting YAML env injection.
+  if (
+    persistedMfaBypassUser &&
+    isApprovedTestInstituteAdminEmail(persistedMfaBypassUser.email) &&
+    String(persistedMfaBypassUser.role || '').toUpperCase() === 'INSTITUTE_ADMIN' &&
+    String(persistedMfaBypassUser.status || '').toUpperCase() === 'ACTIVE'
+  ) {
+    db.prepare(
+      "UPDATE users SET account_classification = 'TEST', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).run(user.id);
+    persistedMfaBypassUser = db.prepare(
+      'SELECT email, role, status, account_classification FROM users WHERE id = ? LIMIT 1'
+    ).get(user.id) as typeof persistedMfaBypassUser;
+    const persistedFullUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(user.id) as any;
+    if (persistedFullUser) {
+      void syncRecordToFirestore('users', user.id, persistedFullUser).catch((error) =>
+        console.warn('[AuthMFA] Could not persist designated test-account classification:', error)
+      );
+    }
+  }
 
   if (persistedMfaBypassUser && isConfiguredInstituteTestAccountMfaBypass(persistedMfaBypassUser)) {
     try {
@@ -2021,6 +2044,7 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
               email: normalizedEmail,
               role: existingUser.role,
               status: existingUser.status,
+              account_classification: 'TEST',
             })
           ) {
             // Reuse the orphaned test admin ID; never create a second user document
