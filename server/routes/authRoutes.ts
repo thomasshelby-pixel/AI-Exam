@@ -2791,7 +2791,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
     const userId = req.user.id;
     const user = db.prepare(`
       SELECT id, email, full_name, phone, role, status, password_hash, mfa_enabled, mfa_phone, created_at,
-             suspicious_activity_warning, suspicious_activity_reason, suspicious_activity_at
+             account_classification, suspicious_activity_warning, suspicious_activity_reason, suspicious_activity_at
       FROM users WHERE id = ?
     `).get(userId) as {
       id: string;
@@ -2804,6 +2804,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       mfa_enabled: number;
       mfa_phone: string | null;
       created_at: string;
+      account_classification: string;
       suspicious_activity_warning: number;
       suspicious_activity_reason: string | null;
       suspicious_activity_at: string | null;
@@ -2852,6 +2853,27 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
       });
     }
 
+    // Every App Hosting instance must independently recognize the one explicitly
+    // designated test admin. Do not depend on an earlier login's best-effort mirror
+    // having reached Firestore before this /me request lands on another instance.
+    if (
+      user.role === 'INSTITUTE_ADMIN' &&
+      user.status === 'ACTIVE' &&
+      isApprovedTestInstituteAdminEmail(user.email) &&
+      String(user.account_classification || '').toUpperCase() !== 'TEST'
+    ) {
+      db.prepare(
+        "UPDATE users SET account_classification = 'TEST', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND lower(email) = ? AND role = 'INSTITUTE_ADMIN' AND status = 'ACTIVE'"
+      ).run(user.id, user.email.toLowerCase());
+      user.account_classification = 'TEST';
+      const persistedTestUser = db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').get(user.id) as any;
+      if (persistedTestUser) {
+        void syncRecordToFirestore('users', user.id, persistedTestUser).catch((error) =>
+          console.warn('[AuthMe] Could not mirror designated test-account classification:', error)
+        );
+      }
+    }
+
     const isPermanentFree = checkPermanentFreeAccess(user.email);
 
     let profileData: Record<string, unknown> = {};
@@ -2887,10 +2909,19 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
     const meAuthProvider = inferAuthProvider(user.password_hash);
 
     const isMandatoryRole = user.role === 'INSTITUTE_ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'MCQ_ADMIN' || (user.role as string) === 'ADMIN';
+    const testAccountMfaBypass = isConfiguredInstituteTestAccountMfaBypass({
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      account_classification: user.account_classification,
+    });
 
-    // Authoritative MFA status check across SQLite, Firestore, authenticators, and recovery codes
+    // Authoritative MFA status check across SQLite, Firestore, authenticators, and recovery codes.
+    // The single explicitly designated test Institute Admin is exempted consistently
+    // here as well as in the login challenge decision; otherwise /me would re-enable
+    // the frontend MFA gate immediately after a successful bypassed login.
     const authMfaStatus = await getAuthoritativeUserMfaStatus(user.id);
-    const mfaEnabled = authMfaStatus.mfaEnabled;
+    const mfaEnabled = authMfaStatus.mfaEnabled && !testAccountMfaBypass;
 
     const rawCookies = (req as any).cookies || {};
     const deviceId =
@@ -2912,10 +2943,10 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
     const trustResult = verifyUserDeviceTrust(user.id, deviceId, candidateTokens);
     const deviceIsTrusted = trustResult.isTrusted;
 
-    let mfaVerified = false;
-    if (!isMandatoryRole) {
+    let mfaVerified = testAccountMfaBypass;
+    if (!testAccountMfaBypass && !isMandatoryRole) {
       mfaVerified = !mfaEnabled || !!req.user?.mfaVerified;
-    } else {
+    } else if (!testAccountMfaBypass) {
       if (mfaEnabled) {
         mfaVerified = !!req.user?.mfaVerified || deviceIsTrusted;
       } else {
@@ -2938,7 +2969,7 @@ router.get('/me', optionalAuthenticateToken, async (req: AuthRequest, res: Respo
         mfaEnabled,
         mfaPhone: user.mfa_phone ? maskPhoneNumber(user.mfa_phone) : null,
         mfaVerified,
-        mfaMandatory: isMandatoryRole,
+        mfaMandatory: isMandatoryRole && !testAccountMfaBypass,
         suspiciousActivityWarning: Boolean(user.suspicious_activity_warning),
         suspiciousActivityReason: user.suspicious_activity_reason || undefined,
         suspiciousActivityAt: user.suspicious_activity_at || undefined,
