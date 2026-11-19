@@ -33,7 +33,16 @@ async function run() {
     mfa_reset_required: 0,
   };
 
-  const cloudUsers = new Map<string, Record<string, any>>();
+  const cloudUsers = new Map<string, Record<string, any>>([
+    [userId, {
+      id: userId,
+      email,
+      password_hash: 'old-cloud-test-password-hash',
+      full_name: 'Old Test Admin',
+      role: 'INSTITUTE_ADMIN',
+      status: 'ACTIVE',
+    }],
+  ]);
   const cloudTrialClaims = new Map<string, Record<string, any>>([
     [claimId, { id: claimId, admin_user_id: userId, admin_email: email, institute_id: 'inst_old_test' }],
     [otherClaimId, { id: otherClaimId, admin_user_id: 'usr_other', admin_email: otherEmail, institute_id: 'inst_other' }],
