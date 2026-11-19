@@ -2543,6 +2543,20 @@ router.post('/institute/login', authLoginRateLimiter, async (req: Request, res: 
             expiresAt: starterTrial.expiresAt,
           });
         }
+        if (isApprovedTestInstituteAdminEmail(normalizedEmail)) {
+          const activeStarterTrial = getActiveInstituteSubscription(String(localInstitute.id));
+          if (!activeStarterTrial || activeStarterTrial.plan_id !== INSTITUTE_FREE_TRIAL_PLAN_ID) {
+            console.error('[InstituteLogin] Designated test account has no active starter trial:', {
+              instituteId: localInstitute.id,
+              reason: starterTrial.reason || 'ACTIVE_TEST_TRIAL_NOT_FOUND',
+            });
+            return res.status(503).json({
+              error: 'Your test institute account is signed in, but its free 30-day trial is not active yet. Please retry or contact support.',
+              code: 'INSTITUTE_TEST_STARTER_TRIAL_NOT_ACTIVE',
+              retryable: true,
+            });
+          }
+        }
       } catch (trialError) {
         console.error('[InstituteLogin] Starter trial activation failed:', trialError);
         if (requiresDurableAccountPersistence()) {
