@@ -33,6 +33,9 @@ jobs:
       - name: Exact test-email orphaned institute re-registration regression
         run: node_modules/.bin/tsx server/tests/instituteTestReactivation.test.ts
 
+      - name: Institute Portal test-account MFA gate regression
+        run: node_modules/.bin/tsx server/tests/institutePortalMfaGate.test.ts
+
       - name: Legacy institute placeholder identity recovery regression
         run: node_modules/.bin/tsx server/tests/instituteLegacyPlaceholderRecovery.test.ts
 
