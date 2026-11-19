@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { db, initDatabase } from '../db.js';
 import {
+  ensureInstituteStarterTrial,
+  getActiveInstituteSubscription,
+  INSTITUTE_FREE_TRIAL_PLAN_ID,
+} from '../services/instituteTrialService.js';
+import {
   clearOrphanedTestInstituteTrialClaims,
   prepareOrphanedTestInstituteAdminForRegistration,
   type TestInstituteReactivationAdapter,
@@ -15,6 +20,7 @@ async function run() {
   const claimId = `claim_test_reactivation_${suffix}`;
   const otherEmail = `other-institute-${suffix}@example.test`;
   const otherClaimId = `claim_other_reactivation_${suffix}`;
+  const instituteId = `inst_test_reactivation_${suffix}`;
 
   process.env.ENABLE_TEST_ACCOUNT_MFA_BYPASS = 'true';
   process.env.MFA_TEST_BYPASS_EMAIL = email;
@@ -125,6 +131,29 @@ async function run() {
       1,
     );
 
+    // After the stale test-email claim is cleared, its newly registered institute
+    // can claim exactly one 30-day 50-seat / 50-credit trial.
+    db.prepare(`
+      INSERT INTO institutes (
+        id, name, code, email, phone, address, website, contact_person, status,
+        subscription_plan, max_students
+      ) VALUES (?, 'Fresh Test Institute', ?, ?, '9999999999', '', '', 'Test Institute Admin',
+        'ACTIVE', 'PENDING_SELECTION', 50)
+    `).run(instituteId, `TEST-${suffix.toUpperCase()}`, email);
+    const trial = ensureInstituteStarterTrial({
+      instituteId,
+      adminUserId: userId,
+      adminEmail: email,
+    });
+    assert.equal(trial.granted, true);
+    const activeTrial = getActiveInstituteSubscription(instituteId);
+    assert.equal(activeTrial?.plan_id, INSTITUTE_FREE_TRIAL_PLAN_ID);
+    assert.equal(Number(activeTrial?.student_capacity), 50);
+    assert.equal(Number(activeTrial?.evaluation_allowance), 50);
+    assert.equal(Number(activeTrial?.evaluations_remaining), 50);
+    assert.equal(Number(activeTrial?.evaluations_used), 0);
+    assert.ok(activeTrial?.expiry_date);
+
     const conflictAdapter: TestInstituteReactivationAdapter = {
       ...adapter,
       findInstitutesByEmail: async () => [{ id: 'inst_real_conflict', email }],
@@ -155,7 +184,9 @@ async function run() {
 
     console.log('PASS: exact test-email re-registration is isolated; old test claim reset preserves other institutes.');
   } finally {
-    db.prepare('DELETE FROM institute_trial_claims WHERE id IN (?, ?)').run(claimId, otherClaimId);
+    db.prepare('DELETE FROM institute_trial_claims WHERE institute_id = ? OR id IN (?, ?)').run(instituteId, claimId, otherClaimId);
+    db.prepare('DELETE FROM institute_subscriptions WHERE institute_id = ?').run(instituteId);
+    db.prepare('DELETE FROM institutes WHERE id = ?').run(instituteId);
     db.prepare('DELETE FROM users WHERE id = ?').run(userId);
     delete process.env.ENABLE_TEST_ACCOUNT_MFA_BYPASS;
     delete process.env.MFA_TEST_BYPASS_EMAIL;
