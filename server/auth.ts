@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { resolveJwtSecret } from './config/jwtSecret.js';
 import jwt from 'jsonwebtoken';
 import { db } from './db.js';
 import { setFirestoreDoc } from './services/firestoreDbService.js';
@@ -7,7 +8,7 @@ import { getValidStudentCreditBalance, ensureMonthlyFreeEvaluationsReset } from 
 import { isDeviceTrusted, parseCookieValue, verifyUserDeviceTrust } from './services/trustService.js';
 import { getLegalConsentStatus } from './services/legalConsentService.js';
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'ca-exam-checker-super-secure-jwt-secret-2026-production';
+export const JWT_SECRET = resolveJwtSecret();
 
 export interface AuthRequest extends Request {
   user?: {

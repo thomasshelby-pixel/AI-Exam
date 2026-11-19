@@ -18,7 +18,7 @@ import pricingRoutes from './server/routes/pricingRoutes.js';
 import legalRoutes from './server/routes/legalRoutes.js';
 import mcqRoutes from './server/routes/mcqRoutes.js';
 import featureRoutes from './server/routes/featureRoutes.js';
-import { authenticateToken } from './server/auth.js';
+import { authenticateToken, requireRole } from './server/auth.js';
 import {
   hydrateFromFirestore,
   seedBaselineToFirestoreIfEmpty,
@@ -113,7 +113,7 @@ async function startServer() {
     });
   });
 
-  app.get('/api/health/email', async (req, res) => {
+  app.get('/api/health/email', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     try {
       const { verifySmtpTransporter, getSenderAddress } = await import('./server/services/emailService.js');
       const isConnected = await verifySmtpTransporter();
@@ -143,7 +143,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/health/persistence', async (req, res) => {
+  app.get('/api/health/persistence', authenticateToken, requireRole('SUPER_ADMIN'), async (req, res) => {
     try {
       const { inspectCloudStorageStatus } = await import('./server/services/firebaseCloudStorageService.js');
       const gcsStatus = await inspectCloudStorageStatus();
