@@ -108,11 +108,11 @@ async function run() {
     assert.equal(tombstonedClaims.has(claimId), true);
     assert.equal(cloudTrialClaims.has(otherClaimId), true);
     assert.equal(
-      Number(db.prepare('SELECT COUNT(*) AS count FROM institute_trial_claims WHERE lower(admin_email) = ?').get(email)?.count || 0),
+      Number((db.prepare('SELECT COUNT(*) AS count FROM institute_trial_claims WHERE lower(admin_email) = ?').get(email) as any)?.count || 0),
       0,
     );
     assert.equal(
-      Number(db.prepare('SELECT COUNT(*) AS count FROM institute_trial_claims WHERE lower(admin_email) = ?').get(otherEmail)?.count || 0),
+      Number((db.prepare('SELECT COUNT(*) AS count FROM institute_trial_claims WHERE lower(admin_email) = ?').get(otherEmail) as any)?.count || 0),
       1,
     );
 
