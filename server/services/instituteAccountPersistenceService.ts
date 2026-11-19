@@ -530,6 +530,10 @@ export async function recoverInstituteAccountFromFirestoreByEmail(
           WHERE id = ?
         `).run(placeholderAlias, placeholderId);
 
+        // Insert the canonical parent before moving foreign-key-backed
+        // subscription and usage rows away from the placeholder.
+        if (!localInstitute) insertCloudInstitute(institute);
+
         const canonicalSubscriptions = db.prepare(
           'SELECT id FROM institute_subscriptions WHERE institute_id = ? LIMIT 1'
         ).get(instituteId);
@@ -571,7 +575,7 @@ export async function recoverInstituteAccountFromFirestoreByEmail(
       }
 
       if (!localUser) insertCloudUser(user);
-      if (!localInstitute) insertCloudInstitute(institute);
+      if (!localInstitute && !localPlaceholder) insertCloudInstitute(institute);
       for (const batch of cloudBatches) {
         const batchId = asId(batch);
         if (localBatchIds.has(batchId)) continue;
