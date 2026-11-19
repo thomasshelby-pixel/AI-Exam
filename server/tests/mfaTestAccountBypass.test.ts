@@ -74,7 +74,7 @@ assert.equal(
     ...designatedTestAdmin,
     email: 'another@gmail.com',
     account_classification: 'TEST',
-  }, { ENABLE_TEST_ACCOUNT_MFA_BYPASS: 'true', MFA_TEST_BYPASS_EMAIL: 'other@gmail.com' }),
+  }, { ENABLE_TEST_ACCOUNT_MFA_BYPASS: 'true', MFA_TEST_BYPASS_EMAIL: 'another@gmail.com' }),
   true,
   'An alternate email is supported only when explicitly configured and TEST-classified.',
 );
