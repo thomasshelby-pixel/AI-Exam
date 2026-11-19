@@ -573,7 +573,28 @@ export async function recoverInstituteAccountFromFirestoreByEmail(
       if (!localUser) insertCloudUser(user);
       if (!localInstitute) insertCloudInstitute(institute);
       for (const batch of cloudBatches) {
-        if (!localBatchIds.has(asId(batch))) insertCloudBatch(batch);
+        const batchId = asId(batch);
+        if (localBatchIds.has(batchId)) continue;
+        const oldPlaceholderBatch = localPlaceholder
+          ? db.prepare('SELECT institute_id FROM batches WHERE id = ?').get(batchId) as any
+          : null;
+        if (oldPlaceholderBatch && String(oldPlaceholderBatch.institute_id) === String(localPlaceholder.id)) {
+          db.prepare(`
+            UPDATE batches
+            SET institute_id = ?, name = ?, course_level = ?, description = ?
+            WHERE id = ?
+          `).run(
+            instituteId,
+            String(batch.name || 'Institute Batch'),
+            String(batch.course_level || 'INTERMEDIATE'),
+            String(batch.description || ''),
+            batchId,
+          );
+        } else if (!oldPlaceholderBatch) {
+          insertCloudBatch(batch);
+        } else {
+          throw new Error(`Institute batch identity conflict while recovering ${batchId}.`);
+        }
       }
 
       // When moving an earlier placeholder trial, preserve its entitlement on
