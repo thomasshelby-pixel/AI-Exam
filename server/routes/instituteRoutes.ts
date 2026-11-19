@@ -25,14 +25,16 @@ router.use(async (req: AuthRequest, res: Response, next) => {
 
   const email = String(user.email || '').trim().toLowerCase();
   const localInstitute = db.prepare('SELECT id FROM institutes WHERE lower(email) = ?').get(email) as { id: string } | undefined;
-  if (localInstitute) return next();
 
+  // Always compare an existing local row with the authoritative cloud identity.
+  // A pre-fix auto-provisioned placeholder can otherwise hide the original row.
   const recovery = await recoverInstituteAccountFromFirestoreByEmail(email, user.id);
   if (recovery === 'recovered' || recovery === 'already-present') return next();
 
   if (recovery === 'not-found') {
-    // The original account is absent from the authoritative cloud store.
-    // Do not silently fabricate a new "{name} Academy" profile.
+    // Preserve compatibility for a pre-existing local account that has not yet
+    // been mirrored, but never fabricate a replacement when no local row exists.
+    if (localInstitute) return next();
     (req as any).instituteRecoveryStatus = 'not-found';
     return next();
   }
