@@ -27,6 +27,9 @@ jobs:
       - name: Install dependencies
         run: npm install --no-package-lock --no-audit --no-fund
 
+      - name: JWT secret configuration security regression
+        run: node_modules/.bin/tsx server/tests/jwtSecretConfiguration.test.ts
+
       - name: Institute account cloud persistence and deployment recovery regression
         run: node_modules/.bin/tsx server/tests/instituteAccountCloudPersistence.test.ts
 
