@@ -167,20 +167,61 @@ async function run() {
     assert.equal(repeated, 'already-present',
       'Repeated login must resolve to the same canonical institute without granting a second trial.');
 
-    // Never auto-replace a real institute placeholder if it already holds students.
-    const unsafeId = `inst_unsafe_${suffix.toLowerCase()}`;
+    // Never auto-replace a real institute placeholder if it already holds operational data.
+    const unsafeEmail = `unsafe-placeholder-${suffix.toLowerCase()}@example.test`;
+    const unsafeUserId = `usr_unsafe_placeholder_${suffix.toLowerCase()}`;
+    const unsafeCanonicalId = `inst_unsafe_canonical_${suffix.toLowerCase()}`;
+    const unsafePlaceholderId = `inst_unsafe_placeholder_${suffix.toLowerCase()}`;
+    const unsafeCanonical = {
+      ...canonical,
+      id: unsafeCanonicalId,
+      email: unsafeEmail,
+      code: `UNSAFE-${suffix.slice(0, 6)}`,
+    };
+    const unsafeCloudPlaceholder = {
+      ...cloudPlaceholder,
+      id: unsafePlaceholderId,
+      email: unsafeEmail,
+    };
+    const unsafeUser = { ...user, id: unsafeUserId, email: unsafeEmail };
+    const unsafeAdapter: InstituteAccountRecoveryAdapter = {
+      ...adapter,
+      findInstitutesByEmail: async (lookupEmail) =>
+        lookupEmail === unsafeEmail ? [unsafeCanonical, unsafeCloudPlaceholder] : [],
+      findUsersByEmail: async (lookupEmail) =>
+        lookupEmail === unsafeEmail ? [unsafeUser] : [],
+      findInstituteSignupAuditLogs: async (lookupUserId) =>
+        lookupUserId === unsafeUserId ? [{
+          ...signupAudit,
+          user_id: unsafeUserId,
+          entity_id: unsafeCanonicalId,
+        }] : [],
+      findBatchesByInstituteId: async (lookupId) =>
+        lookupId === unsafeCanonicalId ? [{ ...canonicalBatch, id: `batch_${unsafeUserId}`, institute_id: unsafeCanonicalId }] : [],
+    };
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, full_name, phone, role, status)
+      VALUES (?, ?, ?, ?, ?, 'INSTITUTE_ADMIN', 'ACTIVE')
+    `).run(unsafeUserId, unsafeEmail, unsafeUser.password_hash, unsafeUser.full_name, unsafeUser.phone);
     db.prepare(`
       INSERT INTO institutes (
         id, name, code, logo_url, email, phone, address, website,
         contact_person, status, subscription_plan, max_students
       ) VALUES (?, 'Test Admin Academy', ?, '', ?, '9999999999', '', '', 'Test Admin', 'ACTIVE', 'NONE', 50)
-    `).run(unsafeId, `INST-${suffix.slice(0, 6)}`, email);
+    `).run(unsafePlaceholderId, `INST-${suffix.slice(0, 6)}`, unsafeEmail);
+    db.prepare(`
+      INSERT INTO institute_assignments (
+        id, institute_id, title, subject_key, subject_name, maximum_marks, deadline
+      ) VALUES (?, ?, 'Existing Assignment', 'law', 'Corporate Law', 100, '2026-12-01T00:00:00.000Z')
+    `).run(`asgn_${unsafeUserId}`, unsafePlaceholderId);
     assert.equal(
-      await recoverInstituteAccountFromFirestoreByEmail(email, userId, adapter),
+      await recoverInstituteAccountFromFirestoreByEmail(unsafeEmail, unsafeUserId, unsafeAdapter),
       'conflict',
-      'Ambiguous cloud identity remains blocked when more than one legacy-looking duplicate exists or is not safe to replace.',
+      'A temporary-looking row with real institute activity must never be overwritten.',
     );
-    db.prepare('DELETE FROM institutes WHERE id = ?').run(unsafeId);
+    db.prepare('DELETE FROM institute_assignments WHERE institute_id = ?').run(unsafePlaceholderId);
+    db.prepare('DELETE FROM institutes WHERE id IN (?, ?)').run(unsafeCanonicalId, unsafePlaceholderId);
+    db.prepare('DELETE FROM users WHERE id = ?').run(unsafeUserId);
 
     console.log('PASS: audited original institute is restored over empty legacy placeholder; trial and safety checks preserved.');
   } finally {
