@@ -2069,7 +2069,7 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
     const codePrefix = String(instituteName).replace(/[^a-zA-Z]/g, '').slice(0, 4).toUpperCase() || 'INST';
     const instituteCode = `${codePrefix}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
     const batchId = `batch_${crypto.randomBytes(8).toString('hex')}`;
-    const userId = `usr_${crypto.randomBytes(8).toString('hex')}`;
+    const userId = reactivatedTestAdminId || `usr_${crypto.randomBytes(8).toString('hex')}`;
     const auditId = `log_${crypto.randomBytes(8).toString('hex')}`;
     const createdAt = new Date().toISOString();
     const passwordHash = hashPassword(password);
@@ -2102,6 +2102,10 @@ router.post('/institute/register', authRegisterRateLimiter, async (req: Request,
       signup_platform: getSignupPlatform(req),
       mfa_enabled: 0,
       mfa_reset_required: 0,
+      mfa_phone: null,
+      mfa_enrolled_at: null,
+      totp_secret: null,
+      pending_totp_secret: null,
       created_at: createdAt,
       updated_at: createdAt,
     };
