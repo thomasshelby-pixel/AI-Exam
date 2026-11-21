@@ -5,6 +5,7 @@ import path from 'node:path';
 import { db, hashPassword, verifyPassword, loadEvaluationRunPackage } from '../db.js';
 import { authenticateToken, authenticateSelfDeleteToken, AuthRequest, getStudentEntitlement, checkPermanentFreeAccess } from '../auth.js';
 import { validateAnswerSheetDocument, evaluateCAAnswerSheet } from '../gemini.js';
+import { validateAnswerSheetUpload, AnswerSheetUploadValidationResult } from '../utils/answerSheetUploadValidation.js';
 import { CALevel, MaterialType, CheckingMode, EvaluationResult } from '../../src/types/index.js';
 import {
   generateCheckedCopyPdf,
@@ -79,6 +80,19 @@ import {
 } from '../services/notificationService.js';
 
 const router = Router();
+
+function sendAnswerSheetUploadValidationError(
+  res: Response,
+  validation: AnswerSheetUploadValidationResult
+): Response | null {
+  if (validation.valid) return null;
+  return res.status(validation.status).json({
+    success: false,
+    code: validation.code,
+    error: validation.error,
+    ...(validation.pageCount !== undefined ? { pageCount: validation.pageCount } : {}),
+  });
+}
 
 function getStudentCreditSummaryForAccess(userId: string, hasPermanentFreeAccess: boolean) {
   const currentSummary = getStudentCreditDetailedSummary(userId);
@@ -773,6 +787,13 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
       });
     }
 
+    const preflightUpload = fileBase64
+      ? await validateAnswerSheetUpload(fileBase64, String(filename || 'ca_answer_sheet.pdf'), String(mimeType || 'application/pdf'))
+      : null;
+    if (preflightUpload && !preflightUpload.valid) {
+      return sendAnswerSheetUploadValidationError(res, preflightUpload);
+    }
+
     // 1. Failure Condition: Load ICAI suggested answers & marking scheme from verified official materials
     let parsedMtpSeries: number | undefined = undefined;
     if (materialType === 'MTP') {
@@ -952,9 +973,10 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
     let documentLegibility = 'HIGH';
 
     if (fileBase64) {
+      const validatedUpload = preflightUpload!;
       const docValidation = await validateAnswerSheetDocument(
-        fileBase64,
-        mimeType || 'application/pdf',
+        validatedUpload.normalizedBase64,
+        validatedUpload.detectedMime,
         filename || 'ca_answer_sheet.pdf'
       );
 
@@ -970,16 +992,9 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
         });
       }
 
-      // Estimate page count
-      try {
-        const rawBuf = Buffer.from(fileBase64, 'base64');
-        const isPdf = rawBuf.length > 4 && rawBuf[0] === 0x25 && rawBuf[1] === 0x50;
-        if (isPdf) {
-          const doc = await PDFDocument.load(rawBuf, { ignoreEncryption: true });
-          pageCount = doc.getPageCount();
-        }
-      } catch (err) {
-        console.warn('Page count inspection notice:', err);
+      // The shared upload validator already parsed PDFs and enforced the 50-page cap.
+      if (validatedUpload.detectedMime === 'application/pdf') {
+        pageCount = validatedUpload.pageCount || 1;
       }
     }
 
@@ -1210,6 +1225,16 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     if (!fileBase64 || !level || !subjectKey || !subjectName) {
       return res.status(400).json({ error: 'Missing required evaluation parameters or answer sheet file.' });
     }
+
+    const uploadValidation = await validateAnswerSheetUpload(
+      fileBase64,
+      String(filename || 'ca_answer_sheet.pdf'),
+      String(mimeType || 'application/pdf')
+    );
+    if (!uploadValidation.valid) {
+      return sendAnswerSheetUploadValidationError(res, uploadValidation);
+    }
+    const validatedFileBase64 = uploadValidation.normalizedBase64;
 
     // Every answer-sheet evaluation must match the student's currently saved CA course.
     // Institute materials are subject to this gate too; institute access never overrides
@@ -1670,7 +1695,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 
     // Save uploaded file to uploads directory for original & checked copy generation.
     // Fingerprint the normalized file to detect exact answer-sheet reuse across free-tier accounts.
-    let pdfBuf = Buffer.from(fileBase64, 'base64');
+    let pdfBuf = uploadValidation.buffer;
     let answerSheetSha256 = '';
     let originalFileStorageConfirmed = false;
     try {
@@ -1823,8 +1848,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
     // Step D: Document Validation (Verify it is a genuine student CA answer sheet)
     // Rejects admit cards, hall tickets, registration forms, certificates, blank files, etc.
     const docValidation = await validateAnswerSheetDocument(
-      fileBase64,
-      mimeType || 'application/pdf',
+      validatedFileBase64,
+      uploadValidation.detectedMime,
       filename || 'ca_answer_sheet.pdf'
     );
 
@@ -1852,7 +1877,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       selectedSubjectKey: subjectKey,
       selectedSubjectName: subjectName,
       filename: filename || 'ca_answer_sheet.pdf',
-      fileBase64,
+      fileBase64: validatedFileBase64,
     });
 
     if (subjectValidation.isMismatch) {
@@ -2085,8 +2110,8 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
       attempt: evaluationMaterialAttempt || (materialSource === 'INSTITUTE' ? 'Institute Series' : 'May 2026'),
       syllabusVersion: referenceMaterial.syllabus_version || 'ALL',
       checkingMode: selectedCheckingMode,
-      fileBase64,
-      mimeType: mimeType || 'application/pdf',
+      fileBase64: validatedFileBase64,
+      mimeType: uploadValidation.detectedMime,
       filename: filename || 'ca_answer_sheet.pdf',
       pdfBuf,
       referenceQuestionPaperText: referenceMaterial.question_paper_text,
@@ -5194,6 +5219,16 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       return res.status(400).json({ error: 'Student answer sheet file is required.' });
     }
 
+    const uploadValidation = await validateAnswerSheetUpload(
+      fileBase64,
+      String(req.body.filename || 'institute_test_submission.pdf'),
+      String(mimeType || 'application/pdf')
+    );
+    if (!uploadValidation.valid) {
+      return sendAnswerSheetUploadValidationError(res, uploadValidation);
+    }
+    const validatedFileBase64 = uploadValidation.normalizedBase64;
+
     // Verify test exists and is published
     const test = db.prepare(`
       SELECT t.*, i.name as institute_name,
@@ -5258,7 +5293,7 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
-    const rawBuf = Buffer.from(fileBase64, 'base64');
+    const rawBuf = uploadValidation.buffer;
     let pdfBuf = rawBuf;
 
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
@@ -5349,8 +5384,8 @@ router.post(['/institute/tests/:id/submit', '/institute-tests/:id/submit'], requ
       attempt: 'Institute Series',
       syllabusVersion: 'New Scheme 2024',
       checkingMode: (checkingMode as CheckingMode) || 'standard',
-      fileBase64,
-      mimeType: mimeType || 'application/pdf',
+      fileBase64: validatedFileBase64,
+      mimeType: uploadValidation.detectedMime,
       filename: (req.body.filename as string) || 'institute_test_submission.pdf',
       pdfBuf,
       referenceQuestionPaperText: test.question_paper_text,
@@ -5415,6 +5450,16 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       return res.status(400).json({ error: 'Student answer sheet file is required.' });
     }
 
+    const uploadValidation = await validateAnswerSheetUpload(
+      fileBase64,
+      String(req.body.filename || 'institute_material_submission.pdf'),
+      String(mimeType || 'application/pdf')
+    );
+    if (!uploadValidation.valid) {
+      return sendAnswerSheetUploadValidationError(res, uploadValidation);
+    }
+    const validatedFileBase64 = uploadValidation.normalizedBase64;
+
     const material = db.prepare(`
       SELECT m.*, i.name as institute_name
       FROM institute_materials m
@@ -5448,7 +5493,7 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
     if (!fs.existsSync(uploadsDir)) {
       fs.mkdirSync(uploadsDir, { recursive: true });
     }
-    const rawBuf = Buffer.from(fileBase64, 'base64');
+    const rawBuf = uploadValidation.buffer;
     const pdfBuf = rawBuf;
 
     const evaluationId = `eval_${crypto.randomBytes(8).toString('hex')}`;
@@ -5538,8 +5583,8 @@ router.post(['/institute-materials/:id/submit', '/institute/materials/:id/submit
       attempt: 'Institute Series',
       syllabusVersion: 'New Scheme 2024',
       checkingMode: (checkingMode as CheckingMode) || 'standard',
-      fileBase64,
-      mimeType: mimeType || 'application/pdf',
+      fileBase64: validatedFileBase64,
+      mimeType: uploadValidation.detectedMime,
       filename: (req.body.filename as string) || 'institute_material_submission.pdf',
       pdfBuf,
       referenceQuestionPaperText: material.question_paper_text,
