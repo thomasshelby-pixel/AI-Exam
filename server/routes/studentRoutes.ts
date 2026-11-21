@@ -83,9 +83,8 @@ const router = Router();
 
 function sendAnswerSheetUploadValidationError(
   res: Response,
-  validation: AnswerSheetUploadValidationResult
-): Response | null {
-  if (validation.valid) return null;
+  validation: Extract<AnswerSheetUploadValidationResult, { valid: false }>
+): Response {
   return res.status(validation.status).json({
     success: false,
     code: validation.code,
