@@ -85,7 +85,7 @@ function sendAnswerSheetUploadValidationError(
   res: Response,
   validation: AnswerSheetUploadValidationResult
 ): Response {
-  if (validation.valid) {
+  if (!('status' in validation)) {
     return res.status(500).json({
       success: false,
       code: 'ANSWER_SHEET_VALIDATION_STATE_ERROR',
