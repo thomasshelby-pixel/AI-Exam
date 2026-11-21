@@ -63,9 +63,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         const res = await apiRequest<{
           reviews: StudentReview[];
           stats: { totalReviews: number; averageRating: number };
-        }>('/api/reviews?limit=3&sort=most_liked');
+        }>('/api/reviews?limit=5&sort=most_liked');
         if (res.reviews) {
-          setSampleReviews(res.reviews.slice(0, 3));
+          setSampleReviews(res.reviews.slice(0, 5));
         }
         if (res.stats) {
           setReviewStats(res.stats);
@@ -124,11 +124,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           Stop waiting weeks for test series checking. Upload your handwritten mock answers and receive detailed, examination-style evaluation with line-by-line step marking, working-notes assessment, and examiner deduction remarks. Processing time varies depending on answer-sheet length and complexity.
         </p>
 
-        {/* Standardized Primary & Secondary CTA Buttons */}
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-1">
+        {/* One primary conversion action, one educational secondary action */}
+        <div className="flex flex-col items-center justify-center gap-3 pt-1">
           <button
             onClick={onNavigateRegister}
-            className="w-full sm:w-auto px-6 py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full sm:w-auto min-w-56 px-8 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
           >
             <span>Claim 2 Free Evaluations</span>
             <ArrowRight className="w-4 h-4" />
@@ -136,20 +136,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
           <button
             onClick={onNavigateHowItWorks}
-            className="w-full sm:w-auto px-5 py-3 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-sm transition border border-slate-300 dark:border-slate-700 shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+            className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:text-blue-700 dark:hover:text-blue-300 transition cursor-pointer"
           >
             <BookOpen className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span>How Step Marking Works</span>
+            <span>See how step marking works</span>
           </button>
 
           <a
             id="landing-android-download"
             href={ANDROID_APP_DOWNLOAD_PAGE}
-            className="w-full sm:w-auto px-5 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-bold text-sm transition border border-emerald-200 dark:border-emerald-800 shadow-sm flex items-center justify-center gap-2"
-            aria-label="Download Exam Checker AI Android APK"
+            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50/80 dark:bg-emerald-950/30 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 transition"
+            aria-label="Open the Exam Checker AI Android app download page"
           >
-            <Download className="w-4 h-4" />
-            <span>Download Android App</span>
+            <Download className="w-3.5 h-3.5" />
+            <span>Also available on Android</span>
           </a>
         </div>
 
@@ -289,7 +289,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         </div>
       </section>
 
-      {/* Transparent Student Feedback & Reviews Section */}
+      {/* Show social proof only when there are enough real, verified reviews to be useful. */}
+      {reviewStats.totalReviews >= 5 && sampleReviews.length >= 5 && (
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 sm:p-8 space-y-6 shadow-xs">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -376,6 +377,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           )}
         </div>
       </section>
+      )}
 
       {/* Levels Covered Section */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">

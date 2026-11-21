@@ -767,6 +767,38 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
+      {metrics.totalEvaluations === 0 && (
+        <section
+          aria-labelledby="first-evaluation-title"
+          className="student-glass-panel relative overflow-hidden rounded-2xl border border-blue-300/20 p-5 sm:p-7"
+        >
+          <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-blue-500/15 blur-3xl" />
+          <div className="relative flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="max-w-2xl">
+              <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-cyan-300/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-100">
+                <Sparkles className="h-3.5 w-3.5" />
+                Your first step
+              </div>
+              <h2 id="first-evaluation-title" className="mt-3 text-xl font-black text-white sm:text-2xl">
+                Start with your first answer-sheet evaluation
+              </h2>
+              <p className="mt-2 text-xs leading-6 text-blue-100/70 sm:text-sm">
+                Upload a complete handwritten answer sheet to receive question-wise marks, examiner-style feedback and a checked copy. Your evaluation history and progress will appear here after your first completed evaluation.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onNavigateUpload}
+              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-xs font-bold text-white shadow-lg shadow-blue-950/25 transition hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2 focus:ring-offset-slate-950"
+            >
+              <Upload className="h-4 w-4" />
+              Evaluate answer sheet
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </section>
+      )}
+
       {/* KPI Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Entitlement Card */}

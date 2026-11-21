@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import QRCode from 'qrcode';
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,6 +13,9 @@ import {
   Settings2,
   ExternalLink,
   RefreshCw,
+  LayoutDashboard,
+  Camera,
+  ClipboardCheck,
 } from 'lucide-react';
 
 interface AndroidAppMetadata {
@@ -77,6 +81,7 @@ export const AndroidDownloadPage: React.FC = () => {
   const [metadata, setMetadata] = useState<AndroidAppMetadata | null>(null);
   const [loading, setLoading] = useState(true);
   const [metadataError, setMetadataError] = useState('');
+  const [downloadQrDataUrl, setDownloadQrDataUrl] = useState('');
 
   const loadMetadata = useCallback(async () => {
     setLoading(true);
@@ -102,6 +107,25 @@ export const AndroidDownloadPage: React.FC = () => {
   useEffect(() => {
     void loadMetadata();
   }, [loadMetadata]);
+
+  useEffect(() => {
+    let active = true;
+    QRCode.toDataURL(`${window.location.origin}/download`, {
+      width: 180,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#0f172a', light: '#ffffff' },
+    })
+      .then((dataUrl) => {
+        if (active) setDownloadQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (active) setDownloadQrDataUrl('');
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const size = metadata?.sizeLabel || 'Official APK';
   const updatedAt = formatUpdatedAt(metadata?.updatedAt);
@@ -185,6 +209,25 @@ export const AndroidDownloadPage: React.FC = () => {
             <p className="mt-3 text-xs leading-5 text-slate-400">
               The APK is delivered from this website. The downloaded filename is <span className="font-semibold text-slate-300">Exam Checker AI.apk</span>.
             </p>
+
+            <div className="mt-6 hidden items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 lg:flex">
+              <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-xl bg-white p-2">
+                {downloadQrDataUrl ? (
+                  <img src={downloadQrDataUrl} alt="QR code to open the CA Exam Checker AI Android download page on a phone" className="h-full w-full" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-slate-500">
+                    <Smartphone className="h-8 w-8" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-extrabold text-white">Already on desktop?</p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">
+                  Scan this QR code with your phone to open this page and download the Android app directly.
+                </p>
+                <p className="mt-2 break-all text-[10px] font-semibold text-cyan-300">caexamcheckerai.com/download</p>
+              </div>
+            </div>
           </div>
 
           <div className="relative mx-auto w-full max-w-md">
@@ -233,6 +276,81 @@ export const AndroidDownloadPage: React.FC = () => {
             </div>
           </div>
         </div>
+
+        <section aria-labelledby="app-workflow-preview-title" className="mx-auto mt-16 max-w-5xl sm:mt-20">
+          <div className="mb-7 max-w-2xl">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">App experience</p>
+            <h2 id="app-workflow-preview-title" className="mt-2 text-2xl font-black tracking-tight text-white sm:text-3xl">
+              Your exam workflow, on your phone
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-400">
+              Illustrative previews of the core student workflows available through CA Exam Checker AI.
+            </p>
+          </div>
+
+          <div className="grid gap-5 md:grid-cols-3">
+            {[
+              {
+                title: 'Student dashboard',
+                caption: 'Account, evaluations and credits',
+                icon: LayoutDashboard,
+                accent: 'from-blue-500/25 to-indigo-500/10',
+                rows: ['Evaluation history', 'Free checks remaining', 'Recent results'],
+              },
+              {
+                title: 'Answer-sheet upload',
+                caption: 'Submit your handwritten paper',
+                icon: Camera,
+                accent: 'from-cyan-500/25 to-blue-500/10',
+                rows: ['Choose your CA paper', 'Add answer-sheet PDF', 'Review before submit'],
+              },
+              {
+                title: 'Checked copy',
+                caption: 'Review marks and feedback',
+                icon: ClipboardCheck,
+                accent: 'from-emerald-500/25 to-teal-500/10',
+                rows: ['Question-wise marks', 'Examiner remarks', 'Checked PDF'],
+              },
+            ].map((screen) => {
+              const Icon = screen.icon;
+              return (
+                <article key={screen.title} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 sm:p-5">
+                  <div className={`mx-auto w-full max-w-[220px] rounded-[2rem] border border-white/15 bg-gradient-to-br ${screen.accent} p-2 shadow-xl`}>
+                    <div className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-950 px-3 pb-4 pt-3">
+                      <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-slate-700" />
+                      <div className="flex items-center gap-2 border-b border-white/10 pb-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600/20 text-blue-200">
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-extrabold text-white">Exam Checker AI</p>
+                          <p className="text-[8px] text-slate-500">Student portal</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
+                        <p className="text-[9px] font-bold text-slate-200">{screen.title}</p>
+                        <p className="mt-1 text-[8px] leading-4 text-slate-500">{screen.caption}</p>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {screen.rows.map((row, index) => (
+                          <div key={row} className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.03] p-2">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-md bg-blue-500/15 text-[8px] font-bold text-blue-200">{index + 1}</span>
+                            <span className="text-[8px] font-medium text-slate-300">{row}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-4 h-1 rounded-full bg-slate-800">
+                        <div className="h-1 w-2/3 rounded-full bg-blue-500" />
+                      </div>
+                    </div>
+                  </div>
+                  <h3 className="mt-4 text-center text-sm font-extrabold text-white">{screen.title}</h3>
+                  <p className="mt-1 text-center text-xs text-slate-400">{screen.caption}</p>
+                </article>
+              );
+            })}
+          </div>
+        </section>
 
         <section id="installation" className="mx-auto mt-16 max-w-5xl scroll-mt-24 sm:mt-20">
           <div className="mb-7 max-w-2xl">
