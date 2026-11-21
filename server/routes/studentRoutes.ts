@@ -83,8 +83,15 @@ const router = Router();
 
 function sendAnswerSheetUploadValidationError(
   res: Response,
-  validation: Extract<AnswerSheetUploadValidationResult, { valid: false }>
+  validation: AnswerSheetUploadValidationResult
 ): Response {
+  if (validation.valid) {
+    return res.status(500).json({
+      success: false,
+      code: 'ANSWER_SHEET_VALIDATION_STATE_ERROR',
+      error: 'The upload validation response was used for an already validated file.',
+    });
+  }
   return res.status(validation.status).json({
     success: false,
     code: validation.code,
@@ -971,8 +978,8 @@ router.post('/preflight-evaluation', requireFeatureAccess('CHECKER', 'checker_an
     let pageCount = 1;
     let documentLegibility = 'HIGH';
 
-    if (fileBase64) {
-      const validatedUpload = preflightUpload!;
+    if (preflightUpload?.valid) {
+      const validatedUpload = preflightUpload;
       const docValidation = await validateAnswerSheetDocument(
         validatedUpload.normalizedBase64,
         validatedUpload.detectedMime,
