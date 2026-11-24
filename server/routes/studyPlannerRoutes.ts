@@ -17,10 +17,20 @@ import { resolveChapterAssessmentTarget } from '../services/studyPlannerChapterA
 import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, resolveBareTopicClarification, shouldAskTopicIntentClarification, shouldPrioritizeChapterAssessment } from '../services/studyPlannerChatPolicy.js';
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhChapterKnowledgeReply, searchParakhChapterKnowledge } from '../services/parakhChapterKnowledgeService.js';
+import { buildParakhStrategicManagementReply, searchParakhStrategicManagementKnowledge } from '../services/parakhStrategicManagementKnowledgeService.js';
+import { buildParakhCostAccountingReply, searchParakhCostAccountingKnowledge } from '../services/parakhCostAccountingKnowledgeService.js';
+import { buildParakhAuditingReply, searchParakhAuditingKnowledge } from '../services/parakhAuditingKnowledgeService.js';
+import { buildParakhFoundationAccountingReply, searchParakhFoundationAccountingKnowledge } from '../services/parakhFoundationAccountingKnowledgeService.js';
+import { buildParakhFoundationBusinessLawReply, searchParakhFoundationBusinessLawKnowledge } from '../services/parakhFoundationBusinessLawKnowledgeService.js';
+import { buildParakhFoundationQuantitativeAptitudeReply, searchParakhFoundationQuantitativeAptitudeKnowledge } from '../services/parakhFoundationQuantitativeAptitudeKnowledgeService.js';
+import { buildParakhFoundationBusinessEconomicsReply, searchParakhFoundationBusinessEconomicsKnowledge } from '../services/parakhFoundationBusinessEconomicsKnowledgeService.js';
+import { buildParakhAdvancedAccountingReply, searchParakhAdvancedAccountingKnowledge } from '../services/parakhAdvancedAccountingKnowledgeService.js';
+import { buildParakhIntermediateLawTaxReply, searchParakhIntermediateLawTaxKnowledge } from '../services/parakhIntermediateLawTaxKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
+import { buildParakhCourseCoverageNotice, resolveParakhCoursePaperContext } from '../services/parakhCourseCoverageService.js';
 
 const router = Router();
 // Every planner API, including direct requests, is restricted to Super Admin-approved tester accounts.
@@ -759,10 +769,41 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
-      const chapterKnowledge = searchParakhChapterKnowledge({ message, course, language: replyLanguage });
-      const knowledge = chapterKnowledge
+      const advancedAccountingKnowledge = searchParakhAdvancedAccountingKnowledge({ message, course, language: replyLanguage });
+      const foundationBusinessLawKnowledge = !advancedAccountingKnowledge
+        ? searchParakhFoundationBusinessLawKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const foundationQuantitativeKnowledge = !advancedAccountingKnowledge && !foundationBusinessLawKnowledge
+        ? searchParakhFoundationQuantitativeAptitudeKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const foundationEconomicsKnowledge = !advancedAccountingKnowledge && !foundationBusinessLawKnowledge && !foundationQuantitativeKnowledge
+        ? searchParakhFoundationBusinessEconomicsKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const foundationAccountingKnowledge = !advancedAccountingKnowledge && !foundationBusinessLawKnowledge && !foundationQuantitativeKnowledge && !foundationEconomicsKnowledge
+        ? searchParakhFoundationAccountingKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const chapterKnowledge = !advancedAccountingKnowledge && !foundationBusinessLawKnowledge && !foundationQuantitativeKnowledge && !foundationEconomicsKnowledge && !foundationAccountingKnowledge
+        ? searchParakhChapterKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const strategicManagementKnowledge = !chapterKnowledge
+        ? searchParakhStrategicManagementKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const costAccountingKnowledge = !chapterKnowledge && !strategicManagementKnowledge
+        ? searchParakhCostAccountingKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const auditingKnowledge = !chapterKnowledge && !strategicManagementKnowledge && !costAccountingKnowledge
+        ? searchParakhAuditingKnowledge({ message, course, language: replyLanguage })
+        : null;
+      const intermediateLawTaxKnowledge = searchParakhIntermediateLawTaxKnowledge({ message, course, language: replyLanguage });
+      const authoredChapterKnowledge = advancedAccountingKnowledge || foundationBusinessLawKnowledge || foundationQuantitativeKnowledge || foundationEconomicsKnowledge || foundationAccountingKnowledge || chapterKnowledge || strategicManagementKnowledge || costAccountingKnowledge || auditingKnowledge || intermediateLawTaxKnowledge;
+      const knowledge = authoredChapterKnowledge
         ? null
         : searchStudyKnowledge({ message, course, history, language: replyLanguage });
+      const coursePaperContext = resolveParakhCoursePaperContext({
+        message,
+        course,
+        subjects: parsed.subjects,
+      });
       const webResearch = requestsWebResearch ? await searchParakhWebResearch(message) : null;
       const webSources = webResearch?.results || [];
       const webMessage = webSources.length
@@ -770,12 +811,34 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         : null;
       const answerSources = webSources.length
         ? webSources
-        : chapterKnowledge ? [chapterKnowledge.source] : [];
+        : authoredChapterKnowledge ? [authoredChapterKnowledge.source]
+          : coursePaperContext ? [{ title: 'ICAI official course and paper catalogue', url: coursePaperContext.sourceUrl }] : [];
       const guidance = buildGeneralStudyAnswer(message, parsed);
-      const answer = webMessage || (chapterKnowledge
-        ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
-        : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
-      const knowledgeMatched = Boolean(chapterKnowledge || knowledge);
+      const answer = webMessage || (advancedAccountingKnowledge
+        ? buildParakhAdvancedAccountingReply(advancedAccountingKnowledge, replyLanguage)
+        : foundationBusinessLawKnowledge
+        ? buildParakhFoundationBusinessLawReply(foundationBusinessLawKnowledge, replyLanguage)
+        : foundationQuantitativeKnowledge
+          ? buildParakhFoundationQuantitativeAptitudeReply(foundationQuantitativeKnowledge, replyLanguage)
+          : foundationEconomicsKnowledge
+            ? buildParakhFoundationBusinessEconomicsReply(foundationEconomicsKnowledge, replyLanguage)
+            : foundationAccountingKnowledge
+              ? buildParakhFoundationAccountingReply(foundationAccountingKnowledge, replyLanguage)
+              : chapterKnowledge
+            ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
+            : strategicManagementKnowledge
+              ? buildParakhStrategicManagementReply(strategicManagementKnowledge, replyLanguage)
+              : costAccountingKnowledge
+                ? buildParakhCostAccountingReply(costAccountingKnowledge, replyLanguage)
+                : auditingKnowledge
+                  ? buildParakhAuditingReply(auditingKnowledge, replyLanguage)
+                  : intermediateLawTaxKnowledge
+                    ? buildParakhIntermediateLawTaxReply(intermediateLawTaxKnowledge, replyLanguage)
+                    : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
+      const courseCoverageNotice = !authoredChapterKnowledge && !webSources.length && coursePaperContext
+        ? buildParakhCourseCoverageNotice(coursePaperContext, replyLanguage)
+        : '';
+      const knowledgeMatched = Boolean(authoredChapterKnowledge || knowledge);
       const qualityGate = assessParakhResponseQuality({
         question: message,
         answer,
@@ -784,7 +847,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         sources: answerSources,
         knowledgeMatched,
       });
-      const finalAnswer = answer + buildParakhQualityNotice(qualityGate, replyLanguage);
+      const finalAnswer = answer + courseCoverageNotice + buildParakhQualityNotice(qualityGate, replyLanguage);
       return res.json({
         success: true,
         status: webSources.length ? 'web_research_answered' : knowledgeMatched ? 'knowledge_answered' : 'general_guidance_answered',
@@ -793,17 +856,42 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         parsed,
         plan: null,
         metadata: {
-          version: webSources.length ? 'parakh-web-research-v1' : chapterKnowledge ? 'parakh-chapter-knowledge-v1' : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
+          version: webSources.length ? 'parakh-web-research-v1'
+            : intermediateLawTaxKnowledge ? 'parakh-intermediate-law-tax-knowledge-v1'
+            : advancedAccountingKnowledge ? 'parakh-advanced-accounting-knowledge-v1'
+            : foundationBusinessLawKnowledge ? 'parakh-foundation-business-law-knowledge-v1'
+              : foundationQuantitativeKnowledge ? 'parakh-foundation-quantitative-aptitude-knowledge-v1'
+                : foundationEconomicsKnowledge ? 'parakh-foundation-business-economics-knowledge-v1'
+                  : foundationAccountingKnowledge ? 'parakh-foundation-accounting-knowledge-v1'
+                    : chapterKnowledge ? 'parakh-chapter-knowledge-v1'
+                  : strategicManagementKnowledge ? 'parakh-strategic-management-knowledge-v1'
+                    : costAccountingKnowledge ? 'parakh-cost-accounting-knowledge-v1'
+                      : auditingKnowledge ? 'parakh-auditing-knowledge-v1'
+                        : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
           modelUsed: false,
           knowledgeMatched,
-          knowledgeReviewStatus: chapterKnowledge?.contentReviewStatus || null,
-          benchmarkStatus: chapterKnowledge?.benchmarkStatus || null,
-          chapter: chapterKnowledge ? {
-            course: chapterKnowledge.course,
-            paperCode: chapterKnowledge.paperCode,
-            section: chapterKnowledge.section,
-            chapterNumber: chapterKnowledge.chapterNumber,
-            syllabusApplicability: chapterKnowledge.syllabusApplicability,
+          knowledgeReviewStatus: authoredChapterKnowledge?.contentReviewStatus || null,
+          benchmarkStatus: authoredChapterKnowledge?.benchmarkStatus || null,
+          chapter: authoredChapterKnowledge ? {
+            course: authoredChapterKnowledge.course,
+            paperCode: authoredChapterKnowledge.paperCode,
+            section: authoredChapterKnowledge.section,
+            chapterNumber: authoredChapterKnowledge.chapterNumber,
+            syllabusApplicability: authoredChapterKnowledge.syllabusApplicability,
+          } : null,
+          coursePaperContext: coursePaperContext ? {
+            course: coursePaperContext.course,
+            paperCode: coursePaperContext.paperCode,
+            paperTitle: coursePaperContext.paperTitle,
+            section: coursePaperContext.section,
+            matchedIndexEntry: coursePaperContext.matchedIndexEntry,
+            mappingStatus: coursePaperContext.mappingStatus,
+            indexKind: coursePaperContext.indexKind,
+            authoredChapterCount: coursePaperContext.authoredChapterCount,
+            humanReviewedChapterCount: coursePaperContext.humanReviewedChapterCount,
+            benchmarkPromptCount: coursePaperContext.benchmarkPromptCount,
+            humanReviewedBenchmarkCount: coursePaperContext.humanReviewedBenchmarkCount,
+            sourceUrl: coursePaperContext.sourceUrl,
           } : null,
           webResearchRequested: requestsWebResearch,
           webResearchAvailable: Boolean(webSources.length),

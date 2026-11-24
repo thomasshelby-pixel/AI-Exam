@@ -14,6 +14,13 @@ test('detects current-information and explicit web-search requests', () => {
   assert.equal(shouldUseParakhWebResearch('Explain the concept of current ratio'), false);
   assert.equal(shouldUseParakhWebResearch('The firm proposes a new credit policy of 2/15 net 60 instead of 1/15 net 45. Should it change the policy?'), false);
   assert.equal(shouldUseParakhWebResearch('What is the latest ICAI exam result update?'), true);
+  assert.equal(shouldUseParakhWebResearch('What is the current GST registration threshold?'), true);
+  assert.equal(shouldUseParakhWebResearch('What is the current income-tax slab?'), true);
+  assert.equal(shouldUseParakhWebResearch('Explain Section 16 under GST'), true);
+  assert.equal(shouldUseParakhWebResearch('Explain FEMA current account transaction'), false);
+  assert.equal(shouldUseParakhWebResearch('वर्तमान जीएसटी दर क्या है?'), true);
+  assert.equal(shouldUseParakhWebResearch('वर्तमान अनुपात समझाइए'), false);
+  assert.equal(shouldUseParakhWebResearch('Income-tax की धारा 80C क्या है?'), true);
 });
 
 test('removes identifiers and contact details before producing a search query', () => {
