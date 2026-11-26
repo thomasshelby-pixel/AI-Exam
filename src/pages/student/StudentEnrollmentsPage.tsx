@@ -281,7 +281,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                 <div className="p-6 sm:p-7 space-y-6">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1">
                         Assigned Batch / Cohort
                       </span>
                       <div className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
@@ -291,7 +291,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                     </div>
 
                     <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1">
                         Curriculum Level & Target
                       </span>
                       <div className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
@@ -304,7 +304,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                     </div>
 
                     <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-                      <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider block mb-1">
                         Evaluation Privilege
                       </span>
                       <div className="text-sm font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
@@ -356,7 +356,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-400 py-3 text-center">
+                        <p className="text-xs text-slate-600 dark:text-slate-400 py-3 text-center">
                           No question papers published yet for this institute.
                         </p>
                       )}
@@ -396,7 +396,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-400 py-3 text-center">
+                        <p className="text-xs text-slate-600 dark:text-slate-400 py-3 text-center">
                           No active mock tests or assignments scheduled.
                         </p>
                       )}
@@ -526,7 +526,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
                   </div>
                 ))
               ) : (
-                <p className="text-xs text-slate-400 text-center py-8">
+                <p className="text-xs text-slate-600 dark:text-slate-400 text-center py-8">
                   No materials published currently.
                 </p>
               )}
