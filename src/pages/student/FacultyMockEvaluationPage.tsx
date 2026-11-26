@@ -172,7 +172,10 @@ export const FacultyMockEvaluationPage: React.FC = () => {
           resultJson?: unknown; rejection_reason?: string; error_message?: string;
         } }>(`/api/student/evaluations/${encodeURIComponent(activeEvaluationId)}`);
 
-        if (!subscribed || !response.evaluation) return;
+        if (!subscribed) return;
+        if (!response.evaluation) {
+          throw new Error('Evaluation status response did not include an evaluation record.');
+        }
         const evaluation = response.evaluation;
         const status = String(evaluation.status || '').toUpperCase();
         const backendStage = String(evaluation.progress_stage || '').toUpperCase();
