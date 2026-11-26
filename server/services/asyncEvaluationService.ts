@@ -104,7 +104,7 @@ const DURABLE_QUEUE_HEARTBEAT_MS = 30 * 1000;
 const DURABLE_QUEUE_POLL_MS = 60 * 1000;
 const DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION = 'system_runtime_locks';
 const DURABLE_QUEUE_RECOVERY_LOCK_ID = 'durable_evaluation_queue_recovery';
-const DURABLE_QUEUE_RECOVERY_LOCK_MS = DURABLE_QUEUE_POLL_MS + 15 * 1000;
+const DURABLE_QUEUE_RECOVERY_LOCK_MS = DURABLE_QUEUE_POLL_MS - 5 * 1000;
 const DURABLE_QUEUE_NUDGE_COOLDOWN_MS = 30 * 1000;
 const DURABLE_QUEUE_MAX_ATTEMPTS = 2;
 const DURABLE_QUEUE_MAX_ACTIVE_JOBS = 1;
@@ -500,7 +500,6 @@ async function claimDurableQueueRecoveryScan(): Promise<boolean> {
       const currentExpiry = Date.parse(String(current.leaseExpiresAt || ''));
       if (
         current.ownerId &&
-        current.ownerId !== DURABLE_QUEUE_INSTANCE_ID &&
         Number.isFinite(currentExpiry) &&
         currentExpiry > now
       ) {
