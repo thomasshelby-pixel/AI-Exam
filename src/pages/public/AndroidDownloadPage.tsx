@@ -295,7 +295,7 @@ export const AndroidDownloadPage: React.FC = () => {
 
         <section aria-labelledby="app-workflow-preview-title" className="mx-auto mt-16 max-w-5xl sm:mt-20">
           <div className="mb-7 max-w-2xl">
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">App experience</p>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-800 dark:text-cyan-300">App experience</p>
             <h2 id="app-workflow-preview-title" className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
               Your exam workflow, on your phone
             </h2>
@@ -340,12 +340,12 @@ export const AndroidDownloadPage: React.FC = () => {
                         </div>
                         <div>
                           <p className="text-[10px] font-extrabold text-white">Exam Checker AI</p>
-                          <p className="text-[8px] text-slate-500">Student portal</p>
+                          <p className="text-[8px] text-slate-400">Student portal</p>
                         </div>
                       </div>
-                      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                      <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
                         <p className="text-[9px] font-bold text-slate-200">{screen.title}</p>
-                        <p className="mt-1 text-[8px] leading-4 text-slate-500">{screen.caption}</p>
+                        <p className="mt-1 text-[8px] leading-4 text-slate-400">{screen.caption}</p>
                       </div>
                       <div className="mt-3 space-y-2">
                         {screen.rows.map((row, index) => (
@@ -370,7 +370,7 @@ export const AndroidDownloadPage: React.FC = () => {
 
         <section id="installation" className="mx-auto mt-16 max-w-5xl scroll-mt-24 sm:mt-20">
           <div className="mb-7 max-w-2xl">
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">Simple installation</p>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-800 dark:text-cyan-300">Simple installation</p>
             <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">From download to first launch</h2>
             <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
               Follow these steps on your Android phone after the APK download begins.
@@ -395,11 +395,11 @@ export const AndroidDownloadPage: React.FC = () => {
               return (
                 <article key={step.number} className="group rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-blue-300 hover:bg-blue-50 sm:p-6 dark:border-white/10 dark:bg-white/[0.035] dark:hover:border-blue-400/40 dark:hover:bg-blue-400/[0.05]">
                   <div className="flex items-start gap-4">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-blue-300/20 bg-blue-500/15 text-blue-200">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-300/20 dark:bg-blue-500/15 dark:text-blue-200">
                       <Icon className="h-5 w-5" />
                     </div>
                     <div>
-                      <p className="text-[10px] font-bold tracking-[0.16em] text-cyan-300">STEP {step.number}</p>
+                      <p className="text-[10px] font-bold tracking-[0.16em] text-cyan-800 dark:text-cyan-300">STEP {step.number}</p>
                       <h3 className="mt-1 text-base font-extrabold text-slate-900 dark:text-white">{step.title}</h3>
                       <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{step.description}</p>
                     </div>
