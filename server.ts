@@ -32,7 +32,8 @@ import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
 import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
 import { getServerPort, SERVER_HOST } from './server/config/serverPort.js';
-import { startDurableEvaluationQueueRecovery } from './server/services/asyncEvaluationService.js';
+import { processDurableEvaluationTask, startDurableEvaluationQueueRecovery } from './server/services/asyncEvaluationService.js';
+import { verifyCloudTasksAuthorizationHeader } from './server/services/cloudTasksService.js';
 
 let currentStartupStage = 'initialization';
 
@@ -103,6 +104,32 @@ async function startServer() {
     })
   );
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  // Private request-bound evaluator endpoint. Cloud Tasks supplies an OIDC token;
+  // student JWTs or a caller-controlled custom header are not accepted here.
+  app.post('/internal/tasks/evaluation', async (req, res) => {
+    const authenticated = await verifyCloudTasksAuthorizationHeader(req.headers.authorization);
+    if (!authenticated) {
+      return res.status(401).json({ error: 'Unauthenticated Cloud Tasks request.' });
+    }
+
+    const evaluationId = String(req.body?.evaluationId || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,180}$/.test(evaluationId)) {
+      return res.status(400).json({ error: 'Invalid evaluation ID.' });
+    }
+
+    try {
+      // Await all evaluation work before ending this HTTP request. This is
+      // essential when Cloud Run allocates CPU only while a request is active.
+      await processDurableEvaluationTask(evaluationId);
+      return res.status(204).end();
+    } catch (error: any) {
+      console.error(`[CloudTasks] Evaluation task failed and will be retried: ${evaluationId}`, error);
+      return res.status(503).json({
+        error: 'Evaluation worker did not reach a terminal state. Cloud Tasks should retry this request.',
+      });
+    }
+  });
 
   // API Routes
   app.get('/api/health', (req, res) => {
