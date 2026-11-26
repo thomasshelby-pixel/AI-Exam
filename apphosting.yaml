@@ -2,7 +2,9 @@
 # Controls Cloud Run runtime settings for production deployments
 runConfig:
   minInstances: 0
-  maxInstances: 10
+  # The app runs a durable in-process evaluation worker. Keep enough headroom for
+  # small-scale concurrency while bounding duplicate startup hydration and idle CPU cost.
+  maxInstances: 3
   concurrency: 80
   cpu: 1
   # Keep active background evaluation workers running between HTTP requests.
