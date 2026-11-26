@@ -174,7 +174,7 @@ export async function syncStudentReadableIdentityViewsIfNeeded(): Promise<number
     const claimed = await runFirestoreTransaction(async (transaction) => {
       const snapshot = await transaction.get(lockCollection, lockId);
       const state = snapshot.exists ? snapshot.data() || {} : {};
-      if (state.status === 'COMPLETE' || state.status === 'PARTIAL') return false;
+      if (['COMPLETE', 'PARTIAL', 'FAILED'].includes(String(state.status || '').toUpperCase())) return false;
 
       const leaseUntil = Date.parse(String(state.leaseExpiresAt || ''));
       if (state.status === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > now) {
