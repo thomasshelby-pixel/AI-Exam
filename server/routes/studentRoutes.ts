@@ -2299,7 +2299,7 @@ router.post('/evaluate', requireFeatureAccess('CHECKER', 'checker_answer_evaluat
 });
 
 // 3. Get All Student Evaluations
-router.get('/evaluations', (req: AuthRequest, res: Response) => {
+router.get('/evaluations', async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const studentEmail = req.user!.email?.toLowerCase().trim() || '';
@@ -2382,12 +2382,12 @@ router.get('/evaluations', (req: AuthRequest, res: Response) => {
     // Student history is polled while an evaluation is processing. Use that
     // normal read to wake a durable queued/stale job after an App Hosting
     // instance restart; the Firestore lease still prevents duplicate workers.
-    for (const record of records) {
+    await Promise.all(records.map(async (record) => {
       const recordStatus = String(record.status || '').toUpperCase();
       if (recordStatus === 'PROCESSING' || recordStatus === 'QUEUED') {
-        nudgeDurableEvaluationQueue(String(record.id));
+        await nudgeDurableEvaluationQueue(String(record.id));
       }
-    }
+    }));
     return res.json({ evaluations: records });
   } catch (error: unknown) {
     console.error('List evaluations error:', error);
@@ -2413,7 +2413,7 @@ router.get('/entitlement', (req: AuthRequest, res: Response) => {
 });
 
 // 4. Get Specific Evaluation Report Detail
-router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluation_report'), (req: AuthRequest, res: Response) => {
+router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluation_report'), async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const userRole = req.user!.role;
@@ -2473,6 +2473,11 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
       }
 
       return res.status(404).json({ error: 'Evaluation report not found.' });
+    }
+
+    const currentStatus = String(record.status || '').toUpperCase();
+    if (currentStatus === 'PROCESSING' || currentStatus === 'QUEUED') {
+      await nudgeDurableEvaluationQueue(String(record.id));
     }
 
     let resultJson: EvaluationResult | null = null;
@@ -2586,7 +2591,7 @@ router.get('/evaluations/:id', requireFeatureAccess('CHECKER', 'checker_evaluati
 });
 
 // 4.1 Get Evaluation Job Status (Universal Real-Time Status & Progress API)
-router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: AuthRequest, res: Response) => {
+router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], async (req: AuthRequest, res: Response) => {
   try {
     const studentId = req.user!.id;
     const userRole = req.user!.role;
@@ -2619,7 +2624,7 @@ router.get(['/evaluations/:id/status', '/evaluations/:id/job-status'], (req: Aut
     const normalizedRecord = normalizeEvaluationRejectionStatus(record);
     const statusForQueueRecovery = String(normalizedRecord.status || record.status || '').toUpperCase();
     if (statusForQueueRecovery === 'PROCESSING' || statusForQueueRecovery === 'QUEUED') {
-      nudgeDurableEvaluationQueue(String(record.id));
+      await nudgeDurableEvaluationQueue(String(record.id));
     }
     const realEvaluationId = record.id;
     const uploadsDir = path.join(process.cwd(), 'uploads');
