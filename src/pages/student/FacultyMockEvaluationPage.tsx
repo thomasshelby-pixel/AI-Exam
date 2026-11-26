@@ -706,22 +706,22 @@ export const FacultyMockEvaluationPage: React.FC = () => {
             <div className="mb-4 flex items-center justify-between gap-3"><div><p className="text-[9px] font-black uppercase tracking-[0.16em] text-indigo-500 dark:text-indigo-300">Your practice workspace</p><h2 className="mt-1 text-sm font-bold">Select your mock test</h2></div><span className="rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700 dark:bg-blue-400/10 dark:text-blue-200">{courseLevel}</span></div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Faculty
-                <select value={facultyId} onChange={(e) => { setFacultyId(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={facultyId} onChange={(e) => { setFacultyId(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100">
                   {faculties.map((faculty) => <option key={faculty.id} value={faculty.id}>{faculty.name}</option>)}
                 </select>
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Exam Attempt
-                <select value={attempt} onChange={(e) => { setAttempt(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={attempt} onChange={(e) => { setAttempt(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100">
                   {availableAttempts.map((item) => <option key={item} value={item}>{item}</option>)}
                 </select>
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Subject
-                <select value={subjectKey} onChange={(e) => { setSubjectKey(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={subjectKey} onChange={(e) => { setSubjectKey(e.target.value); setTestId(''); }} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100">
                   {subjects.map((item) => <option key={item.key} value={item.key}>{item.name}</option>)}
                 </select>
               </label>
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mock Number
-                <select value={testId} onChange={(e) => setTestId(e.target.value)} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2.5 text-sm font-medium text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20">
+                <select value={testId} onChange={(e) => setTestId(e.target.value)} disabled={!!activeEvaluationId} className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100">
                   {subjectTests.map((item) => <option key={item.id} value={item.id}>Mock {String(item.mock_number).padStart(2, '0')} — {item.title} ({permanentFreeAccess ? 'Free for your account' : String(item.access_type || 'FREE').toUpperCase() === 'PAID' ? `Unlock ₹${item.unlock_price_inr || 35}` : 'Free first copy'})</option>)}
                 </select>
               </label>
@@ -768,20 +768,20 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                 </p>
               )}
               <h2 className="text-sm font-bold">Upload handwritten answer sheet</h2>
-              <p className="mt-1 text-xs leading-relaxed text-slate-500">Write the selected paper by hand, scan all pages into one PDF (or upload JPG/PNG pages), then submit. The AI checker will use this exact mock's Suggested Answer and marking reference.</p>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">Write the selected paper by hand, scan all pages into one PDF (or upload JPG/PNG pages), then submit. The AI checker will use this exact mock's Suggested Answer and marking reference.</p>
               <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-                <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/70">
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-indigo-300" />
                     <span className="text-[10px] font-black uppercase tracking-[0.15em] text-indigo-200">Checking preferences</span>
                   </div>
-                  <label htmlFor="faculty-mock-checking-mode" className="mt-4 block text-xs font-bold text-slate-100">Evaluation strictness</label>
+                  <label htmlFor="faculty-mock-checking-mode" className="mt-4 block text-xs font-bold text-slate-900 dark:text-slate-100">Evaluation strictness</label>
                   <select
                     id="faculty-mock-checking-mode"
                     value={checkingMode}
                     onChange={(event) => setCheckingMode(event.target.value as CheckingMode)}
                     disabled={submitting || checkingDisclaimer || !!activeEvaluationId}
-                    className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm font-semibold text-slate-100 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-900 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                   >
                     <option value="standard">Standard ICAI Marking</option>
                     <option value="strict">Strict Head Examiner</option>
@@ -795,7 +795,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-700 bg-slate-900/70 p-4">
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/70">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <UploadCloud className="h-4 w-4 text-indigo-300" />
@@ -803,12 +803,12 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                     </div>
                     <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[9px] font-bold text-slate-300">MAX 50 MB</span>
                   </div>
-                  <label className="mt-4 flex min-h-[170px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-600 bg-slate-950/70 px-4 py-6 text-center transition hover:border-indigo-400 hover:bg-indigo-950/40">
-                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-indigo-300/20 bg-indigo-400/10">
-                      <UploadCloud className="h-6 w-6 text-indigo-300" />
+                  <label className="mt-4 flex min-h-[170px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center transition hover:border-indigo-400 hover:bg-indigo-50 dark:border-slate-600 dark:bg-slate-950/70 dark:hover:bg-indigo-950/40">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-indigo-200 bg-indigo-50 dark:border-indigo-300/20 dark:bg-indigo-400/10">
+                      <UploadCloud className="h-6 w-6 text-indigo-700 dark:text-indigo-300" />
                     </span>
-                    <span className="mt-3 max-w-full break-all text-sm font-bold text-slate-100">{answerFile?.name || 'Choose your scanned answer sheet'}</span>
-                    <span className="mt-1 text-[10px] text-slate-400">{answerFile ? (answerFile.size / 1024 / 1024).toFixed(2) + ' MB selected' : 'PDF, JPG or PNG · all pages in one PDF is recommended'}</span>
+                    <span className="mt-3 max-w-full break-all text-sm font-bold text-slate-900 dark:text-slate-100">{answerFile?.name || 'Choose your scanned answer sheet'}</span>
+                    <span className="mt-1 text-[10px] text-slate-600 dark:text-slate-400">{answerFile ? (answerFile.size / 1024 / 1024).toFixed(2) + ' MB selected' : 'PDF, JPG or PNG · all pages in one PDF is recommended'}</span>
                     <input className="hidden" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" disabled={submitting || loadingReviewRetry || !!activeEvaluationId} onChange={(e) => { void selectAnswerFile(e.target.files?.[0]); e.currentTarget.value = ''; }} />
                   </label>
                   {loadingFile && <p className="mt-2 text-xs text-indigo-300">Reading and preparing your answer sheet…</p>}
@@ -818,8 +818,8 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-col gap-3 border-t border-slate-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-start gap-2 text-[10px] leading-relaxed text-slate-400">
+              <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+                <div className="flex items-start gap-2 text-[10px] leading-relaxed text-slate-600 dark:text-slate-400">
                   <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
                   <span>{permanentFreeAccess ? 'Permanent free access is active. Every evaluation and Faculty Mock copy is free for this account; no evaluation credits or paid unlocks will be used.' : String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? `This mock requires ₹${selectedTest.unlock_price_inr || 35} per evaluation. Payment unlocks one copy and does not use general evaluation credits.` : `First copy is free for each student. Further copies cost ₹${selectedTest.unlock_price_inr || 35} each and do not use general evaluation credits.`}</span>
                 </div>
