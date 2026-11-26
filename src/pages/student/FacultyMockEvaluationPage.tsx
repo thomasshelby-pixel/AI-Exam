@@ -140,7 +140,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     let subscribed = true;
     let requestInFlight = false;
     let attempts = 0;
-    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let timerId: number | null = null;
     const maxAttempts = 20;
 
     const clearSavedEvaluation = () => {
@@ -150,7 +150,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
 
     const scheduleNextCheck = (delayMs: number) => {
       if (!subscribed) return;
-      if (timerId) clearTimeout(timerId);
+      if (timerId) window.clearTimeout(timerId);
       timerId = window.setTimeout(() => {
         void pollEvaluation();
       }, delayMs);
@@ -237,7 +237,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
 
     return () => {
       subscribed = false;
-      if (timerId) clearTimeout(timerId);
+      if (timerId) window.clearTimeout(timerId);
     };
   }, [activeEvaluationId, user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey, navigate, refreshUser, pollingRestartToken]);
 
