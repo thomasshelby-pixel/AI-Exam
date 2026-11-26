@@ -18,6 +18,7 @@ import {
   getDocs as clientGetDocs,
   query as clientQuery,
   where as clientWhere,
+  limit as clientLimit,
   runTransaction as runClientTransaction,
   terminate as terminateClientFirestore,
   Firestore as ClientFirestore,
@@ -665,7 +666,7 @@ export async function getAllFirestoreDocs<T = any>(
 export async function queryFirestoreDocs<T = any>(
   collectionName: string,
   filters: Array<{ field: string; op: '==' | '<=' | '>=' | '<' | '>'; value: any }>,
-  options: { failOnError?: boolean } = {},
+  options: { failOnError?: boolean; limit?: number } = {},
 ): Promise<T[]> {
   getFirestoreDb();
 
@@ -675,6 +676,10 @@ export async function queryFirestoreDocs<T = any>(
       for (const f of filters) {
         q = q.where(f.field, f.op, f.value);
       }
+      const queryLimit = Number.isInteger(options.limit) && Number(options.limit) > 0
+        ? Math.min(Number(options.limit), 1000)
+        : null;
+      if (queryLimit !== null) q = q.limit(queryLimit);
       const snap = await withTimeout(
         q.get(),
         10000,
@@ -701,7 +706,11 @@ export async function queryFirestoreDocs<T = any>(
   if (clientDbInstance) {
     try {
       const wheres = filters.map((f) => clientWhere(f.field, f.op as any, f.value));
-      const q = clientQuery(clientCollection(clientDbInstance, collectionName), ...wheres);
+      const queryLimit = Number.isInteger(options.limit) && Number(options.limit) > 0
+        ? Math.min(Number(options.limit), 1000)
+        : null;
+      const constraints = queryLimit === null ? wheres : [...wheres, clientLimit(queryLimit)];
+      const q = clientQuery(clientCollection(clientDbInstance, collectionName), ...constraints);
       const snap = await clientGetDocs(q);
       return snap.docs.map((d: any) => ({ id: d.id, ...d.data() })) as T[];
     } catch (err) {
