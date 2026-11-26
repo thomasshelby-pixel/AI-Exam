@@ -74,6 +74,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   const [retryOfEvaluationId, setRetryOfEvaluationId] = useState<string | null>(null);
   const [loadingReviewRetry, setLoadingReviewRetry] = useState(false);
   const reviewRetryRestoreStarted = useRef<string | null>(null);
+  const submissionInFlightRef = useRef(false);
 
   const courseLevel = normaliseCourse((profile as any)?.ca_level ?? (profile as any)?.caLevel);
   const selectedFaculty = faculties.find((item) => item.id === facultyId);
@@ -474,6 +475,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   };
 
   const submitAnswerSheet = async (facultyMockPaymentOrderId?: string) => {
+    if (submissionInFlightRef.current || submitting || activeEvaluationId) return;
     if (!selectedTest || !answerFile || !fileBase64 || !user?.id) {
       setError('Select a mock test and upload your handwritten answer sheet first.');
       return;
@@ -482,7 +484,9 @@ export const FacultyMockEvaluationPage: React.FC = () => {
       setError('One Faculty Mock evaluation is already in progress. You can continue tracking it here.');
       return;
     }
+    submissionInFlightRef.current = true;
     setSubmitting(true);
+    setPollingTimedOut(false);
     setError('');
     setSuccess('');
     let submissionEvaluationId: string | null = null;
@@ -571,6 +575,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         if (!recovered) setError(err instanceof Error ? err.message : 'Faculty mock submission failed.');
       }
     } finally {
+      submissionInFlightRef.current = false;
       setSubmitting(false);
     }
   };
