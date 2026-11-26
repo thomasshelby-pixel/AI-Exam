@@ -2,11 +2,12 @@
 # Controls Cloud Run runtime settings for production deployments
 runConfig:
   minInstances: 0
-  maxInstances: 10
+  # Request-bound Cloud Tasks workers; cap concurrent instances to bound cold-start hydration.
+  maxInstances: 3
   concurrency: 80
   cpu: 1
-  # Keep active background evaluation workers running between HTTP requests.
-  cpuAlwaysAllocated: true
+  # Request-based CPU: evaluation work is executed inside authenticated Cloud Tasks HTTP requests.
+  cpuAlwaysAllocated: false
   memoryMiB: 1024
 
 scripts:

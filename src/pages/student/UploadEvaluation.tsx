@@ -120,6 +120,8 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const currentStudentIdRef = useRef(user?.id || '');
   currentStudentIdRef.current = user?.id || '';
   const materialCheckSequenceRef = useRef(0);
+  const submissionInFlightRef = useRef(false);
+  const disclaimerCheckInFlightRef = useRef(false);
   // Keep in-flight evaluation recovery scoped to the signed-in student account.
   const activeEvaluationStorageKey = user?.id ? `ca_active_eval_id_${user.id}` : null;
   const activeEvaluationStartStorageKey = user?.id ? `ca_active_eval_start_${user.id}` : null;
@@ -195,6 +197,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [activeEvaluationId, setActiveEvaluationId] = useState<string | null>(null);
   const [activeEvaluationOwnerId, setActiveEvaluationOwnerId] = useState<string | null>(null);
+  const [pollingTimedOut, setPollingTimedOut] = useState<boolean>(false);
+  const [pollingRestartToken, setPollingRestartToken] = useState<number>(0);
+  const [isSubmittingEvaluation, setIsSubmittingEvaluation] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [rejectionDetails, setRejectionDetails] = useState<string>('');
 
@@ -269,12 +274,34 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     }
   }, [elapsedSeconds, evalStep]);
 
-  // Polling hook when activeEvaluationId is set
+  // Poll evaluation status with bounded exponential backoff.
+  // A request-based Cloud Run deployment should not be kept awake by a fast timer.
   useEffect(() => {
     if (!activeEvaluationId || !user?.id || activeEvaluationOwnerId !== user.id) return;
 
     let isSubscribed = true;
-    const interval = setInterval(async () => {
+    let requestInFlight = false;
+    let attempts = 0;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const maxAttempts = 20;
+
+    const scheduleNextCheck = (delayMs: number) => {
+      if (!isSubscribed) return;
+      if (timerId) clearTimeout(timerId);
+      timerId = setTimeout(() => {
+        void checkStatus();
+      }, delayMs);
+    };
+
+    const checkStatus = async () => {
+      if (!isSubscribed || requestInFlight) return;
+      if (attempts >= maxAttempts) {
+        setPollingTimedOut(true);
+        return;
+      }
+
+      requestInFlight = true;
+      attempts += 1;
       try {
         const data = await apiRequest<{
           evaluation: {
@@ -291,47 +318,83 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
         if (!isSubscribed) return;
 
-        if (data.evaluation?.status === 'COMPLETED' || data.evaluation?.status === 'NEEDS_REVIEW') {
-          clearInterval(interval);
+        const status = String(data.evaluation?.status || '').toUpperCase();
+        if (status === 'COMPLETED' || status === 'NEEDS_REVIEW') {
+          setPollingTimedOut(false);
           if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
           if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
           setActiveEvaluationOwnerId(null);
           await refreshUser();
+          if (!isSubscribed) return;
           if (data.evaluation.resultJson) {
             const finalEvalId = (data.evaluation as any).display_id || (data.evaluation as any).displayId || activeEvaluationId;
             onEvaluationComplete(finalEvalId, data.evaluation.resultJson);
           }
-        } else if (data.evaluation?.status === 'REJECTED' || data.evaluation?.status === 'FAILED') {
-          clearInterval(interval);
+          return;
+        }
+
+        if (['REJECTED', 'FAILED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(status)) {
+          setPollingTimedOut(false);
           if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
           if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
           setEvalStep('IDLE');
           setActiveEvaluationId(null);
           setActiveEvaluationOwnerId(null);
           setErrorMessage(data.evaluation.rejection_reason || data.evaluation.error_message || 'Evaluation could not be completed.');
-          if (data.evaluation.status === 'REJECTED') {
+          if (status === 'REJECTED') {
             setRejectionDetails(
               'Document validation safeguard triggered: Admit cards, certificates, hall tickets, and blank documents are strictly rejected. No evaluation credits have been deducted.'
             );
           }
-        } else if (data.evaluation?.progress_stage) {
-          const matchedStage = EVALUATION_PROGRESS_STAGES.find((s) => s.key === data.evaluation.progress_stage);
-          if (matchedStage) {
-            setEvalStep(matchedStage.key);
-          }
+          return;
         }
+
+        if (data.evaluation?.progress_stage) {
+          const matchedStage = EVALUATION_PROGRESS_STAGES.find((stage) => stage.key === data.evaluation.progress_stage);
+          if (matchedStage) setEvalStep(matchedStage.key);
+        }
+
+        if (attempts >= maxAttempts) {
+          setPollingTimedOut(true);
+          return;
+        }
+        const delayMs = attempts < 5 ? 3000 : attempts < 12 ? 5000 : 8000;
+        scheduleNextCheck(delayMs);
       } catch (pollErr) {
         console.warn('Polling active evaluation error:', pollErr);
+        if (isSubscribed) {
+          if (attempts >= maxAttempts) {
+            setPollingTimedOut(true);
+          } else {
+            scheduleNextCheck(attempts < 5 ? 5000 : 8000);
+          }
+        }
+      } finally {
+        requestInFlight = false;
       }
-    }, 3000);
+    };
+
+    setPollingTimedOut(false);
+    timerId = setTimeout(() => {
+      void checkStatus();
+    }, 2000);
 
     return () => {
       isSubscribed = false;
-      clearInterval(interval);
+      if (timerId) clearTimeout(timerId);
     };
-  }, [activeEvaluationId, activeEvaluationOwnerId, user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey, onEvaluationComplete, refreshUser]);
+  }, [
+    activeEvaluationId,
+    activeEvaluationOwnerId,
+    user?.id,
+    activeEvaluationStorageKey,
+    activeEvaluationStartStorageKey,
+    onEvaluationComplete,
+    refreshUser,
+    pollingRestartToken,
+  ]);
 
   const studentProfile = profile as {
     free_evaluations_used?: number;
@@ -662,6 +725,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Click handler for Check Answer Sheet: Enforce mandatory evaluation disclaimer
   const handleCheckAnswerSheetClick = async () => {
+    if (disclaimerCheckInFlightRef.current || submissionInFlightRef.current || activeEvaluationId) return;
     if (isModelTestEvaluationUnavailable) {
       setErrorMessage('Model Test Paper evaluation is currently unavailable. This service may be introduced in a future update.');
       setRejectionDetails('No evaluation was started, and no personal or institute credits were used.');
@@ -703,6 +767,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
     }
 
     // Step 0: Check mandatory disclaimer status
+    disclaimerCheckInFlightRef.current = true;
     try {
       setCheckingDisclaimer(true);
       const res = await apiRequest<{ acknowledged: boolean; currentVersion: string }>('/api/student/disclaimer/status');
@@ -718,6 +783,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       console.warn('[UploadEvaluation] Error checking disclaimer status:', err);
       setShowDisclaimerModal(true);
     } finally {
+      disclaimerCheckInFlightRef.current = false;
       if (currentStudentIdRef.current === requestedUserId) setCheckingDisclaimer(false);
     }
   };
@@ -754,6 +820,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
 
   // Submit evaluation
   const handleStartEvaluation = async () => {
+    if (submissionInFlightRef.current || activeEvaluationId) return;
     if (isModelTestEvaluationUnavailable) {
       setErrorMessage('Model Test Paper evaluation is currently unavailable. This service may be introduced in a future update.');
       setRejectionDetails('No evaluation was started, and no personal or institute credits were used.');
@@ -789,6 +856,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
       return;
     }
 
+    submissionInFlightRef.current = true;
+    setIsSubmittingEvaluation(true);
+    setPollingTimedOut(false);
     const newEvaluationId = `eval_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
 
     try {
@@ -889,6 +959,9 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           'Google AI Studio API quota/billing limit reached. Please visit AI Studio at https://ai.studio/projects to manage project billing. No student credits have been deducted.'
         );
       }
+    } finally {
+      submissionInFlightRef.current = false;
+      setIsSubmittingEvaluation(false);
     }
   };
 
@@ -982,6 +1055,23 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                   Evaluation is taking longer than expected. Please wait while we complete it.
                 </p>
               )}
+              {pollingTimedOut && (
+                <div className="mt-2 pt-2 border-t border-blue-200/50 dark:border-blue-800/50 space-y-1.5">
+                  <p className="text-[10px] text-amber-700 dark:text-amber-300 leading-relaxed">
+                    Automatic status checks are paused after 20 attempts to avoid unnecessary requests. Your submitted evaluation has not been cancelled.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPollingTimedOut(false);
+                      setPollingRestartToken((current) => current + 1);
+                    }}
+                    className="text-[10px] font-semibold underline text-blue-700 dark:text-blue-300 cursor-pointer"
+                  >
+                    Check evaluation status again
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1017,7 +1107,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
           </div>
 
           <div className="pt-2 text-[11px] text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <span>Evaluation persists in background if you navigate away. Results are automatically saved to your dashboard.</span>
+            <span>Evaluation runs through a secure task worker if you navigate away. Results are saved to your dashboard.</span>
             {activeEvaluationId && (
               <button
                 type="button"
@@ -1837,7 +1927,7 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                 <button
                   id="start-evaluation-btn"
                   onClick={handleCheckAnswerSheetClick}
-                  disabled={isModelTestEvaluationUnavailable || evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial || checkingDisclaimer}
+                  disabled={isModelTestEvaluationUnavailable || evalStep !== 'IDLE' || !file || !materialAvailable || checkingMaterial || checkingDisclaimer || isSubmittingEvaluation}
                   className={`w-full py-3.5 px-6 rounded-lg text-white font-bold text-sm sm:text-base transition shadow-sm flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
                     evaluationSource === 'INSTITUTE'
                       ? 'bg-indigo-600 hover:bg-indigo-700'
@@ -1849,10 +1939,10 @@ export const UploadEvaluation: React.FC<UploadEvaluationProps> = ({
                       <RefreshCw className="w-4 h-4 animate-spin" />
                       <span>Evaluating Answer Sheet...</span>
                     </>
-                  ) : checkingDisclaimer ? (
+                  ) : checkingDisclaimer || isSubmittingEvaluation ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Verifying Evaluation Access...</span>
+                      <span>{checkingDisclaimer ? 'Verifying Evaluation Access...' : 'Initializing Evaluator...'}</span>
                     </>
                   ) : !materialAvailable && !checkingMaterial ? (
                     <span>Evaluation Material Pending for this Attempt</span>

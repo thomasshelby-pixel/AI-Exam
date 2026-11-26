@@ -11,6 +11,7 @@ import {
   getAllFirestoreDocs,
   recordTombstone,
   isTombstoned,
+  runFirestoreTransaction,
 } from './firestoreDbService.js';
 import { savePersistentFile } from './persistentStorageService.js';
 import { getValidStudentCreditBalance, reconcileAllStudentCredits } from './studentCreditService.js';
@@ -149,6 +150,103 @@ export async function syncAllStudentReadableIdentityViewsToFirestore(): Promise<
     return syncedCount;
   } catch (error) {
     console.warn('[FirestoreSync] Readable Student Code index backfill failed:', error);
+    return 0;
+  }
+}
+
+/**
+ * Runs the legacy Student Code backfill once across the App Hosting service.
+ * New student accounts and profile changes publish their own alias documents,
+ * so repeating a full student scan on every Cloud Run instance startup is wasteful.
+ *
+ * A Firestore lease prevents concurrent instances from running the migration twice.
+ * PARTIAL is intentionally operator-visible and does not auto-retry on every restart.
+ */
+export async function syncStudentReadableIdentityViewsIfNeeded(): Promise<number> {
+  if (!getFirestoreDb()) return 0;
+
+  const lockCollection = 'system_runtime_locks';
+  const lockId = 'student_code_index_backfill_v1';
+  const ownerId = `${process.env.K_REVISION || 'app-hosting'}:${process.pid}:${Date.now()}`;
+  const now = Date.now();
+
+  try {
+    const claimed = await runFirestoreTransaction(async (transaction) => {
+      const snapshot = await transaction.get(lockCollection, lockId);
+      const state = snapshot.exists ? snapshot.data() || {} : {};
+      if (['COMPLETE', 'PARTIAL', 'FAILED'].includes(String(state.status || '').toUpperCase())) return false;
+
+      const leaseUntil = Date.parse(String(state.leaseExpiresAt || ''));
+      if (state.status === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > now) {
+        return false;
+      }
+
+      transaction.set(lockCollection, lockId, {
+        status: 'RUNNING',
+        ownerId,
+        leaseExpiresAt: new Date(now + 30 * 60 * 1000).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      });
+      return true;
+    });
+
+    if (!claimed) {
+      console.info('[FirestoreSync] Student Code backfill already completed or owned by another instance; skipping.');
+      return 0;
+    }
+
+    const expectedRow = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM users u
+      JOIN student_profiles p ON p.user_id = u.id
+      WHERE u.role = 'STUDENT'
+        AND p.student_code IS NOT NULL
+        AND TRIM(p.student_code) <> ''
+        AND UPPER(TRIM(p.student_code)) NOT IN ('ST-PENDING', 'ST-GEN0')
+        AND COALESCE(u.account_classification, 'NORMAL') <> 'TEST'
+    `).get() as { count?: number };
+    const expectedCount = Number(expectedRow?.count || 0);
+    const syncedCount = await syncAllStudentReadableIdentityViewsToFirestore();
+    const finalStatus = syncedCount === expectedCount ? 'COMPLETE' : 'PARTIAL';
+
+    await runFirestoreTransaction(async (transaction) => {
+      const snapshot = await transaction.get(lockCollection, lockId);
+      const state = snapshot.exists ? snapshot.data() || {} : {};
+      if (state.ownerId !== ownerId) return;
+      transaction.set(lockCollection, lockId, {
+        status: finalStatus,
+        ownerId,
+        expectedStudents: expectedCount,
+        syncedStudents: syncedCount,
+        finishedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+
+    if (finalStatus === 'PARTIAL') {
+      console.warn(`[FirestoreSync] Student Code backfill incomplete: ${syncedCount}/${expectedCount}. Automatic restart scans are disabled; review the alias conflicts before rerunning.`);
+    } else {
+      console.info(`[FirestoreSync] One-time Student Code backfill completed: ${syncedCount}/${expectedCount}.`);
+    }
+    return syncedCount;
+  } catch (error) {
+    console.warn('[FirestoreSync] One-time Student Code backfill failed:', error);
+    try {
+      await runFirestoreTransaction(async (transaction) => {
+        const snapshot = await transaction.get(lockCollection, lockId);
+        const state = snapshot.exists ? snapshot.data() || {} : {};
+        if (state.ownerId !== ownerId) return;
+        transaction.set(lockCollection, lockId, {
+          status: 'FAILED',
+          ownerId,
+          leaseExpiresAt: new Date().toISOString(),
+          lastError: String((error as any)?.message || error).slice(0, 300),
+          updatedAt: new Date().toISOString(),
+        });
+      });
+    } catch (lockError) {
+      console.warn('[FirestoreSync] Could not mark Student Code backfill failure:', lockError);
+    }
     return 0;
   }
 }

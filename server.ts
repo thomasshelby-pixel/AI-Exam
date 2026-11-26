@@ -22,7 +22,7 @@ import { authenticateToken, requireRole } from './server/auth.js';
 import {
   hydrateFromFirestore,
   seedBaselineToFirestoreIfEmpty,
-  syncAllStudentReadableIdentityViewsToFirestore,
+  syncStudentReadableIdentityViewsIfNeeded,
 } from './server/services/firestoreSyncService.js';
 import { hydrateNotificationCentreFromFirestore } from './server/services/notificationService.js';
 import { hydrateFeatureControlsFromFirestore } from './server/services/featureControlPersistenceService.js';
@@ -32,7 +32,8 @@ import { hardenedCorsMiddleware } from './server/utils/corsConfig.js';
 import { applySecurityHeadersMiddleware } from './server/utils/securityHeaders.js';
 import { reviewVoteRateLimiter } from './server/utils/rateLimiter.js';
 import { getServerPort, SERVER_HOST } from './server/config/serverPort.js';
-import { startDurableEvaluationQueueRecovery } from './server/services/asyncEvaluationService.js';
+import { processDurableEvaluationTask, startDurableEvaluationQueueRecovery } from './server/services/asyncEvaluationService.js';
+import { verifyCloudTasksAuthorizationHeader } from './server/services/cloudTasksService.js';
 
 let currentStartupStage = 'initialization';
 
@@ -103,6 +104,31 @@ async function startServer() {
     })
   );
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  // Private request-bound evaluator endpoint. Cloud Tasks supplies an OIDC token;
+  // student JWTs or a caller-controlled custom header are not accepted here.
+  app.post('/internal/tasks/evaluation', async (req, res) => {
+    const evaluationId = String(req.body?.evaluationId || '').trim();
+    try {
+      const authenticated = await verifyCloudTasksAuthorizationHeader(req.headers.authorization);
+      if (!authenticated) {
+        return res.status(401).json({ error: 'Unauthenticated Cloud Tasks request.' });
+      }
+      if (!/^[A-Za-z0-9_-]{1,180}$/.test(evaluationId)) {
+        return res.status(400).json({ error: 'Invalid evaluation ID.' });
+      }
+
+      // Await all evaluation work before ending this HTTP request. This is
+      // essential when Cloud Run allocates CPU only while a request is active.
+      await processDurableEvaluationTask(evaluationId);
+      return res.status(204).end();
+    } catch (error: any) {
+      console.error(`[CloudTasks] Evaluation task failed and will be retried: ${evaluationId || 'unknown'}`, error);
+      return res.status(503).json({
+        error: 'Evaluation worker did not reach a terminal state. Cloud Tasks should retry this request.',
+      });
+    }
+  });
 
   // API Routes
   app.get('/api/health', (req, res) => {
@@ -317,9 +343,9 @@ export default {};
 
   // Best-effort reconciliation for existing students. This does not block server
   // readiness and creates readable students_by_code/{ST-...} lookup documents.
-  void syncAllStudentReadableIdentityViewsToFirestore()
+  void syncStudentReadableIdentityViewsIfNeeded()
     .then((count) => {
-      console.log(`[Startup] Readable Student Code index reconciled for ${count} student(s).`);
+      console.log(`[Startup] One-time Readable Student Code index backfill processed ${count} student(s).`);
     })
     .catch((error) => {
       console.warn('[Startup] Student Code index reconciliation failed:', error);
