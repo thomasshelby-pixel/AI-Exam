@@ -28,10 +28,12 @@ import {
   ChevronLeft,
   LogOut,
   Sparkles,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { QuickResumeModal } from './components/auth/QuickResumeModal.js';
-import { ThemeProvider } from './context/ThemeContext.js';
+import { ThemeProvider, useTheme } from './context/ThemeContext.js';
 import { LegalConsentGate } from './components/auth/LegalConsentGate.js';
 import { PrivacyPolicyUpdateNotice } from './components/auth/PrivacyPolicyUpdateNotice.js';
 import { Navbar } from './components/layout/Navbar.js';
@@ -351,6 +353,7 @@ const StudentWorkspaceLayout: React.FC<{
   const location = useLocation();
   const navigate = useNavigate();
   const { user, profile, logout } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
@@ -462,9 +465,9 @@ const StudentWorkspaceLayout: React.FC<{
             />
             {!collapsed && (
               <span className="min-w-0">
-                <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-white">CA Exam</span>
-                <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-white">Checker AI</span>
-                <span className="mt-1 block text-[10px] leading-4 text-blue-200/75">Smarter Practice, Better Results.</span>
+                <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-slate-900 dark:text-white">CA Exam</span>
+                <span className="block text-[15px] font-extrabold leading-tight tracking-tight text-slate-900 dark:text-white">Checker AI</span>
+                <span className="mt-1 block text-[10px] leading-4 text-slate-600 dark:text-blue-200/75">Smarter Practice, Better Results.</span>
               </span>
             )}
           </button>
@@ -473,7 +476,7 @@ const StudentWorkspaceLayout: React.FC<{
             <button
               type="button"
               onClick={toggleSidebarCollapsed}
-              className="shrink-0 rounded-xl border border-white/10 bg-white/[0.04] p-2 text-blue-100 transition hover:border-cyan-200/25 hover:bg-white/[0.09] hover:text-white"
+              className="shrink-0 rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:border-blue-200 hover:bg-slate-50 hover:text-slate-900 dark:border-white/10 dark:bg-white/[0.04] dark:text-blue-100 dark:hover:border-cyan-200/25 dark:hover:bg-white/[0.09] dark:hover:text-white"
               title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               aria-expanded={!collapsed}
@@ -503,20 +506,20 @@ const StudentWorkspaceLayout: React.FC<{
                   (collapsed ? 'justify-center px-2 ' : 'gap-3 px-3 text-left ') +
                   (active
                     ? 'border-cyan-300/50 bg-gradient-to-r from-blue-600/90 via-blue-500/70 to-cyan-500/45 text-white shadow-[0_0_24px_rgba(36,131,255,0.2)]'
-                    : 'border-transparent text-slate-300/85 hover:border-white/10 hover:bg-white/[0.06] hover:text-white')
+                    : 'border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300/85 dark:hover:border-white/10 dark:hover:bg-white/[0.06] dark:hover:text-white')
                 }
               >
-                <Icon className={'h-4 w-4 shrink-0 ' + (active ? 'text-cyan-100' : 'text-blue-200/80 group-hover:text-white')} />
+                <Icon className={'h-4 w-4 shrink-0 ' + (active ? 'text-cyan-100' : 'text-blue-700 dark:text-blue-200/80 group-hover:text-blue-900 dark:group-hover:text-white')} />
                 {!collapsed && <span className="min-w-0 flex-1 text-left">{item.label}</span>}
                 {!collapsed && active && <ChevronRight className="h-3.5 w-3.5 text-cyan-100" />}
                 {!collapsed && item.label === 'MCQ Arena' && (
-                  <span className="rounded-full border border-fuchsia-300/30 bg-fuchsia-500/20 px-1.5 py-0.5 text-[9px] font-bold text-fuchsia-200">PLAY</span>
+                  <span className="rounded-full border border-fuchsia-200 bg-fuchsia-50 px-1.5 py-0.5 text-[9px] font-bold text-fuchsia-800 dark:border-fuchsia-300/30 dark:bg-fuchsia-500/20 dark:text-fuchsia-200">PLAY</span>
                 )}
               </button>
             );
           })}
           {filteredNavigation.length === 0 && !collapsed && (
-            <p className="rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-slate-400">
+            <p className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 dark:border-white/10 dark:bg-white/[0.03] dark:text-slate-400">
               No matching destination.
             </p>
           )}
@@ -529,23 +532,23 @@ const StudentWorkspaceLayout: React.FC<{
               onClick={() => onOpenCreditsModal()}
               title="View plans and credits"
               aria-label="View plans and credits"
-              className="flex w-full items-center justify-center rounded-xl border border-indigo-300/20 bg-gradient-to-br from-indigo-500/15 via-blue-500/10 to-fuchsia-500/15 p-3 text-amber-300 transition hover:border-indigo-200/40 hover:bg-white/[0.08]"
+              className="flex w-full items-center justify-center rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-amber-700 transition hover:border-indigo-300 hover:bg-indigo-100 dark:border-indigo-300/20 dark:bg-gradient-to-br dark:from-indigo-500/15 dark:via-blue-500/10 dark:to-fuchsia-500/15 dark:text-amber-300 dark:hover:border-indigo-200/40 dark:hover:bg-white/[0.08]"
             >
               <Sparkles className="h-4 w-4" />
             </button>
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-500/15 via-blue-500/10 to-fuchsia-500/15 p-4 shadow-[0_14px_45px_rgba(7,12,38,0.25)] backdrop-blur-xl">
-              <div className="flex items-center gap-2 text-xs font-bold text-white">
-                <Sparkles className="h-4 w-4 text-amber-300" />
+            <div className="overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-blue-50 to-fuchsia-50 p-4 shadow-sm backdrop-blur-xl dark:border-indigo-300/20 dark:from-indigo-500/15 dark:via-blue-500/10 dark:to-fuchsia-500/15 dark:shadow-[0_14px_45px_rgba(7,12,38,0.25)]">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white">
+                <Sparkles className="h-4 w-4 text-amber-600 dark:text-amber-300" />
                 Your CA Study Space
               </div>
-              <p className="mt-2 text-[11px] leading-5 text-blue-100/70">
+              <p className="mt-2 text-[11px] leading-5 text-slate-700 dark:text-blue-100/70">
                 Practice consistently, review your marks and build your exam confidence.
               </p>
               <button
                 type="button"
                 onClick={() => onOpenCreditsModal()}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-gradient-to-r from-blue-500 to-fuchsia-500 px-3 py-2.5 text-[11px] font-bold text-white shadow-lg shadow-blue-900/30 transition hover:brightness-110"
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-gradient-to-r from-blue-600 to-fuchsia-600 px-3 py-2.5 text-[11px] font-bold text-white shadow-lg shadow-blue-900/20 transition hover:brightness-110 dark:border-white/15 dark:shadow-blue-900/30"
               >
                 View Plans <ChevronRight className="h-3.5 w-3.5" />
               </button>
@@ -557,20 +560,20 @@ const StudentWorkspaceLayout: React.FC<{
             onClick={() => void handleStudentLogout()}
             title={collapsed ? 'Log out' : undefined}
             aria-label="Log out"
-            className={'flex w-full items-center rounded-xl border border-rose-300/15 bg-rose-500/[0.04] py-3 text-[12px] font-semibold text-rose-200/90 transition hover:border-rose-300/35 hover:bg-rose-500/10 hover:text-rose-100 ' + (collapsed ? 'justify-center px-2' : 'gap-3 px-3')}
+            className={'flex w-full items-center rounded-xl border border-rose-200 bg-rose-50 py-3 text-[12px] font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 hover:text-rose-800 dark:border-rose-300/15 dark:bg-rose-500/[0.04] dark:text-rose-200/90 dark:hover:border-rose-300/35 dark:hover:bg-rose-500/10 dark:hover:text-rose-100 ' + (collapsed ? 'justify-center px-2' : 'gap-3 px-3')}
           >
             <LogOut className="h-4 w-4 shrink-0" />
             {!collapsed && <span className="flex-1 text-left">Log out</span>}
           </button>
 
-          {!collapsed && <p className="px-2 pt-2 text-[10px] text-slate-500">CA Exam Checker AI · Student Workspace</p>}
+          {!collapsed && <p className="px-2 pt-2 text-[10px] text-slate-600 dark:text-slate-500">CA Exam Checker AI · Student Workspace</p>}
         </div>
       </>
     );
   };
 
   return (
-    <div className="student-glass-workspace dark relative min-h-screen overflow-hidden text-slate-100">
+    <div className={`student-glass-workspace relative min-h-screen overflow-hidden transition-colors duration-200 ${isDark ? "dark bg-slate-950 text-slate-100" : "bg-slate-50 text-slate-900"}`}>
       <div className="student-glass-ambient student-glass-ambient-one" aria-hidden="true" />
       <div className="student-glass-ambient student-glass-ambient-two" aria-hidden="true" />
 
@@ -588,7 +591,7 @@ const StudentWorkspaceLayout: React.FC<{
           />
           <aside className="student-glass-sidebar absolute inset-y-0 left-0 flex w-[min(84vw,300px)] flex-col overflow-y-auto px-4 py-4 shadow-2xl">
             <div className="mb-2 flex justify-end">
-              <button type="button" onClick={() => setMobileNavOpen(false)} className="rounded-lg border border-white/10 p-2 text-slate-300 hover:bg-white/10" aria-label="Close menu">
+              <button type="button" onClick={() => setMobileNavOpen(false)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 hover:bg-slate-100 dark:border-white/10 dark:bg-transparent dark:text-slate-300 dark:hover:bg-white/10" aria-label="Close menu">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -602,14 +605,14 @@ const StudentWorkspaceLayout: React.FC<{
           <button
             type="button"
             onClick={() => setMobileNavOpen(true)}
-            className="rounded-xl border border-white/10 bg-white/[0.04] p-2.5 text-slate-200 hover:bg-white/[0.09] lg:hidden"
+            className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-200 dark:hover:bg-white/[0.09] lg:hidden"
             aria-label="Open student navigation"
           >
             <Menu className="h-5 w-5" />
           </button>
           <div className="hidden min-w-0 flex-1 sm:block">
             <label className="relative flex max-w-[560px] items-center">
-              <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-blue-200/60" />
+              <Search className="pointer-events-none absolute left-3.5 h-4 w-4 text-blue-700 dark:text-blue-200/60" />
               <input
                 type="search"
                 value={navSearch}
@@ -623,9 +626,9 @@ const StudentWorkspaceLayout: React.FC<{
                 }}
                 placeholder="Search your study workspace..."
                 aria-label="Search student workspace navigation"
-                className="student-glass-search w-full rounded-2xl border border-blue-200/15 py-3 pl-10 pr-4 text-xs text-slate-100 outline-none transition placeholder:text-slate-400/80 focus:border-cyan-300/50 focus:ring-2 focus:ring-blue-400/20"
+                className="student-glass-search w-full rounded-2xl border border-slate-300 py-3 pl-10 pr-4 text-xs text-slate-800 outline-none transition placeholder:text-slate-500 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 dark:border-blue-200/15 dark:text-slate-100 dark:placeholder:text-slate-400/80 dark:focus:border-cyan-300/50"
               />
-              <kbd className="absolute right-3 rounded-md border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-[9px] text-slate-400">ENTER</kbd>
+              <kbd className="absolute right-3 rounded-md border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-600 dark:border-white/10 dark:bg-white/[0.05] dark:text-slate-400">ENTER</kbd>
             </label>
           </div>
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
@@ -638,26 +641,41 @@ const StudentWorkspaceLayout: React.FC<{
                   navigate('/student/dashboard', { state: { openNotifications: true } });
                 }
               }}
-              className="relative rounded-xl border border-white/10 bg-white/[0.035] p-2.5 text-blue-100 transition hover:border-blue-200/25 hover:bg-white/[0.08]"
+              className="relative rounded-xl border border-slate-200 bg-white p-2.5 text-blue-700 transition hover:border-blue-300 hover:bg-blue-50 dark:border-white/10 dark:bg-white/[0.035] dark:text-blue-100 dark:hover:border-blue-200/25 dark:hover:bg-white/[0.08]"
               title="Open notifications"
               aria-label="Open notifications"
             >
               <Bell className="h-4 w-4" />
             </button>
             <button
+              id="student-theme-toggle"
+              type="button"
+              onClick={toggleTheme}
+              aria-label={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+              className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-white/10 dark:bg-white/[0.035] dark:text-slate-200 dark:hover:border-blue-200/25 dark:hover:bg-white/[0.08] dark:hover:text-white"
+            >
+              {isDark ? (
+                <Sun className="h-4 w-4 text-amber-400" />
+              ) : (
+                <Moon className="h-4 w-4 text-slate-600" />
+              )}
+            </button>
+
+            <button
               type="button"
               onClick={() => navigate('/student/profile')}
-              className="flex items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.035] p-1.5 pr-2.5 text-left transition hover:border-blue-200/25 hover:bg-white/[0.07] sm:pr-3"
+              className="flex items-center gap-2.5 rounded-2xl border border-slate-200 bg-white p-1.5 pr-2.5 text-left transition hover:border-blue-300 hover:bg-blue-50 dark:border-white/10 dark:bg-white/[0.035] dark:hover:border-blue-200/25 dark:hover:bg-white/[0.07] sm:pr-3"
               title="Open your profile"
             >
               <span className="flex h-9 w-9 items-center justify-center rounded-full border border-blue-200/30 bg-gradient-to-br from-cyan-400 via-blue-600 to-fuchsia-500 text-sm font-black text-white shadow-[0_0_22px_rgba(59,130,246,0.3)]">
                 {studentInitial}
               </span>
               <span className="hidden min-w-0 sm:block">
-                <span className="block max-w-[160px] truncate text-xs font-bold text-white">{studentName}</span>
-                <span className="block max-w-[160px] truncate text-[10px] capitalize text-blue-200/70">{courseLevel}</span>
+                <span className="block max-w-[160px] truncate text-xs font-bold text-slate-900 dark:text-white">{studentName}</span>
+                <span className="block max-w-[160px] truncate text-[10px] capitalize text-slate-600 dark:text-blue-200/70">{courseLevel}</span>
               </span>
-              <ChevronRight className="hidden h-3.5 w-3.5 rotate-90 text-slate-400 sm:block" />
+              <ChevronRight className="hidden h-3.5 w-3.5 rotate-90 text-slate-500 dark:text-slate-400 sm:block" />
             </button>
           </div>
         </header>
