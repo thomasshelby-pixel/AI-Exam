@@ -221,7 +221,8 @@ export const AndroidDownloadPage: React.FC = () => {
           </div>
 
           <div className="relative mx-auto w-full max-w-md space-y-4">
-            <div className="hidden items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:flex dark:border-slate-800 dark:bg-slate-900">
+            <div className="pointer-events-none absolute -inset-4 z-0 rounded-[2rem] bg-gradient-to-br from-blue-500/20 via-cyan-400/10 to-indigo-500/20 blur-2xl" />
+            <div className="relative z-10 hidden items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:flex dark:border-slate-800 dark:bg-slate-900">
               <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-xl border border-slate-100 bg-white p-2 shadow-inner">
                 {downloadQrDataUrl ? (
                   <img
@@ -247,8 +248,8 @@ export const AndroidDownloadPage: React.FC = () => {
                 </p>
               </div>
             </div>
-            <div className="absolute -inset-4 rounded-[2rem] bg-gradient-to-br from-blue-500/20 via-cyan-400/10 to-indigo-500/20 blur-2xl" />
-            <div className="relative rounded-[2rem] border border-slate-200 bg-white p-5 shadow-xl shadow-slate-900/5 dark:border-white/15 dark:bg-slate-900 dark:shadow-blue-950/50 sm:p-7">
+
+            <div className="relative z-10 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-xl shadow-slate-900/5 dark:border-white/15 dark:bg-slate-900 dark:shadow-blue-950/50 sm:p-7">
               <div className="flex items-center gap-4 border-b border-slate-200 pb-5 dark:border-white/10">
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-blue-300/30 bg-gradient-to-br from-blue-500 to-blue-800 shadow-lg shadow-blue-950/50">
                   <BookIcon />
