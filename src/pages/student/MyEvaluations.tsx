@@ -198,7 +198,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
       {/* Filter and Search Bar */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 flex flex-col sm:flex-row gap-3 items-center justify-between shadow-sm">
         <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          <Search className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
             placeholder="Search by subject or institute..."
@@ -257,7 +257,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
           </div>
 
           <div className="flex items-center gap-1.5">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
+            <Filter className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
             <select
               value={levelFilter}
               onChange={(e) => setLevelFilter(e.target.value)}
@@ -274,7 +274,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
 
       {/* Evaluations Table / Cards */}
       {isLoading ? (
-        <div className="py-20 text-center text-slate-400">
+        <div className="py-20 text-center text-slate-600 dark:text-slate-400">
           <RefreshCw className="w-6 h-6 animate-spin text-blue-600 dark:text-blue-400 mx-auto mb-2" />
           <p className="text-xs">Loading evaluation archives...</p>
         </div>
@@ -431,7 +431,7 @@ export const MyEvaluations: React.FC<MyEvaluationsProps> = ({ onViewReport, onNa
         </div>
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-12 text-center space-y-3 shadow-sm">
-          <Layers className="w-10 h-10 text-slate-400 mx-auto" />
+          <Layers className="w-10 h-10 text-slate-600 dark:text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">No evaluation records found</h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
             {search ? 'No evaluations matched your search criteria.' : 'Upload your first answer sheet to get started.'}
