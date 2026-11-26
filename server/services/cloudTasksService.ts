@@ -36,11 +36,20 @@ function readConfig(): CloudTasksRuntimeConfig | null {
   if (parsedTarget.protocol !== 'https:') {
     throw new Error('CLOUD_TASKS_TARGET_URL must use HTTPS.');
   }
+  if (!parsedTarget.hostname.toLowerCase().endsWith('.run.app')) {
+    throw new Error('CLOUD_TASKS_TARGET_URL must use the default Cloud Run run.app hostname.');
+  }
+  if (parsedTarget.search || parsedTarget.hash) {
+    throw new Error('CLOUD_TASKS_TARGET_URL must not contain a query string or fragment.');
+  }
   if (!parsedTarget.pathname.endsWith('/internal/tasks/evaluation')) {
     throw new Error('CLOUD_TASKS_TARGET_URL must end with /internal/tasks/evaluation.');
   }
   if (!/^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/i.test(serviceAccountEmail)) {
     throw new Error('CLOUD_TASKS_SERVICE_ACCOUNT must be a Google Cloud service-account email.');
+  }
+  if (!serviceAccountEmail.toLowerCase().endsWith('@' + projectId.toLowerCase() + '.iam.gserviceaccount.com')) {
+    throw new Error('CLOUD_TASKS_SERVICE_ACCOUNT must belong to the same Google Cloud project as the Cloud Tasks queue.');
   }
 
   const audience = String(process.env.CLOUD_TASKS_OIDC_AUDIENCE || parsedTarget.origin).trim();
