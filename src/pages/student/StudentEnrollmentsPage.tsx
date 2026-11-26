@@ -420,7 +420,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
               </h3>
               <button
                 onClick={() => setIsJoinModalOpen(false)}
-                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -494,7 +494,7 @@ export const StudentEnrollmentsPage: React.FC<StudentEnrollmentsPageProps> = ({
               </div>
               <button
                 onClick={() => setSelectedInstituteForMaterials(null)}
-                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
               >
                 <X className="w-5 h-5" />
               </button>
