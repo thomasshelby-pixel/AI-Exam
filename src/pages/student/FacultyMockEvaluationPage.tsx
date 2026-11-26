@@ -772,8 +772,8 @@ export const FacultyMockEvaluationPage: React.FC = () => {
               <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/70">
                   <div className="flex items-center gap-2">
-                    <ShieldCheck className="h-4 w-4 text-indigo-300" />
-                    <span className="text-[10px] font-black uppercase tracking-[0.15em] text-indigo-200">Checking preferences</span>
+                    <ShieldCheck className="h-4 w-4 text-indigo-700 dark:text-indigo-300" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.15em] text-indigo-800 dark:text-indigo-200">Checking preferences</span>
                   </div>
                   <label htmlFor="faculty-mock-checking-mode" className="mt-4 block text-xs font-bold text-slate-900 dark:text-slate-100">Evaluation strictness</label>
                   <select
@@ -790,7 +790,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                   <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
                     This changes the checking approach only. The faculty's answer key, marking scheme and maximum marks remain authoritative.
                   </p>
-                  <div className="mt-4 rounded-xl border border-emerald-400/15 bg-emerald-400/5 px-3 py-2.5 text-[10px] leading-relaxed text-emerald-100/90">
+                  <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[10px] leading-relaxed text-emerald-800 dark:border-emerald-400/15 dark:bg-emerald-400/5 dark:text-emerald-100/90">
                     Your mock is evaluated against its own uploaded Question Paper, Suggested Answers and Marking Scheme.
                   </div>
                 </div>
@@ -798,8 +798,8 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/70">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                      <UploadCloud className="h-4 w-4 text-indigo-300" />
-                      <span className="text-[10px] font-black uppercase tracking-[0.15em] text-indigo-200">Your answer sheet</span>
+                      <UploadCloud className="h-4 w-4 text-indigo-700 dark:text-indigo-300" />
+                      <span className="text-[10px] font-black uppercase tracking-[0.15em] text-indigo-800 dark:text-indigo-200">Your answer sheet</span>
                     </div>
                     <span className="rounded-full bg-slate-800 px-2.5 py-1 text-[9px] font-bold text-slate-300">MAX 50 MB</span>
                   </div>
