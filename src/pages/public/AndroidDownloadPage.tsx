@@ -110,10 +110,17 @@ export const AndroidDownloadPage: React.FC = () => {
 
   useEffect(() => {
     let active = true;
-    QRCode.toDataURL(`${window.location.origin}/download`, {
-      width: 180,
-      margin: 1,
-      errorCorrectionLevel: 'M',
+    setDownloadQrDataUrl('');
+
+    const latestApkPath = metadata?.available && metadata.downloadPath
+      ? metadata.downloadPath
+      : '/api/public/download/android';
+    const downloadTarget = new URL(latestApkPath, window.location.origin).toString();
+
+    QRCode.toDataURL(downloadTarget, {
+      width: 220,
+      margin: 2,
+      errorCorrectionLevel: 'H',
       color: { dark: '#0f172a', light: '#ffffff' },
     })
       .then((dataUrl) => {
@@ -122,16 +129,17 @@ export const AndroidDownloadPage: React.FC = () => {
       .catch(() => {
         if (active) setDownloadQrDataUrl('');
       });
+
     return () => {
       active = false;
     };
-  }, []);
+  }, [metadata?.available, metadata?.downloadPath]);
 
   const size = metadata?.sizeLabel || 'Official APK';
   const updatedAt = formatUpdatedAt(metadata?.updatedAt);
 
   return (
-    <div className="relative isolate overflow-hidden bg-slate-950 text-slate-100">
+    <div className="relative isolate min-h-screen overflow-hidden bg-slate-50 text-slate-900 transition-colors duration-200 dark:bg-slate-950 dark:text-slate-100">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
         <div className="absolute -top-56 left-1/2 h-[34rem] w-[56rem] -translate-x-1/2 rounded-full bg-blue-600/20 blur-3xl" />
         <div className="absolute top-[32rem] -right-40 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
@@ -142,7 +150,7 @@ export const AndroidDownloadPage: React.FC = () => {
       <section className="mx-auto max-w-6xl px-4 pb-14 pt-8 sm:px-6 sm:pb-20 sm:pt-12 lg:px-8">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:border-white/20 dark:hover:bg-white/10 dark:hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to CA Exam Checker AI
@@ -150,39 +158,39 @@ export const AndroidDownloadPage: React.FC = () => {
 
         <div className="mx-auto mt-8 grid max-w-5xl items-center gap-10 lg:mt-12 lg:grid-cols-[1.1fr_0.9fr]">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-400/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-blue-200">
+            <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-blue-800 dark:border-blue-400/30 dark:bg-blue-400/10 dark:text-blue-200">
               <Smartphone className="h-3.5 w-3.5" />
               Official Android app
             </div>
-            <h1 className="mt-5 text-4xl font-black leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
+            <h1 className="mt-5 text-4xl font-black leading-tight tracking-tight text-slate-900 dark:text-white sm:text-5xl lg:text-6xl">
               Exam Checker AI
               <span className="mt-2 block bg-gradient-to-r from-blue-300 via-cyan-300 to-blue-500 bg-clip-text text-2xl font-extrabold text-transparent sm:text-3xl lg:text-4xl">
                 for Android
               </span>
             </h1>
-            <p className="mt-5 max-w-xl text-sm leading-7 text-slate-300 sm:text-base">
+            <p className="mt-5 max-w-xl text-sm leading-7 text-slate-700 dark:text-slate-300 sm:text-base">
               Take your answer-sheet evaluation companion with you. Download the official app directly from
               the CA Exam Checker AI website and install it on your Android device.
             </p>
 
             <div className="mt-7 flex flex-wrap gap-2">
-              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-semibold text-emerald-200">
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200">
                 <ShieldCheck className="h-4 w-4" />
                 Official website download
               </span>
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-300">
+              <span className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-slate-300">
                 <FileDown className="h-4 w-4" />
                 APK installation file
               </span>
             </div>
 
             {metadataError && (
-              <div role="alert" className="mt-6 flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+              <div role="alert" className="mt-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-400/30 dark:bg-amber-400/10 dark:text-amber-100">
                 <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold">App details could not be loaded</p>
-                  <p className="mt-1 text-xs leading-5 text-amber-100/80">{metadataError}</p>
-                  <button onClick={() => void loadMetadata()} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-white underline underline-offset-4">
+                  <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-100/80">{metadataError}</p>
+                  <button onClick={() => void loadMetadata()} className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-amber-900 underline underline-offset-4 dark:text-white">
                     <RefreshCw className="h-3.5 w-3.5" /> Try again
                   </button>
                 </div>
@@ -195,25 +203,34 @@ export const AndroidDownloadPage: React.FC = () => {
               <a
                 href={metadata?.available ? (metadata.downloadPath || '/api/public/download/android') : '/api/public/download/android'}
                 download="Exam Checker AI.apk"
-                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-xl bg-blue-600 px-6 py-4 text-sm font-extrabold text-white shadow-lg shadow-blue-950/40 transition hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2 focus:ring-offset-slate-950"
+                className="inline-flex min-h-14 items-center justify-center gap-3 rounded-xl bg-blue-600 px-6 py-4 text-sm font-extrabold text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-2 focus:ring-offset-slate-50 dark:shadow-blue-950/40 dark:focus:ring-offset-slate-950"
               >
                 {loading ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
                 <span>Download Now</span>
                 <ArrowRight className="h-4 w-4" />
               </a>
-              <a href="#installation" className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-5 py-4 text-sm font-bold text-slate-200 transition hover:bg-white/10">
+              <a href="#installation" className="inline-flex min-h-14 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-4 text-sm font-bold text-slate-800 transition hover:bg-slate-100 dark:border-white/15 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10">
                 Installation guide
                 <ArrowRight className="h-4 w-4" />
               </a>
             </div>
-            <p className="mt-3 text-xs leading-5 text-slate-400">
-              The APK is delivered from this website. The downloaded filename is <span className="font-semibold text-slate-300">Exam Checker AI.apk</span>.
+            <p className="mt-3 text-xs leading-5 text-slate-600 dark:text-slate-400">
+              The APK is delivered from this website. The downloaded filename is <span className="font-semibold text-slate-800 dark:text-slate-300">Exam Checker AI.apk</span>.
             </p>
 
-            <div className="mt-6 hidden items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4 lg:flex">
-              <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-xl bg-white p-2">
+          </div>
+
+          <div className="relative mx-auto w-full max-w-md space-y-4">
+            <div className="hidden items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:flex dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-xl border border-slate-100 bg-white p-2 shadow-inner">
                 {downloadQrDataUrl ? (
-                  <img src={downloadQrDataUrl} alt="QR code to open the CA Exam Checker AI Android download page on a phone" className="h-full w-full" />
+                  <img
+                    src={downloadQrDataUrl}
+                    alt="QR code that downloads the latest official Exam Checker AI Android APK"
+                    className="h-full w-full"
+                    width={220}
+                    height={220}
+                  />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-slate-500">
                     <Smartphone className="h-8 w-8" />
@@ -221,40 +238,39 @@ export const AndroidDownloadPage: React.FC = () => {
                 )}
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-extrabold text-white">Already on desktop?</p>
-                <p className="mt-1 text-xs leading-5 text-slate-400">
-                  Scan this QR code with your phone to open this page and download the Android app directly.
+                <p className="text-sm font-extrabold text-slate-900 dark:text-white">Scan to Download on Phone</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-400">
+                  Open your phone camera and scan to download the current official APK directly.
                 </p>
-                <p className="mt-2 break-all text-[10px] font-semibold text-cyan-300">caexamcheckerai.com/download</p>
+                <p className="mt-2 text-[10px] font-semibold text-blue-700 dark:text-cyan-300">
+                  Latest published Android version
+                </p>
               </div>
             </div>
-          </div>
-
-          <div className="relative mx-auto w-full max-w-md">
             <div className="absolute -inset-4 rounded-[2rem] bg-gradient-to-br from-blue-500/20 via-cyan-400/10 to-indigo-500/20 blur-2xl" />
-            <div className="relative rounded-[2rem] border border-white/15 bg-slate-900/90 p-5 shadow-2xl shadow-blue-950/50 sm:p-7">
-              <div className="flex items-center gap-4 border-b border-white/10 pb-5">
+            <div className="relative rounded-[2rem] border border-slate-200 bg-white p-5 shadow-xl shadow-slate-900/5 dark:border-white/15 dark:bg-slate-900 dark:shadow-blue-950/50 sm:p-7">
+              <div className="flex items-center gap-4 border-b border-slate-200 pb-5 dark:border-white/10">
                 <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-blue-300/30 bg-gradient-to-br from-blue-500 to-blue-800 shadow-lg shadow-blue-950/50">
                   <BookIcon />
                 </div>
                 <div>
-                  <p className="text-lg font-extrabold text-white">Exam Checker AI</p>
-                  <p className="mt-1 text-xs text-slate-400">Android application package</p>
+                  <p className="text-lg font-extrabold text-slate-900 dark:text-white">Exam Checker AI</p>
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Android application package</p>
                 </div>
               </div>
 
               <div className="mt-5 grid grid-cols-2 gap-3">
-                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Version</p>
-                  <p className="mt-1 text-sm font-bold text-white">{metadata?.version || '0.1.0'}</p>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Version</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900 dark:text-white">{metadata?.version || '0.1.0'}</p>
                 </div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">File size</p>
-                  <p className="mt-1 text-sm font-bold text-white">{loading ? 'Checking…' : size}</p>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">File size</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900 dark:text-white">{loading ? 'Checking…' : size}</p>
                 </div>
-                <div className="col-span-2 rounded-xl border border-white/10 bg-white/[0.04] p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Latest package</p>
-                  <p className="mt-1 text-sm font-bold text-white">{loading ? 'Checking availability…' : updatedAt}</p>
+                <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">Latest package</p>
+                  <p className="mt-1 text-sm font-bold text-slate-900 dark:text-white">{loading ? 'Checking availability…' : updatedAt}</p>
                 </div>
               </div>
 
@@ -264,13 +280,13 @@ export const AndroidDownloadPage: React.FC = () => {
                   'Answer-sheet submissions and status',
                   'Checked copies and detailed reports',
                 ].map((feature) => (
-                  <div key={feature} className="flex items-center gap-2.5 text-xs text-slate-300">
+                  <div key={feature} className="flex items-center gap-2.5 text-xs text-slate-700 dark:text-slate-300">
                     <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
                     {feature}
                   </div>
                 ))}
               </div>
-              <div className="mt-6 rounded-xl border border-blue-300/15 bg-blue-400/[0.06] p-3 text-xs leading-5 text-slate-400">
+              <div className="mt-6 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs leading-5 text-blue-800 dark:border-blue-300/15 dark:bg-blue-400/[0.06] dark:text-slate-400">
                 Only install app packages downloaded from the official CA Exam Checker AI website.
               </div>
             </div>
@@ -280,10 +296,10 @@ export const AndroidDownloadPage: React.FC = () => {
         <section aria-labelledby="app-workflow-preview-title" className="mx-auto mt-16 max-w-5xl sm:mt-20">
           <div className="mb-7 max-w-2xl">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">App experience</p>
-            <h2 id="app-workflow-preview-title" className="mt-2 text-2xl font-black tracking-tight text-white sm:text-3xl">
+            <h2 id="app-workflow-preview-title" className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
               Your exam workflow, on your phone
             </h2>
-            <p className="mt-3 text-sm leading-6 text-slate-400">
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
               Illustrative previews of the core student workflows available through CA Exam Checker AI.
             </p>
           </div>
@@ -314,7 +330,7 @@ export const AndroidDownloadPage: React.FC = () => {
             ].map((screen) => {
               const Icon = screen.icon;
               return (
-                <article key={screen.title} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 sm:p-5">
+                <article key={screen.title} className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 dark:border-white/10 dark:bg-slate-900">
                   <div className={`mx-auto w-full max-w-[220px] rounded-[2rem] border border-white/15 bg-gradient-to-br ${screen.accent} p-2 shadow-xl`}>
                     <div className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-950 px-3 pb-4 pt-3">
                       <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-slate-700" />
@@ -327,7 +343,7 @@ export const AndroidDownloadPage: React.FC = () => {
                           <p className="text-[8px] text-slate-500">Student portal</p>
                         </div>
                       </div>
-                      <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.04] p-3">
+                      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-white/[0.04]">
                         <p className="text-[9px] font-bold text-slate-200">{screen.title}</p>
                         <p className="mt-1 text-[8px] leading-4 text-slate-500">{screen.caption}</p>
                       </div>
@@ -344,8 +360,8 @@ export const AndroidDownloadPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  <h3 className="mt-4 text-center text-sm font-extrabold text-white">{screen.title}</h3>
-                  <p className="mt-1 text-center text-xs text-slate-400">{screen.caption}</p>
+                  <h3 className="mt-4 text-center text-sm font-extrabold text-slate-900 dark:text-white">{screen.title}</h3>
+                  <p className="mt-1 text-center text-xs text-slate-600 dark:text-slate-400">{screen.caption}</p>
                 </article>
               );
             })}
@@ -355,12 +371,12 @@ export const AndroidDownloadPage: React.FC = () => {
         <section id="installation" className="mx-auto mt-16 max-w-5xl scroll-mt-24 sm:mt-20">
           <div className="mb-7 max-w-2xl">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-300">Simple installation</p>
-            <h2 className="mt-2 text-2xl font-black tracking-tight text-white sm:text-3xl">From download to first launch</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-400">
+            <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">From download to first launch</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
               Follow these steps on your Android phone after the APK download begins.
             </p>
           </div>
-          <figure className="overflow-hidden rounded-2xl border border-white/10 bg-slate-900/70 p-2 shadow-2xl shadow-blue-950/30 sm:p-3">
+          <figure className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-2 shadow-sm sm:p-3 dark:border-white/10 dark:bg-slate-900 dark:shadow-blue-950/30">
             <img
               src={`${import.meta.env.BASE_URL}android-installation-guide.svg`}
               alt="CA Exam Checker AI website and Exam Checker AI Android app: six steps from opening the download page to installing and launching the app."
@@ -369,7 +385,7 @@ export const AndroidDownloadPage: React.FC = () => {
               loading="lazy"
               className="h-auto w-full rounded-xl"
             />
-            <figcaption className="px-2 pb-2 pt-3 text-center text-xs leading-5 text-slate-400">
+            <figcaption className="px-2 pb-2 pt-3 text-center text-xs leading-5 text-slate-600 dark:text-slate-400">
               Website: CA Exam Checker AI · Android app: Exam Checker AI
             </figcaption>
           </figure>
@@ -377,34 +393,34 @@ export const AndroidDownloadPage: React.FC = () => {
             {INSTALL_STEPS.map((step) => {
               const Icon = step.icon;
               return (
-                <article key={step.number} className="group rounded-2xl border border-white/10 bg-white/[0.035] p-5 transition hover:border-blue-400/40 hover:bg-blue-400/[0.05] sm:p-6">
+                <article key={step.number} className="group rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-blue-300 hover:bg-blue-50 sm:p-6 dark:border-white/10 dark:bg-white/[0.035] dark:hover:border-blue-400/40 dark:hover:bg-blue-400/[0.05]">
                   <div className="flex items-start gap-4">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-blue-300/20 bg-blue-500/15 text-blue-200">
                       <Icon className="h-5 w-5" />
                     </div>
                     <div>
                       <p className="text-[10px] font-bold tracking-[0.16em] text-cyan-300">STEP {step.number}</p>
-                      <h3 className="mt-1 text-base font-extrabold text-white">{step.title}</h3>
-                      <p className="mt-2 text-sm leading-6 text-slate-400">{step.description}</p>
+                      <h3 className="mt-1 text-base font-extrabold text-slate-900 dark:text-white">{step.title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">{step.description}</p>
                     </div>
                   </div>
                 </article>
               );
             })}
           </div>
-          <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/70 p-5 sm:flex sm:items-center sm:justify-between sm:gap-6">
+          <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 sm:flex sm:items-center sm:justify-between sm:gap-6 dark:border-white/10 dark:bg-slate-900">
             <div>
-              <p className="font-bold text-white">Need help installing?</p>
-              <p className="mt-1 text-xs leading-5 text-slate-400">Contact support if the download fails or the installer cannot open the APK.</p>
+              <p className="font-bold text-slate-900 dark:text-white">Need help installing?</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-400">Contact support if the download fails or the installer cannot open the APK.</p>
             </div>
-            <a href="mailto:support@caexamcheckerai.com" className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-blue-300 hover:text-blue-200 sm:mt-0">
+            <a href="mailto:support@caexamcheckerai.com" className="mt-4 inline-flex items-center gap-2 text-sm font-bold text-blue-700 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200 sm:mt-0">
               Contact support <ExternalLink className="h-4 w-4" />
             </a>
           </div>
         </section>
 
-        <div className="mx-auto mt-12 max-w-5xl border-t border-white/10 pt-6 text-center">
-          <Link to="/" className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 transition hover:text-white">
+        <div className="mx-auto mt-12 max-w-5xl border-t border-slate-200 pt-6 text-center dark:border-white/10">
+          <Link to="/" className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 transition hover:text-slate-900 dark:text-slate-400 dark:hover:text-white">
             <ArrowLeft className="h-4 w-4" /> Return to CA Exam Checker AI
           </Link>
         </div>
