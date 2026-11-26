@@ -22,7 +22,7 @@ import {
 } from './instituteTrialService.js';
 import { savePersistentFile, getPersistentFile } from './persistentStorageService.js';
 import { syncRecordToFirestore } from './firestoreSyncService.js';
-import { getFirestoreDoc, queryFirestoreDocs, runFirestoreTransaction } from './firestoreDbService.js';
+import { getFirestoreDoc, runFirestoreTransaction } from './firestoreDbService.js';
 import { restoreDurableEvaluationJobPayload, serializeDurableEvaluationJobPayload } from './durableEvaluationJobPayload.js';
 import { releaseFacultyMockFreeCopy, releaseFacultyMockPaidCopy } from './facultyMockEntitlementService.js';
 import { validateAuthoritativeConsistency } from './evaluationIntegrityEngine.js';
@@ -101,20 +101,13 @@ const durableQueueStartingJobs = new Set<string>();
 const DURABLE_QUEUE_COLLECTION = 'evaluation_jobs';
 const DURABLE_QUEUE_LEASE_MS = 3 * 60 * 1000;
 const DURABLE_QUEUE_HEARTBEAT_MS = 30 * 1000;
-// One cluster-wide recovery scan per minute; accepted jobs still start immediately.
-const DURABLE_QUEUE_POLL_MS = 60 * 1000;
-const DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION = 'system_runtime_locks';
-const DURABLE_QUEUE_RECOVERY_LOCK_ID = 'durable_evaluation_queue_recovery';
-const DURABLE_QUEUE_RECOVERY_LOCK_MS = DURABLE_QUEUE_POLL_MS - 5 * 1000;
 const DURABLE_QUEUE_NUDGE_COOLDOWN_MS = 30 * 1000;
 const DURABLE_QUEUE_MAX_ATTEMPTS = 5;
-const DURABLE_QUEUE_MAX_ACTIVE_JOBS = 1;
 const DURABLE_QUEUE_INSTANCE_ID = [
   process.env.K_REVISION || 'app-hosting',
   process.pid,
   crypto.randomUUID(),
 ].join(':');
-let durableQueueRecoveryTimer: NodeJS.Timeout | null = null;
 const durableQueueNudgeTimes = new Map<string, number>();
 
 type DurableEvaluationQueueRecord = {
@@ -481,78 +474,6 @@ async function runDurableEvaluationQueueRecord(
   } finally {
     activeJobs.delete(evaluationId);
     durableQueueStartingJobs.delete(evaluationId);
-    if (isProductionEvaluationQueue() && !isCloudTasksConfigured()) {
-      void processDurableEvaluationQueue().catch((error) =>
-        console.warn('[DurableEvalQueue] Follow-up queue scheduling failed:', error)
-      );
-    }
-  }
-}
-
-async function claimDurableQueueRecoveryScan(): Promise<boolean> {
-  const now = Date.now();
-  try {
-    return await runFirestoreTransaction(async (transaction) => {
-      const snapshot = await transaction.get(
-        DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION,
-        DURABLE_QUEUE_RECOVERY_LOCK_ID,
-      );
-      const current = snapshot.exists ? snapshot.data() || {} : {};
-      const currentExpiry = Date.parse(String(current.leaseExpiresAt || ''));
-      if (
-        current.ownerId &&
-        Number.isFinite(currentExpiry) &&
-        currentExpiry > now
-      ) {
-        return false;
-      }
-
-      transaction.set(DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION, DURABLE_QUEUE_RECOVERY_LOCK_ID, {
-        ownerId: DURABLE_QUEUE_INSTANCE_ID,
-        leaseExpiresAt: new Date(now + DURABLE_QUEUE_RECOVERY_LOCK_MS).toISOString(),
-        updatedAt: new Date(now).toISOString(),
-      });
-      return true;
-    });
-  } catch (error) {
-    console.warn('[DurableEvalQueue] Could not acquire cluster recovery lease; skipping this scan:', error);
-    return false;
-  }
-}
-
-async function processDurableEvaluationQueue(initialJobId?: string, initialJob?: EvaluationJobData): Promise<void> {
-  if (!isProductionEvaluationQueue()) return;
-  if (initialJobId && initialJob) {
-    void runDurableEvaluationQueueRecord(initialJobId, initialJob).catch((error) =>
-      console.error(`[DurableEvalQueue] Failed to start accepted job ${initialJobId}:`, error)
-    );
-    return;
-  }
-
-  if (activeJobs.size + durableQueueStartingJobs.size >= DURABLE_QUEUE_MAX_ACTIVE_JOBS) return;
-  // Cloud Run may run several instances. Only one instance may scan the durable
-  // queue at a time; otherwise every instance repeatedly reads the same records.
-  if (!(await claimDurableQueueRecoveryScan())) return;
-
-  const [queued, running] = await Promise.all([
-    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'QUEUED' }], { failOnError: true, limit: 10 }),
-    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'RUNNING' }], { failOnError: true, limit: 10 }),
-  ]);
-  const now = Date.now();
-  const candidates = [...queued, ...running]
-    .filter((record) => {
-      if (!record?.evaluationId || isDurableQueueTerminal(record.status)) return false;
-      if (record.status === 'QUEUED' && record.nextAttemptAt && Date.parse(record.nextAttemptAt) > now) return false;
-      if (record.status === 'RUNNING' && record.leaseExpiresAt && Date.parse(record.leaseExpiresAt) > now) return false;
-      return true;
-    })
-    .sort((left, right) => String(left.createdAt || '').localeCompare(String(right.createdAt || '')));
-
-  for (const record of candidates) {
-    if (activeJobs.size + durableQueueStartingJobs.size >= DURABLE_QUEUE_MAX_ACTIVE_JOBS) break;
-    void runDurableEvaluationQueueRecord(record.evaluationId).catch((error) =>
-      console.error(`[DurableEvalQueue] Failed to launch queued evaluation ${record.evaluationId}:`, error)
-    );
   }
 }
 
@@ -614,14 +535,12 @@ export async function nudgeDurableEvaluationQueue(evaluationId: string): Promise
 }
 
 export function startDurableEvaluationQueueRecovery(): void {
-  if (!isProductionEvaluationQueue() || durableQueueRecoveryTimer) return;
+  if (!isProductionEvaluationQueue()) return;
   if (isCloudTasksConfigured()) {
-    console.info('[DurableEvalQueue] Cloud Tasks is configured; in-process recovery scanner disabled.');
+    console.info('[DurableEvalQueue] Cloud Tasks is configured; per-evaluation HTTP task dispatch is active.');
   } else {
-    console.error('[DurableEvalQueue] Cloud Tasks is not configured. Production evaluations will fail closed; no background worker will be started under request-based CPU billing.');
+    console.error('[DurableEvalQueue] Cloud Tasks is not configured. Production evaluations will fail closed; no background worker is started under request-based CPU billing.');
   }
-  // Never start a production timer worker. Request-based Cloud Run CPU is only
-  // available during an HTTP request, so each evaluation must run via Cloud Tasks.
 }
 
 /**
