@@ -223,7 +223,7 @@ export const AndroidDownloadPage: React.FC = () => {
           <div className="relative mx-auto w-full max-w-md space-y-4">
             <div className="pointer-events-none absolute -inset-4 z-0 rounded-[2rem] bg-gradient-to-br from-blue-500/20 via-cyan-400/10 to-indigo-500/20 blur-2xl" />
             <div className="relative z-10 hidden items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:flex dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex h-32 w-32 shrink-0 items-center justify-center rounded-xl border border-slate-100 bg-white p-2 shadow-inner">
+              <div className="flex h-40 w-40 shrink-0 items-center justify-center rounded-xl border border-slate-100 bg-white p-2 shadow-inner">
                 {downloadQrDataUrl ? (
                   <img
                     src={downloadQrDataUrl}
