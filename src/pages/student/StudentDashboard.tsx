@@ -531,7 +531,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   if (isLoading) {
     return (
-      <div className="min-h-[60vh] flex items-center justify-center text-slate-400">
+      <div className="min-h-[60vh] flex items-center justify-center text-slate-600 dark:text-slate-400">
         <RefreshCw className="w-6 h-6 animate-spin text-amber-500" />
       </div>
     );
@@ -837,7 +837,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="text-emerald-600 dark:text-emerald-400 font-semibold">
                   Promotional access active
                 </div>
-                <div className="text-[10px] text-slate-400">
+                <div className="text-[10px] text-slate-600 dark:text-slate-400">
                   Valid until {formatDateIST(referralStatus.activePromo.expiryDate)}
                 </div>
               </div>
@@ -865,7 +865,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <span className="text-slate-500 dark:text-slate-400 text-[11px]"> ({metrics.freeEvaluationsRemaining + metrics.purchasedCredits} total)</span>
                   )}
                 </div>
-                <div className="text-[10px] text-slate-400">
+                <div className="text-[10px] text-slate-600 dark:text-slate-400">
                   Resets monthly • Consumes free evaluations first
                 </div>
               </div>
@@ -877,7 +877,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         <div className="student-glass-kpi p-4 rounded-xl shadow-sm border">
           <div className="text-xs font-bold text-slate-400 dark:text-slate-400 mb-1 uppercase tracking-wider flex items-center justify-between">
             <span>Total Evaluated</span>
-            <Layers className="w-3.5 h-3.5 text-slate-400" />
+            <Layers className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
           </div>
           <div className="text-2xl font-bold text-slate-900 dark:text-white">{metrics.totalEvaluations}</div>
           <div className="text-xs text-green-600 dark:text-emerald-400 font-medium mt-1">Full papers verified</div>
@@ -1892,7 +1892,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="space-y-1.5">
                 <label htmlFor="social-profile-phone" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Phone Number <span className="font-normal text-slate-400">(Optional)</span>
+                  Phone Number <span className="font-normal text-slate-600 dark:text-slate-400">(Optional)</span>
                 </label>
                 <input
                   id="social-profile-phone"

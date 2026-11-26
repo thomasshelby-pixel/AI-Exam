@@ -838,7 +838,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
 
   if (isLoading && !profileData) {
     return (
-      <div className="min-h-[65vh] flex items-center justify-center text-slate-400">
+      <div className="min-h-[65vh] flex items-center justify-center text-slate-600 dark:text-slate-400">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
           <span className="text-sm font-medium text-slate-500">Loading student profile...</span>
@@ -1085,7 +1085,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   Full Name <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
-                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <User className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3 top-3" />
                   <input
                     type="text"
                     required
@@ -1103,7 +1103,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   Phone Number
                 </label>
                 <div className="relative">
-                  <Phone className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <Phone className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3 top-3" />
                   <input
                     type="tel"
                     value={phone}
@@ -1118,12 +1118,12 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
                   <span>Registered Email</span>
-                  <span className="text-xs text-slate-400 flex items-center gap-1 font-normal">
+                  <span className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-1 font-normal">
                     <Lock className="w-3 h-3" /> Immutable
                   </span>
                 </label>
                 <div className="relative">
-                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <Mail className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3 top-3" />
                   <input
                     type="email"
                     disabled
@@ -1139,7 +1139,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   City / Location
                 </label>
                 <div className="relative">
-                  <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <MapPin className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3 top-3" />
                   <input
                     type="text"
                     value={city}
@@ -1154,10 +1154,10 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
                   <span>ICAI Registration No.</span>
-                  <span className="text-xs text-slate-400 font-normal">Exam Audit Record</span>
+                  <span className="text-xs text-slate-600 dark:text-slate-400 font-normal">Exam Audit Record</span>
                 </label>
                 <div className="relative">
-                  <GraduationCap className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                  <GraduationCap className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3 top-3" />
                   <input
                     type="text"
                     disabled
@@ -1235,7 +1235,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                   </div>
                 ) : (
                   <div className="relative">
-                    <Building2 className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <Building2 className="w-4 h-4 text-slate-600 dark:text-slate-400 absolute left-3 top-3" />
                     <input
                       type="text"
                       disabled
@@ -1308,7 +1308,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                   Focus Subjects & Papers (CA {caLevel})
                 </label>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-600 dark:text-slate-400">
                   {preferredSubjects.length} selected
                 </span>
               </div>
@@ -1439,7 +1439,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-xs space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-slate-400" />
+                  <Clock className="w-4 h-4 text-slate-600 dark:text-slate-400" />
                   <span className="text-xs font-bold text-slate-600 dark:text-slate-300 uppercase tracking-wider">
                     {referralStatus.latestRedemption.status === 'REVOKED'
                       ? 'Promo Benefit Revoked'
@@ -1941,7 +1941,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                         {deleteShowPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
-                    <p className="text-[10px] text-slate-400">Use the password already associated with your account.</p>
+                    <p className="text-[10px] text-slate-600 dark:text-slate-400">Use the password already associated with your account.</p>
                     <p className="text-[10px] text-slate-400">
                       Or confirm your registered account email address below:
                     </p>

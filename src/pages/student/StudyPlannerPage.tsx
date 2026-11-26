@@ -614,7 +614,7 @@ export const StudyPlannerPage: React.FC = () => {
                                 {source.title}
                               </a>
                               <p className="mt-0.5 text-xs leading-5 text-slate-600 dark:text-slate-400">{source.snippet}</p>
-                              {source.publishedAt && <p className="mt-0.5 text-[10px] text-slate-400">{source.publishedAt}</p>}
+                              {source.publishedAt && <p className="mt-0.5 text-[10px] text-slate-600 dark:text-slate-400">{source.publishedAt}</p>}
                             </li>
                           ))}
                         </ul>
@@ -724,14 +724,14 @@ export const StudyPlannerPage: React.FC = () => {
                     }
                   }}
                   placeholder="Ask PARAKH about a CA topic or your revision plan…"
-                  className="max-h-32 min-h-[52px] min-w-0 flex-1 resize-y rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm leading-5 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:ring-indigo-950"
+                  className="max-h-32 min-h-[52px] min-w-0 flex-1 resize-y rounded-xl border border-slate-300 bg-white px-3 py-3 text-sm leading-5 text-slate-900 outline-none transition placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:ring-indigo-950"
                 />
                 <button type="submit" disabled={loading || !request.trim()} className="inline-flex min-h-[52px] shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
                   <Send className="h-4 w-4" />
                   <span className="hidden sm:inline">Send</span>
                 </button>
               </div>
-              <p className="mt-2 px-1 text-[10px] text-slate-400">Enter to send · Shift + Enter for a new line</p>
+              <p className="mt-2 px-1 text-[10px] text-slate-600 dark:text-slate-400">Enter to send · Shift + Enter for a new line</p>
             </form>
           </section>
 
