@@ -1308,7 +1308,7 @@ export const StudentProfilePage: React.FC<StudentProfilePageProps> = ({
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
                   Focus Subjects & Papers (CA {caLevel})
                 </label>
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-600 dark:text-slate-400">
                   {preferredSubjects.length} selected
                 </span>
               </div>
