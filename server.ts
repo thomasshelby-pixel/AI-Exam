@@ -22,7 +22,7 @@ import { authenticateToken, requireRole } from './server/auth.js';
 import {
   hydrateFromFirestore,
   seedBaselineToFirestoreIfEmpty,
-  syncAllStudentReadableIdentityViewsToFirestore,
+  syncStudentReadableIdentityViewsIfNeeded,
 } from './server/services/firestoreSyncService.js';
 import { hydrateNotificationCentreFromFirestore } from './server/services/notificationService.js';
 import { hydrateFeatureControlsFromFirestore } from './server/services/featureControlPersistenceService.js';
@@ -317,9 +317,9 @@ export default {};
 
   // Best-effort reconciliation for existing students. This does not block server
   // readiness and creates readable students_by_code/{ST-...} lookup documents.
-  void syncAllStudentReadableIdentityViewsToFirestore()
+  void syncStudentReadableIdentityViewsIfNeeded()
     .then((count) => {
-      console.log(`[Startup] Readable Student Code index reconciled for ${count} student(s).`);
+      console.log(`[Startup] One-time Readable Student Code index backfill processed ${count} student(s).`);
     })
     .catch((error) => {
       console.warn('[Startup] Student Code index reconciliation failed:', error);
