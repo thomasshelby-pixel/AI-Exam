@@ -107,7 +107,7 @@ const DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION = 'system_runtime_locks';
 const DURABLE_QUEUE_RECOVERY_LOCK_ID = 'durable_evaluation_queue_recovery';
 const DURABLE_QUEUE_RECOVERY_LOCK_MS = DURABLE_QUEUE_POLL_MS - 5 * 1000;
 const DURABLE_QUEUE_NUDGE_COOLDOWN_MS = 30 * 1000;
-const DURABLE_QUEUE_MAX_ATTEMPTS = 2;
+const DURABLE_QUEUE_MAX_ATTEMPTS = 5;
 const DURABLE_QUEUE_MAX_ACTIVE_JOBS = 1;
 const DURABLE_QUEUE_INSTANCE_ID = [
   process.env.K_REVISION || 'app-hosting',
@@ -616,19 +616,12 @@ export async function nudgeDurableEvaluationQueue(evaluationId: string): Promise
 export function startDurableEvaluationQueueRecovery(): void {
   if (!isProductionEvaluationQueue() || durableQueueRecoveryTimer) return;
   if (isCloudTasksConfigured()) {
-    console.info('[DurableEvalQueue] Cloud Tasks is configured; disabling in-process periodic recovery scans.');
-    return;
+    console.info('[DurableEvalQueue] Cloud Tasks is configured; in-process recovery scanner disabled.');
+  } else {
+    console.error('[DurableEvalQueue] Cloud Tasks is not configured. Production evaluations will fail closed; no background worker will be started under request-based CPU billing.');
   }
-  console.warn('[DurableEvalQueue] Cloud Tasks is not configured; request-based production evaluation dispatch is unavailable.');
-  void processDurableEvaluationQueue().catch((error) =>
-    console.warn('[DurableEvalQueue] Initial recovery scan failed:', error)
-  );
-  durableQueueRecoveryTimer = setInterval(() => {
-    void processDurableEvaluationQueue().catch((error) =>
-      console.warn('[DurableEvalQueue] Periodic recovery scan failed:', error)
-    );
-  }, DURABLE_QUEUE_POLL_MS);
-  durableQueueRecoveryTimer.unref?.();
+  // Never start a production timer worker. Request-based Cloud Run CPU is only
+  // available during an HTTP request, so each evaluation must run via Cloud Tasks.
 }
 
 /**
@@ -651,17 +644,29 @@ export async function processDurableEvaluationTask(evaluationId: string): Promis
   if (!initial) throw new Error(`Durable evaluation record not found: ${evaluationId}`);
   if (isDurableQueueTerminal(initial.status)) return;
 
-  // A duplicate dispatch in the same process is already being handled by the
-  // owning task request. A live lease on another instance is retriable: Cloud
-  // Tasks must keep the attempt pending until that lease expires or completes.
-  if (activeJobs.has(evaluationId) || durableQueueStartingJobs.has(evaluationId)) return;
+  // If another request in this process owns the worker, wait for it and then
+  // re-read the durable state before acknowledging this duplicate dispatch.
+  const activeWorker = activeJobs.get(evaluationId);
+  if (activeWorker) {
+    await activeWorker;
+  } else if (durableQueueStartingJobs.has(evaluationId)) {
+    throw new Error('EVALUATION_WORKER_STARTING: Another request is claiming this evaluation. Retry this task.');
+  }
 
-  const status = String(initial.status || '').toUpperCase();
-  const leaseUntil = Date.parse(String(initial.leaseExpiresAt || ''));
+  const current = await getFirestoreDoc<DurableEvaluationQueueRecord>(
+    DURABLE_QUEUE_COLLECTION,
+    evaluationId,
+    { failOnError: true },
+  );
+  if (!current) throw new Error(`Durable evaluation record not found after worker wait: ${evaluationId}`);
+  if (isDurableQueueTerminal(current.status)) return;
+
+  const status = String(current.status || '').toUpperCase();
+  const leaseUntil = Date.parse(String(current.leaseExpiresAt || ''));
   if (status === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now()) {
     throw new Error('EVALUATION_WORKER_LEASE_ACTIVE: Another worker owns this evaluation; retry after its lease expires.');
   }
-  const nextAttemptAt = Date.parse(String(initial.nextAttemptAt || ''));
+  const nextAttemptAt = Date.parse(String(current.nextAttemptAt || ''));
   if (status === 'QUEUED' && Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) {
     throw new Error('EVALUATION_RETRY_NOT_DUE: Durable queue retry backoff has not elapsed.');
   }
