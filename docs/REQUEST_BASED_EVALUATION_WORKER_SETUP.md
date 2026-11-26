@@ -51,6 +51,12 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \\
   --member="serviceAccount:$APP_RUNTIME_SA" \\
   --role="roles/cloudtasks.enqueuer"
 
+# The runtime service account must be allowed to attach the task OIDC identity.
+gcloud iam service-accounts add-iam-policy-binding "$TASK_SA" \
+  --project "$PROJECT_ID" \
+  --member="serviceAccount:$APP_RUNTIME_SA" \
+  --role="roles/iam.serviceAccountUser"
+
 gcloud run services add-iam-policy-binding caexamcheckerai-prod \\
   --region "$REGION" \\
   --project "$PROJECT_ID" \\
