@@ -118,15 +118,6 @@ textarea {
   animation: fadeIn 0.18s ease-out forwards;
 }
 
-/* Keep legacy muted text readable when the student workspace is in Light Mode.
-   Individual components can still use darker slate-700/slate-800 tokens for primary copy. */
-.student-glass-workspace:not(.dark) .text-slate-400 {
-  color: #475569;
-}
-.student-glass-workspace:not(.dark) .text-slate-500 {
-  color: #475569;
-}
-
 /* Student workspace — shared light/dark glassmorphism visual system */
 .student-glass-workspace {
   isolation: isolate;
