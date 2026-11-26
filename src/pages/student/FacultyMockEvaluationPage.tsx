@@ -64,6 +64,8 @@ export const FacultyMockEvaluationPage: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [activeEvaluationId, setActiveEvaluationId] = useState<string | null>(null);
+  const [pollingTimedOut, setPollingTimedOut] = useState(false);
+  const [pollingRestartToken, setPollingRestartToken] = useState(0);
   const [evaluationProgressStage, setEvaluationProgressStage] = useState('QUEUED');
   const [evaluationProgressPercentage, setEvaluationProgressPercentage] = useState(5);
   const [evaluationProgressMessage, setEvaluationProgressMessage] = useState('Your answer sheet is securely registered for checking.');
@@ -130,23 +132,45 @@ export const FacultyMockEvaluationPage: React.FC = () => {
     return () => window.clearInterval(timer);
   }, [activeEvaluationId, evaluationStartedAt]);
 
-  // Read authoritative backend stages rather than simulating completion.
+  // Read authoritative backend stages with bounded polling. Cloud Run request-based
+  // billing must not be kept warm by an aggressive, unbounded browser interval.
   useEffect(() => {
     if (!activeEvaluationId || !user?.id) return;
     let subscribed = true;
-    let handledTerminalState = false;
+    let requestInFlight = false;
+    let attempts = 0;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const maxAttempts = 20;
+
     const clearSavedEvaluation = () => {
       if (activeEvaluationStorageKey) localStorage.removeItem(activeEvaluationStorageKey);
       if (activeEvaluationStartStorageKey) localStorage.removeItem(activeEvaluationStartStorageKey);
     };
+
+    const scheduleNextCheck = (delayMs: number) => {
+      if (!subscribed) return;
+      if (timerId) clearTimeout(timerId);
+      timerId = window.setTimeout(() => {
+        void pollEvaluation();
+      }, delayMs);
+    };
+
     const pollEvaluation = async () => {
-      if (!subscribed || handledTerminalState) return;
+      if (!subscribed || requestInFlight) return;
+      if (attempts >= maxAttempts) {
+        setPollingTimedOut(true);
+        return;
+      }
+
+      requestInFlight = true;
+      attempts += 1;
       try {
         const response = await apiRequest<{ evaluation: {
           id: string; displayId?: string; display_id?: string; status: string;
           progress_stage?: string; progress_percentage?: number; progress_message?: string;
           resultJson?: unknown; rejection_reason?: string; error_message?: string;
         } }>(`/api/student/evaluations/${encodeURIComponent(activeEvaluationId)}`);
+
         if (!subscribed || !response.evaluation) return;
         const evaluation = response.evaluation;
         const status = String(evaluation.status || '').toUpperCase();
@@ -156,7 +180,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         setEvaluationProgressMessage(String(evaluation.progress_message || 'Your answer sheet is being evaluated.'));
 
         if (['COMPLETED', 'NEEDS_REVIEW'].includes(status)) {
-          handledTerminalState = true;
+          setPollingTimedOut(false);
           clearSavedEvaluation();
           setEvaluationProgressPercentage(100);
           setEvaluationProgressStage(status === 'NEEDS_REVIEW' ? 'NEEDS_REVIEW' : 'COMPLETED');
@@ -174,23 +198,44 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         }
 
         if (['FAILED', 'REJECTED', 'PERSISTENCE_FAILED', 'CANCELLED'].includes(status)) {
-          handledTerminalState = true;
+          setPollingTimedOut(false);
           clearSavedEvaluation();
           setActiveEvaluationId(null);
           setSubmitting(false);
           setError(evaluation.rejection_reason || evaluation.error_message || 'Evaluation could not be completed. Your submission status is available in My Evaluations.');
+          return;
         }
+
+        if (attempts >= maxAttempts) {
+          setPollingTimedOut(true);
+          return;
+        }
+        const delayMs = attempts < 5 ? 3000 : attempts < 12 ? 5000 : 8000;
+        scheduleNextCheck(delayMs);
       } catch (pollError) {
         console.warn('[FacultyMock] Evaluation progress polling failed; will retry:', pollError);
+        if (subscribed) {
+          if (attempts >= maxAttempts) {
+            setPollingTimedOut(true);
+          } else {
+            scheduleNextCheck(attempts < 5 ? 5000 : 8000);
+          }
+        }
+      } finally {
+        requestInFlight = false;
       }
     };
-    void pollEvaluation();
-    const interval = window.setInterval(() => { void pollEvaluation(); }, 3000);
+
+    setPollingTimedOut(false);
+    timerId = window.setTimeout(() => {
+      void pollEvaluation();
+    }, 2000);
+
     return () => {
       subscribed = false;
-      window.clearInterval(interval);
+      if (timerId) clearTimeout(timerId);
     };
-  }, [activeEvaluationId, user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey, navigate, refreshUser]);
+  }, [activeEvaluationId, user?.id, activeEvaluationStorageKey, activeEvaluationStartStorageKey, navigate, refreshUser, pollingRestartToken]);
 
   useEffect(() => {
     if (!availableAttempts.includes(attempt)) setAttempt(availableAttempts[0] || '');
@@ -624,7 +669,13 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                           })}
                         </div>
                         {elapsedSeconds > 180 && <p className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2 text-[10px] leading-relaxed text-amber-100">This answer sheet is taking longer than usual. Your evaluation remains saved and the status will keep updating.</p>}
-                        <div className="mt-4 border-t border-white/10 pt-3 text-[10px] text-slate-400">Your evaluation continues securely in the background if you move to another page. It will remain available in My Evaluations.</div>
+                        {pollingTimedOut && (
+                          <div className="mt-4 rounded-lg border border-amber-300/20 bg-amber-300/5 px-3 py-2">
+                            <p className="text-[10px] leading-relaxed text-amber-100">Automatic status checks are paused after 20 attempts. Your submitted evaluation has not been cancelled.</p>
+                            <button type="button" onClick={() => { setPollingTimedOut(false); setPollingRestartToken((current) => current + 1); }} className="mt-2 text-[10px] font-bold text-indigo-200 underline">Check status again</button>
+                          </div>
+                        )}
+                        <div className="mt-4 border-t border-white/10 pt-3 text-[10px] text-slate-400">Your evaluation is processed by a secure task worker if you move to another page. It will remain available in My Evaluations.</div>
                       </div>
                     )}
 
