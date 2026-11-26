@@ -2,14 +2,11 @@
 # Controls Cloud Run runtime settings for production deployments
 runConfig:
   minInstances: 0
-  # The app runs a durable in-process evaluation worker. Keep enough headroom for
-  # small-scale concurrency while bounding duplicate startup hydration and idle CPU cost.
+  # Request-bound Cloud Tasks workers; cap concurrent instances to bound cold-start hydration.
   maxInstances: 3
   concurrency: 80
   cpu: 1
-  # Match the request-based CPU billing setting selected in Cloud Run.
-  # Note: the current evaluation worker still runs in-process after the HTTP response;
-  # migrate it to a request-bound worker (for example Cloud Tasks) to avoid CPU throttling.
+  # Request-based CPU: evaluation work is executed inside authenticated Cloud Tasks HTTP requests.
   cpuAlwaysAllocated: false
   memoryMiB: 1024
 
