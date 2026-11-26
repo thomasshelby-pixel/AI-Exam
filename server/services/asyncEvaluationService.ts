@@ -100,7 +100,12 @@ const durableQueueStartingJobs = new Set<string>();
 const DURABLE_QUEUE_COLLECTION = 'evaluation_jobs';
 const DURABLE_QUEUE_LEASE_MS = 3 * 60 * 1000;
 const DURABLE_QUEUE_HEARTBEAT_MS = 30 * 1000;
-const DURABLE_QUEUE_POLL_MS = 30 * 1000;
+// One cluster-wide recovery scan per minute; accepted jobs still start immediately.
+const DURABLE_QUEUE_POLL_MS = 60 * 1000;
+const DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION = 'system_runtime_locks';
+const DURABLE_QUEUE_RECOVERY_LOCK_ID = 'durable_evaluation_queue_recovery';
+const DURABLE_QUEUE_RECOVERY_LOCK_MS = DURABLE_QUEUE_POLL_MS + 15 * 1000;
+const DURABLE_QUEUE_NUDGE_COOLDOWN_MS = 30 * 1000;
 const DURABLE_QUEUE_MAX_ATTEMPTS = 2;
 const DURABLE_QUEUE_MAX_ACTIVE_JOBS = 1;
 const DURABLE_QUEUE_INSTANCE_ID = [
@@ -483,6 +488,38 @@ async function runDurableEvaluationQueueRecord(
   }
 }
 
+async function claimDurableQueueRecoveryScan(): Promise<boolean> {
+  const now = Date.now();
+  try {
+    return await runFirestoreTransaction(async (transaction) => {
+      const snapshot = await transaction.get(
+        DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION,
+        DURABLE_QUEUE_RECOVERY_LOCK_ID,
+      );
+      const current = snapshot.exists ? snapshot.data() || {} : {};
+      const currentExpiry = Date.parse(String(current.leaseExpiresAt || ''));
+      if (
+        current.ownerId &&
+        current.ownerId !== DURABLE_QUEUE_INSTANCE_ID &&
+        Number.isFinite(currentExpiry) &&
+        currentExpiry > now
+      ) {
+        return false;
+      }
+
+      transaction.set(DURABLE_QUEUE_RECOVERY_LOCK_COLLECTION, DURABLE_QUEUE_RECOVERY_LOCK_ID, {
+        ownerId: DURABLE_QUEUE_INSTANCE_ID,
+        leaseExpiresAt: new Date(now + DURABLE_QUEUE_RECOVERY_LOCK_MS).toISOString(),
+        updatedAt: new Date(now).toISOString(),
+      });
+      return true;
+    });
+  } catch (error) {
+    console.warn('[DurableEvalQueue] Could not acquire cluster recovery lease; skipping this scan:', error);
+    return false;
+  }
+}
+
 async function processDurableEvaluationQueue(initialJobId?: string, initialJob?: EvaluationJobData): Promise<void> {
   if (!isProductionEvaluationQueue()) return;
   if (initialJobId && initialJob) {
@@ -493,10 +530,13 @@ async function processDurableEvaluationQueue(initialJobId?: string, initialJob?:
   }
 
   if (activeJobs.size + durableQueueStartingJobs.size >= DURABLE_QUEUE_MAX_ACTIVE_JOBS) return;
+  // Cloud Run may run several instances. Only one instance may scan the durable
+  // queue at a time; otherwise every instance repeatedly reads the same records.
+  if (!(await claimDurableQueueRecoveryScan())) return;
 
   const [queued, running] = await Promise.all([
-    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'QUEUED' }], { failOnError: true }),
-    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'RUNNING' }], { failOnError: true }),
+    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'QUEUED' }], { failOnError: true, limit: 10 }),
+    queryFirestoreDocs<DurableEvaluationQueueRecord>(DURABLE_QUEUE_COLLECTION, [{ field: 'status', op: '==', value: 'RUNNING' }], { failOnError: true, limit: 10 }),
   ]);
   const now = Date.now();
   const candidates = [...queued, ...running]
@@ -527,7 +567,7 @@ export function nudgeDurableEvaluationQueue(evaluationId: string): void {
 
   const now = Date.now();
   const lastNudge = durableQueueNudgeTimes.get(evaluationId) || 0;
-  if (now - lastNudge < 10_000) return;
+  if (now - lastNudge < DURABLE_QUEUE_NUDGE_COOLDOWN_MS) return;
   durableQueueNudgeTimes.set(evaluationId, now);
 
   if (durableQueueNudgeTimes.size > 2_000) {
