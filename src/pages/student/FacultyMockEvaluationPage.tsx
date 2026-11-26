@@ -811,16 +811,16 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                     <span className="mt-1 text-[10px] text-slate-600 dark:text-slate-400">{answerFile ? (answerFile.size / 1024 / 1024).toFixed(2) + ' MB selected' : 'PDF, JPG or PNG · all pages in one PDF is recommended'}</span>
                     <input className="hidden" type="file" accept="application/pdf,image/jpeg,image/png,.pdf,.jpg,.jpeg,.png" disabled={submitting || loadingReviewRetry || !!activeEvaluationId} onChange={(e) => { void selectAnswerFile(e.target.files?.[0]); e.currentTarget.value = ''; }} />
                   </label>
-                  {loadingFile && <p className="mt-2 text-xs text-indigo-300">Reading and preparing your answer sheet…</p>}
+                  {loadingFile && <p className="mt-2 text-xs text-indigo-700 dark:text-indigo-300">Reading and preparing your answer sheet…</p>}
                   {answerFile && !loadingFile && !activeEvaluationId && (
-                    <p className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Ready to submit</p>
+                    <p className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> Ready to submit</p>
                   )}
                 </div>
               </div>
 
               <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
                 <div className="flex items-start gap-2 text-[10px] leading-relaxed text-slate-600 dark:text-slate-400">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
                   <span>{permanentFreeAccess ? 'Permanent free access is active. Every evaluation and Faculty Mock copy is free for this account; no evaluation credits or paid unlocks will be used.' : String(selectedTest.access_type || 'FREE').toUpperCase() === 'PAID' ? `This mock requires ₹${selectedTest.unlock_price_inr || 35} per evaluation. Payment unlocks one copy and does not use general evaluation credits.` : `First copy is free for each student. Further copies cost ₹${selectedTest.unlock_price_inr || 35} each and do not use general evaluation credits.`}</span>
                 </div>
                 <button type="button" disabled={!answerFile || !fileBase64 || submitting || loadingFile || checkingDisclaimer || loadingReviewRetry || !!activeEvaluationId} onClick={() => void handleSubmitClick()} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-indigo-500 px-5 py-3 text-xs font-black text-white shadow-lg shadow-indigo-950/30 transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50">
