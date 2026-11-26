@@ -697,7 +697,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
         <div className="rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
           <BookOpen className="mx-auto h-8 w-8 text-slate-300" />
           <h2 className="mt-3 text-base font-bold text-slate-800">No faculty mocks published yet</h2>
-          <p className="mt-1 text-xs text-slate-500">New faculty mock tests for {courseLevel} will appear here after the Admin publishes them.</p>
+          <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">New faculty mock tests for {courseLevel} will appear here after the Admin publishes them.</p>
           <button type="button" onClick={() => void loadCatalogue()} className="mt-4 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-blue-700">Refresh catalogue</button>
         </div>
       ) : (
@@ -787,7 +787,7 @@ export const FacultyMockEvaluationPage: React.FC = () => {
                     <option value="strict">Strict Head Examiner</option>
                     <option value="lenient">Moderate Guidance</option>
                   </select>
-                  <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+                  <p className="mt-3 text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
                     This changes the checking approach only. The faculty's answer key, marking scheme and maximum marks remain authoritative.
                   </p>
                   <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-[10px] leading-relaxed text-emerald-800 dark:border-emerald-400/15 dark:bg-emerald-400/5 dark:text-emerald-100/90">
