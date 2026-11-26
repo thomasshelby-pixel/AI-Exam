@@ -65,6 +65,10 @@ gcloud iam service-accounts add-iam-policy-binding "$TASK_SA" \\
 
 If the Cloud Tasks service agent does not exist yet, enable the Cloud Tasks API first and allow Google Cloud to provision it. Verify that it has the Cloud Tasks Service Agent role. The task service account must be in the same project as the queue.
 
+## Existing queued records during cutover
+
+The old implementation used an in-process recovery scan. Once Cloud Tasks is configured, that scanner is disabled intentionally. Before switching production traffic, inspect the durable `evaluation_jobs` collection for pre-cutover `QUEUED` or expired `RUNNING` records. Schedule one Cloud Task per eligible evaluation ID using the same queue, target URL, and OIDC identity. Do not delete or rewrite the durable job record. Confirm each migrated evaluation reaches a terminal state before declaring the cutover complete.
+
 ## Runtime behavior
 
 - Each task contains only the evaluation ID; the large answer sheet and source materials remain in durable Cloud Storage / Firestore.
