@@ -7,8 +7,10 @@ runConfig:
   maxInstances: 3
   concurrency: 80
   cpu: 1
-  # Keep active background evaluation workers running between HTTP requests.
-  cpuAlwaysAllocated: true
+  # Match the request-based CPU billing setting selected in Cloud Run.
+  # Note: the current evaluation worker still runs in-process after the HTTP response;
+  # migrate it to a request-bound worker (for example Cloud Tasks) to avoid CPU throttling.
+  cpuAlwaysAllocated: false
   memoryMiB: 1024
 
 scripts:
