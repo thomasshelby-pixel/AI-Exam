@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { EvaluationResult, QuestionEvaluation } from '../../types/index.js';
 import {
   FileCheck2,
+  Eye,
   Award,
   CheckCircle2,
   AlertTriangle,
@@ -51,6 +52,11 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [downloadingType, setDownloadingType] = useState<string | null>(null);
+  const [checkedCopyPreviewUrl, setCheckedCopyPreviewUrl] = useState<string | null>(null);
+  const [checkedCopyPreviewVersion, setCheckedCopyPreviewVersion] = useState<string>('Current');
+  const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false);
+  const [previewError, setPreviewError] = useState<string>('');
+
   const [isRecheckModalOpen, setIsRecheckModalOpen] = useState<boolean>(false);
   const [selectedMode, setSelectedMode] = useState<'standard' | 'strict' | 'moderate'>(
     evaluationResult.checkingMode === 'strict'
@@ -79,6 +85,12 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     type: 'info' | 'success' | 'error';
     message: string;
   } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (checkedCopyPreviewUrl) window.URL.revokeObjectURL(checkedCopyPreviewUrl);
+    };
+  }, [checkedCopyPreviewUrl]);
 
   const isCertified =
     (evaluationResult as any).certificationStatus === 'CERTIFIED' ||
@@ -143,6 +155,43 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       });
     } finally {
       setIsVerifyingConsistency(false);
+    }
+  };
+
+  const handlePreviewCheckedCopy = async (version?: 'v1' | 'v2') => {
+    try {
+      setIsPreviewLoading(true);
+      setPreviewError('');
+      const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
+      const evalId = evaluationResult.evaluationId;
+      const params = new URLSearchParams();
+      if (version) params.set('version', version);
+      if (token) params.set('token', token);
+      const queryString = params.toString() ? '?' + params.toString() : '';
+      const response = await fetch('/api/student/evaluations/' + evalId + '/download-checked-copy' + queryString, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Checked copy preview is not available yet. Complete consistency verification and try again.');
+      }
+
+      const blob = await response.blob();
+      if (blob.type && !blob.type.toLowerCase().includes('pdf')) {
+        throw new Error('The checked-copy service did not return a PDF file.');
+      }
+      const objectUrl = window.URL.createObjectURL(blob);
+      setCheckedCopyPreviewUrl(objectUrl);
+      setCheckedCopyPreviewVersion(version ? version.toUpperCase() : 'Current');
+    } catch (previewErr: any) {
+      setPreviewError(previewErr?.message || 'Could not load the checked copy preview.');
+    } finally {
+      setIsPreviewLoading(false);
     }
   };
 
@@ -347,6 +396,18 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <span>Download Checked Copy (Annotated)</span>
           </button>
 
+          <button
+            type="button"
+            id="preview-checked-copy-btn"
+            onClick={() => void handlePreviewCheckedCopy()}
+            disabled={isPreviewLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Preview your annotated checked-copy PDF on this page"
+          >
+            {isPreviewLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+            <span>{isPreviewLoading ? 'Loading Preview…' : 'Preview Checked Copy'}</span>
+          </button>
+
           {/* 2. Download Detailed Report (PDF) */}
           <button
             id="download-report-btn"
@@ -419,6 +480,35 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           </button>
         </div>
       </div>
+
+      {previewError && (
+        <div role="alert" className="print:hidden rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+          {previewError}
+        </div>
+      )}
+
+      {checkedCopyPreviewUrl && (
+        <section className="print:hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Checked Copy Preview</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">{checkedCopyPreviewVersion} annotated PDF · shown securely inside this page</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCheckedCopyPreviewUrl(null)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
+            >
+              Close Preview
+            </button>
+          </div>
+          <iframe
+            title="Annotated checked copy PDF preview"
+            src={checkedCopyPreviewUrl + '#toolbar=1&navpanes=0'}
+            className="h-[72vh] min-h-[520px] w-full bg-slate-100 dark:bg-slate-900"
+          />
+        </section>
+      )}
 
       {/* Consistency Feedback Banner */}
       {consistencyFeedback && (
@@ -1091,6 +1181,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {normalizedQuestions.map((q, i) => {
                 const displayCode = getQuestionDisplayCode(q);
+
                 const compsCount = q.markingComponents?.length || (q.structuredEvidence?.markingComponents?.length) || 1;
                 const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
                 return (
@@ -1523,6 +1614,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     </div>
                   )}
                 </div>
+
               </div>
             );
           })}

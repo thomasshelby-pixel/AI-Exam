@@ -88,11 +88,11 @@ const StudyPlannerAccessGate: React.FC = () => {
     setAccess(null);
     featureApi.checkAccess('checker_ai_planner', 'CHECKER')
       .then((result) => { if (active) setAccess(result); })
-      .catch(() => { if (active) setAccess({ allowed: false, status: 'DISABLED', studentMessage: 'AI Planner access could not be verified. Please try again later.' }); });
+      .catch(() => { if (active) setAccess({ allowed: false, status: 'DISABLED', studentMessage: 'PARAKH access could not be verified. Please try again later.' }); });
     return () => { active = false; };
   }, [user?.id]);
-  if (!access) return <div className="min-h-[50vh] flex items-center justify-center text-sm text-slate-500">Checking AI Planner access…</div>;
-  if (!access.allowed) return <FeatureUnavailable application="CHECKER" featureKey="checker_ai_planner" featureName="AI Planner" status={access.status} studentMessage={access.studentMessage} />;
+  if (!access) return <div className="min-h-[50vh] flex items-center justify-center text-sm text-slate-500">Checking PARAKH access…</div>;
+  if (!access.allowed) return <FeatureUnavailable application="CHECKER" featureKey="checker_ai_planner" featureName="PARAKH AI" status={access.status} studentMessage={access.studentMessage} />;
   return <StudyPlannerPage />;
 };
 
@@ -399,7 +399,7 @@ const StudentWorkspaceLayout: React.FC<{
     { label: 'Evaluate Answer Sheet', icon: FileCheck2, path: '/student/upload' },
     { label: 'Question Bank & Tests', icon: BookOpen, path: '/student/enrollments' },
     { label: 'MCQ Arena', icon: LayoutGrid, path: '/mcq-arena' },
-    { label: 'Study Planner', icon: BrainCircuit, path: '/student/study-planner' },
+    { label: 'PARAKH AI', icon: BrainCircuit, path: '/student/study-planner' },
     { label: 'My Evaluations', icon: ClipboardList, path: '/student/evaluations' },
     { label: 'Performance Profile', icon: TrendingUp, path: '/student/examiner-profile' },
     { label: 'Plans & Credits', icon: CreditCard, action: 'credits' },
@@ -407,7 +407,7 @@ const StudentWorkspaceLayout: React.FC<{
   ];
   const filteredNavigation = navigationItems.filter((item) =>
     (item.label !== 'MCQ Arena' || isArenaLinkAvailable) &&
-    (item.label !== 'Study Planner' || isPlannerLinkAvailable) &&
+    (item.label !== 'PARAKH AI' || isPlannerLinkAvailable) &&
     item.label.toLowerCase().includes(navSearch.trim().toLowerCase())
   );
   const toggleSidebarCollapsed = () => {
@@ -1413,7 +1413,7 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedStudentRoute>
               <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
-                <StudyPlannerPage />
+                <StudyPlannerAccessGate />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>
           }
