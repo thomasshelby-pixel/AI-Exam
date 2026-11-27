@@ -204,10 +204,10 @@ export const AdminParakhLearningSection: React.FC = () => {
       icon: CheckCircle2,
     },
     {
-      title: 'Grounded tutor generation',
-      detail: 'PARAKH uses the owner's self-hosted model with curated CA knowledge and retrieved web sources when relevant. No third-party LLM provider fallback is permitted. This is retrieval-grounded answering, not model fine-tuning.',
-      status: 'ACTIVE',
-      statusLabel: 'Active',
+      title: 'Self-hosted grounded tutor',
+      detail: 'The local-model adapter is implemented. Set LOCAL_MODEL_ENDPOINT to activate it; missing or unavailable endpoints fail closed without a cloud LLM fallback. This is retrieval-grounded answering, not model fine-tuning.',
+      status: 'PENDING',
+      statusLabel: 'Endpoint required',
       icon: CheckCircle2,
     },
     {
@@ -263,7 +263,7 @@ export const AdminParakhLearningSection: React.FC = () => {
 
           <div className="flex flex-wrap gap-2 lg:max-w-xs lg:justify-end">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-bold text-emerald-200">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Grounded tutor active
+              <CheckCircle2 className="h-3.5 w-3.5" /> Self-hosted route implemented
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-400/30 bg-blue-400/10 px-3 py-1.5 text-[10px] font-bold text-blue-200">
               <ShieldCheck className="h-3.5 w-3.5" /> Web research available
@@ -630,8 +630,8 @@ export const AdminParakhLearningSection: React.FC = () => {
           </div>
           <div className="mt-4 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-slate-500 dark:text-slate-400">Grounded tutor generation</span>
-              <strong className="text-emerald-600 dark:text-emerald-300">ACTIVE</strong>
+              <span className="text-slate-500 dark:text-slate-400">Self-hosted model endpoint</span>
+              <strong className="text-amber-600 dark:text-amber-300">CONFIGURATION REQUIRED</strong>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-slate-500 dark:text-slate-400">Web research</span>
@@ -671,7 +671,7 @@ export const AdminParakhLearningSection: React.FC = () => {
             </div>
           </div>
           <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/70 p-3 text-[10px] leading-relaxed text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-200">
-            Grounded tutoring uses the configured self-hosted model with curated CA knowledge and web-search excerpts. If the local model is unavailable, PARAKH fails closed instead of calling a cloud LLM provider. The observation pipeline stores policy-covered review metadata, not student answer-sheet files. This does not update model weights.
+            Parakh now routes generation only to LOCAL_MODEL_ENDPOINT. Configure this variable to activate the owner's self-hosted model with curated CA knowledge and web-search excerpts. If it is missing or unavailable, PARAKH fails closed instead of calling a cloud LLM provider. The observation pipeline stores policy-covered review metadata, not student answer-sheet files. This does not update model weights.
           </div>
           <p className="mt-3 text-[10px] text-slate-400">
             Latest activity: {formatDate(metrics?.latestActivityAt)}
