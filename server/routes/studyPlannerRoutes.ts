@@ -18,6 +18,7 @@ import { extractStudentConversationHistory, getCourseUnderDevelopmentReply, reso
 import { buildCreditPolicyAnalysisReply, buildKnowledgeChatReply, isStudyKnowledgeFollowUp, searchStudyKnowledge } from '../services/studyPlannerKnowledgeService.js';
 import { buildParakhChapterKnowledgeReply, searchParakhChapterKnowledge } from '../services/parakhChapterKnowledgeService.js';
 import { buildParakhWebResearchMessage, searchParakhWebResearch, shouldUseParakhWebResearch } from '../services/studyPlannerWebResearchService.js';
+import { generateParakhTeachingAnswer } from '../services/parakhTutorService.js';
 import { recordParakhConversationLearningSignal } from '../services/parakhConversationLearningService.js';
 import { assessParakhResponseQuality, buildParakhQualityNotice, classifyParakhQuestion } from '../services/parakhQualityFramework.js';
 import { getPlannerSubjects, getPlannerSubjectAliases, isSupportedPlannerCourse, isValidPlannerSubject, isValidPlannerChapter, type PlannerCourse } from '../services/studyPlannerCurriculum.js';
@@ -746,11 +747,31 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Answer ordinary study questions directly. Do not force advice requests into a timetable form.
+    // PARAKH is now a focused learning assistant; timetable generation has been removed from this page.
+    if (isExplicitStudyPlanRequest(message) || parsedProbe.intent === 'create_study_plan') {
+      return res.json({
+        success: true,
+        status: 'planning_removed',
+        message: replyLanguage === 'hindi'
+          ? 'PARAKH से timetable और schedule builder हटा दिया गया है। आप अब CA concepts, exam questions, answer-writing और revision doubts पूछ सकते हैं।'
+          : replyLanguage === 'hinglish'
+            ? 'Bhai, PARAKH page se timetable/schedule builder remove kar diya gaya hai. Tum CA concepts, exam questions, answer-writing aur revision doubts pooch sakte ho.'
+            : 'The timetable and schedule builder have been removed from PARAKH. You can still ask CA concept, exam-question, answer-writing and revision questions.',
+        parsed: { ...parsedProbe, intent: 'general_guidance', missing_info: [], should_call_planner: false },
+        plan: null,
+        metadata: { version: 'parakh-chat-only-v1', modelUsed: false, persistentStorage: false },
+      });
+    }
+
+    // Answer study questions using the curated CA knowledge bank and a grounded Gemini response.
     const requestClassification = classifyParakhQuestion(message, parsedProbe.subjects);
-    const requestsWebResearch = shouldUseParakhWebResearch(message) || requestClassification.requiresPrimarySource;
-    const guidanceQuestion = (isGeneralStudyQuestion(message) || isStudyKnowledgeFollowUp(message, history) || requestsWebResearch) && !isExplicitStudyPlanRequest(message)
-      && !/\b(?:detailed|full|chapter-wise)\s+revision\b/i.test(message);
+    const forceWebResearch = body.force_web_research === true;
+    const requestsWebResearch = forceWebResearch || shouldUseParakhWebResearch(message) || requestClassification.requiresPrimarySource;
+    const guidanceQuestion = isGeneralStudyQuestion(message)
+      || isStudyKnowledgeFollowUp(message, history)
+      || requestsWebResearch
+      || /\b(explain|define|meaning|difference|why|how|samjhao|kya hai|kaise|help me understand)\b/i.test(message);
+
     if (guidanceQuestion) {
       const parsed = parsedProbe;
       parsed.intent = 'general_guidance';
@@ -759,23 +780,46 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       if (course === 'CA_INTERMEDIATE' && /\b(?:gst|goods and services tax|maingst)\b/i.test(message)) {
         parsed.subjects = ['GST'];
       }
+
       const chapterKnowledge = searchParakhChapterKnowledge({ message, course, language: replyLanguage });
       const knowledge = chapterKnowledge
         ? null
         : searchStudyKnowledge({ message, course, history, language: replyLanguage });
       const webResearch = requestsWebResearch ? await searchParakhWebResearch(message) : null;
       const webSources = webResearch?.results || [];
-      const webMessage = webSources.length
-        ? buildParakhWebResearchMessage(replyLanguage, webSources.length)
-        : null;
       const answerSources = webSources.length
         ? webSources
         : chapterKnowledge ? [chapterKnowledge.source] : [];
       const guidance = buildGeneralStudyAnswer(message, parsed);
-      const answer = webMessage || (chapterKnowledge
-        ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
-        : knowledge ? buildKnowledgeChatReply(knowledge, replyLanguage) : guidance.answer);
-      const knowledgeMatched = Boolean(chapterKnowledge || knowledge);
+      const knowledgeContext = chapterKnowledge
+        ? { chapterKnowledge, fallbackKnowledge: null }
+        : { chapterKnowledge: null, fallbackKnowledge: knowledge || guidance.answer };
+      let generated: { answer: string; modelUsed: string } | null = null;
+
+      try {
+        generated = await generateParakhTeachingAnswer({
+          question: message,
+          course,
+          language: replyLanguage,
+          knowledgeContext,
+          webSources,
+          webSearchRequested: requestsWebResearch,
+        });
+      } catch (generationError) {
+        console.warn('[PARAKH] Grounded answer generation failed; using the safe fallback:', generationError);
+      }
+
+      const fallbackAnswer = webSources.length
+        ? buildParakhWebResearchMessage(replyLanguage, webSources.length) + '\n\n' + webSources.slice(0, 3).map((item, index) =>
+            '[' + (index + 1) + '] ' + item.title + '\n' + item.snippet
+          ).join('\n\n')
+        : chapterKnowledge
+          ? buildParakhChapterKnowledgeReply(chapterKnowledge, replyLanguage)
+          : knowledge
+            ? buildKnowledgeChatReply(knowledge, replyLanguage)
+            : guidance.answer;
+      const answer = generated?.answer || fallbackAnswer;
+      const knowledgeMatched = Boolean(chapterKnowledge || knowledge || webSources.length);
       const qualityGate = assessParakhResponseQuality({
         question: message,
         answer,
@@ -793,8 +837,9 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
         parsed,
         plan: null,
         metadata: {
-          version: webSources.length ? 'parakh-web-research-v1' : chapterKnowledge ? 'parakh-chapter-knowledge-v1' : knowledge ? 'study-chat-knowledge-v1' : 'study-chat-guidance-v2',
-          modelUsed: false,
+          version: 'parakh-grounded-tutor-v1',
+          modelUsed: Boolean(generated),
+          modelName: generated?.modelUsed || null,
           knowledgeMatched,
           knowledgeReviewStatus: chapterKnowledge?.contentReviewStatus || null,
           benchmarkStatus: chapterKnowledge?.benchmarkStatus || null,
