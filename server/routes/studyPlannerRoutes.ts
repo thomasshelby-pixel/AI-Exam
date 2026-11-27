@@ -748,7 +748,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     }
 
     // PARAKH is now a focused learning assistant; timetable generation has been removed from this page.
-    if (isExplicitStudyPlanRequest(message) || parsedProbe.intent === 'create_study_plan') {
+    if (isExplicitStudyPlanRequest(message)) {
       return res.json({
         success: true,
         status: 'planning_removed',
@@ -914,7 +914,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const requestForPlan = explicitPlan || parsedProbe.intent === 'create_study_plan'
+    const requestForPlan = explicitPlan
       || (parsedProbe.intent === 'clarify' && parsedProbe.subjects.length > 0 && /\b(?:revision|revise|study plan|timetable|schedule)\b/i.test(message));
 
     // Ask about the scope only if the student did not already specify one day or several days.
