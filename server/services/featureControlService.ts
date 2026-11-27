@@ -252,10 +252,10 @@ export function initFeatureFlagsTable(customDb?: any): void {
     },
     {
       key: 'checker_ai_planner',
-      name: 'AI Planner',
-      description: 'AI-powered CA student study planning and revision schedules (limited testing).',
+      name: 'PARAKH AI',
+      description: 'PARAKH CA learning assistant with grounded concept explanations, web research and answer-writing coaching (limited testing).',
       status: 'TESTING' as FeatureStatus,
-      msg: 'AI Planner is currently available only to student accounts added by the Super Admin for testing.',
+      msg: 'PARAKH AI is currently available only to student accounts added by the Super Admin for testing.',
       order: 5,
     },
   ];
