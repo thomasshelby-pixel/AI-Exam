@@ -1220,9 +1220,6 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {normalizedQuestions.map((q, i) => {
                 const displayCode = getQuestionDisplayCode(q);
-             const parakhBaseKey = String(q.questionNumber || '') + '::' + String(q.subQuestion || '');
-             const whyParakhKey = parakhBaseKey + '::why';
-             const improveParakhKey = parakhBaseKey + '::improve';
 
                 const compsCount = q.markingComponents?.length || (q.structuredEvidence?.markingComponents?.length) || 1;
                 const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
@@ -1454,6 +1451,9 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             const comps = q.markingComponents || q.structuredEvidence?.markingComponents || [];
             const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
             const displayCode = getQuestionDisplayCode(q);
+            const parakhBaseKey = String(q.questionNumber || '') + '::' + String(q.subQuestion || '');
+            const whyParakhKey = parakhBaseKey + '::why';
+            const improveParakhKey = parakhBaseKey + '::improve';
 
             return (
               <div
