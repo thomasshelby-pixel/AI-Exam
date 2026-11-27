@@ -805,8 +805,24 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
           webSources,
           webSearchRequested: requestsWebResearch,
         });
-      } catch (generationError) {
-        console.warn('[PARAKH] Grounded answer generation failed; using the safe fallback:', generationError);
+      } catch (generationError: any) {
+        console.warn('[PARAKH] Self-hosted model generation failed:', generationError);
+        return res.status(503).json({
+          success: false,
+          status: 'local_model_unavailable',
+          code: 'PARAKH_LOCAL_MODEL_UNAVAILABLE',
+          error: String(generationError?.message || 'PARAKH self-hosted model is unavailable. No cloud LLM fallback is configured.').slice(0, 350),
+          parsed,
+          sources: answerSources,
+          metadata: {
+            version: 'parakh-self-hosted-only-v1',
+            modelUsed: false,
+            externalLlmFallback: false,
+            webResearchRequested: requestsWebResearch,
+            webResearchAvailable: Boolean(webSources.length),
+            searchProvider: webResearch?.provider || null,
+          },
+        });
       }
 
       const fallbackAnswer = webSources.length
