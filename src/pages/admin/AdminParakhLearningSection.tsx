@@ -205,7 +205,7 @@ export const AdminParakhLearningSection: React.FC = () => {
     },
     {
       title: 'Grounded tutor generation',
-      detail: 'PARAKH now generates Gemini explanations using curated CA knowledge and retrieved web sources when relevant. This is retrieval-grounded answering, not model fine-tuning.',
+      detail: 'PARAKH uses the owner's self-hosted model with curated CA knowledge and retrieved web sources when relevant. No third-party LLM provider fallback is permitted. This is retrieval-grounded answering, not model fine-tuning.',
       status: 'ACTIVE',
       statusLabel: 'Active',
       icon: CheckCircle2,
@@ -671,7 +671,7 @@ export const AdminParakhLearningSection: React.FC = () => {
             </div>
           </div>
           <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/70 p-3 text-[10px] leading-relaxed text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-200">
-            Grounded tutoring uses Gemini with curated CA knowledge and web-search excerpts. The observation pipeline stores policy-covered review metadata, not student answer-sheet files. This does not update model weights.
+            Grounded tutoring uses the configured self-hosted model with curated CA knowledge and web-search excerpts. If the local model is unavailable, PARAKH fails closed instead of calling a cloud LLM provider. The observation pipeline stores policy-covered review metadata, not student answer-sheet files. This does not update model weights.
           </div>
           <p className="mt-3 text-[10px] text-slate-400">
             Latest activity: {formatDate(metrics?.latestActivityAt)}
