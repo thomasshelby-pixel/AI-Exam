@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Bot, ExternalLink, Globe, LoaderCircle, Send, ShieldCheck, Sparkles, UserRound } from 'lucide-react';
+import { ArrowLeft, Bot, ExternalLink, LoaderCircle, Send, Sparkles, UserRound } from 'lucide-react';
 import { apiRequest } from '../../api/client.js';
 
 interface ParakhSource {
@@ -47,7 +47,6 @@ export const StudyPlannerPage: React.FC = () => {
   }]);
   const [request, setRequest] = useState('');
   const [loading, setLoading] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [error, setError] = useState('');
   const [courseLabel, setCourseLabel] = useState('CA learning assistant');
   const nextId = useRef(2);
@@ -87,7 +86,6 @@ export const StudyPlannerPage: React.FC = () => {
         body: JSON.stringify({
           message: text,
           conversation_history: conversationHistory,
-          force_web_research: webSearchEnabled,
           reply_language: 'hinglish',
         }),
       });
@@ -106,7 +104,6 @@ export const StudyPlannerPage: React.FC = () => {
       setError(sendError?.message || 'Could not connect to PARAKH. Please try again.');
     } finally {
       setLoading(false);
-      setWebSearchEnabled(false);
     }
   };
 
@@ -134,7 +131,7 @@ export const StudyPlannerPage: React.FC = () => {
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl font-black tracking-tight">PARAKH</h1>
                 <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-blue-100">
-                  AI CA Learning Assistant
+                  CA Learning Assistant
                 </span>
               </div>
               <p className="mt-1 text-xs leading-5 text-blue-100/80">
@@ -143,8 +140,8 @@ export const StudyPlannerPage: React.FC = () => {
             </div>
           </div>
           <span className="inline-flex w-fit items-center gap-2 rounded-full border border-emerald-300/25 bg-emerald-400/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-100">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Grounded AI responses
+            <Sparkles className="h-3.5 w-3.5" />
+            Study guidance & web sources
           </span>
         </header>
 
@@ -251,22 +248,9 @@ export const StudyPlannerPage: React.FC = () => {
           onSubmit={(event) => { event.preventDefault(); void sendRequest(); }}
           className="border-t border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950 sm:p-4"
         >
-          <div className="mb-2 flex items-center justify-between gap-3">
-            <p className="text-[10px] text-slate-500 dark:text-slate-400">
-              Current law and notification queries are checked against web results when available.
-            </p>
-            <button
-              type="button"
-              aria-pressed={webSearchEnabled}
-              onClick={() => setWebSearchEnabled((value) => !value)}
-              className={'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold transition ' + (webSearchEnabled
-                ? 'border-blue-500 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/50 dark:text-blue-200'
-                : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300')}
-            >
-              <Globe className="h-3.5 w-3.5" />
-              {webSearchEnabled ? 'Web search ON' : 'Search web'}
-            </button>
-          </div>
+          <p className="mb-2 px-1 text-[10px] text-slate-500 dark:text-slate-400">
+            Current law, notification and explicit web-search queries may include source links.
+          </p>
           <div className="flex items-end gap-2">
             <label htmlFor="parakh-message" className="sr-only">Message PARAKH</label>
             <textarea
