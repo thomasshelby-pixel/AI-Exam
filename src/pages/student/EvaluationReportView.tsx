@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { EvaluationResult, QuestionEvaluation } from '../../types/index.js';
 import {
   FileCheck2,
+  Eye,
+  Bot,
   Award,
   CheckCircle2,
   AlertTriangle,
@@ -51,6 +53,14 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [downloadingType, setDownloadingType] = useState<string | null>(null);
+  const [checkedCopyPreviewUrl, setCheckedCopyPreviewUrl] = useState<string | null>(null);
+  const [checkedCopyPreviewVersion, setCheckedCopyPreviewVersion] = useState<string>('Current');
+  const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false);
+  const [previewError, setPreviewError] = useState<string>('');
+  const [parakhReplies, setParakhReplies] = useState<Record<string, string>>({});
+  const [parakhErrors, setParakhErrors] = useState<Record<string, string>>({});
+  const [parakhLoadingKey, setParakhLoadingKey] = useState<string | null>(null);
+
   const [isRecheckModalOpen, setIsRecheckModalOpen] = useState<boolean>(false);
   const [selectedMode, setSelectedMode] = useState<'standard' | 'strict' | 'moderate'>(
     evaluationResult.checkingMode === 'strict'
@@ -79,6 +89,12 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
     type: 'info' | 'success' | 'error';
     message: string;
   } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (checkedCopyPreviewUrl) window.URL.revokeObjectURL(checkedCopyPreviewUrl);
+    };
+  }, [checkedCopyPreviewUrl]);
 
   const isCertified =
     (evaluationResult as any).certificationStatus === 'CERTIFIED' ||
@@ -143,6 +159,78 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       });
     } finally {
       setIsVerifyingConsistency(false);
+    }
+  };
+
+  const handlePreviewCheckedCopy = async (version?: 'v1' | 'v2') => {
+    try {
+      setIsPreviewLoading(true);
+      setPreviewError('');
+      const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
+      const evalId = evaluationResult.evaluationId;
+      const params = new URLSearchParams();
+      if (version) params.set('version', version);
+      if (token) params.set('token', token);
+      const queryString = params.toString() ? '?' + params.toString() : '';
+      const response = await fetch('/api/student/evaluations/' + evalId + '/download-checked-copy' + queryString, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Checked copy preview is not available yet. Complete consistency verification and try again.');
+      }
+
+      const blob = await response.blob();
+      if (blob.type && !blob.type.toLowerCase().includes('pdf')) {
+        throw new Error('The checked-copy service did not return a PDF file.');
+      }
+      const objectUrl = window.URL.createObjectURL(blob);
+      setCheckedCopyPreviewUrl(objectUrl);
+      setCheckedCopyPreviewVersion(version ? version.toUpperCase() : 'Current');
+    } catch (previewErr: any) {
+      setPreviewError(previewErr?.message || 'Could not load the checked copy preview.');
+    } finally {
+      setIsPreviewLoading(false);
+    }
+  };
+
+  const handleAskParakh = async (question: QuestionEvaluation, mode: 'why' | 'improve') => {
+    const baseKey = String(question.questionNumber || '') + '::' + String(question.subQuestion || '');
+    const actionKey = baseKey + '::' + mode;
+    try {
+      setParakhLoadingKey(actionKey);
+      setParakhErrors((current) => ({ ...current, [actionKey]: '' }));
+      const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
+      const response = await fetch('/api/student/evaluations/' + evaluationResult.evaluationId + '/ask-parakh', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: 'Bearer ' + token } : {}),
+        },
+        body: JSON.stringify({
+          mode,
+          questionNumber: question.questionNumber,
+          subQuestion: question.subQuestion || '',
+          questionId: question.questionId || '',
+          canonicalId: question.canonicalId || '',
+          checkingMode: selectedMode,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'PARAKH could not prepare this explanation.');
+      }
+      setParakhReplies((current) => ({ ...current, [actionKey]: String(data.answer || '') }));
+    } catch (askError: any) {
+      setParakhErrors((current) => ({ ...current, [actionKey]: askError?.message || 'PARAKH is temporarily unavailable.' }));
+    } finally {
+      setParakhLoadingKey(null);
     }
   };
 
@@ -347,6 +435,18 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <span>Download Checked Copy (Annotated)</span>
           </button>
 
+          <button
+            type="button"
+            id="preview-checked-copy-btn"
+            onClick={() => void handlePreviewCheckedCopy()}
+            disabled={isPreviewLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Preview your annotated checked-copy PDF on this page"
+          >
+            {isPreviewLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+            <span>{isPreviewLoading ? 'Loading Preview…' : 'Preview Checked Copy'}</span>
+          </button>
+
           {/* 2. Download Detailed Report (PDF) */}
           <button
             id="download-report-btn"
@@ -419,6 +519,35 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
           </button>
         </div>
       </div>
+
+      {previewError && (
+        <div role="alert" className="print:hidden rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+          {previewError}
+        </div>
+      )}
+
+      {checkedCopyPreviewUrl && (
+        <section className="print:hidden overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">Checked Copy Preview</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">{checkedCopyPreviewVersion} annotated PDF · shown securely inside this page</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCheckedCopyPreviewUrl(null)}
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
+            >
+              Close Preview
+            </button>
+          </div>
+          <iframe
+            title="Annotated checked copy PDF preview"
+            src={checkedCopyPreviewUrl + '#toolbar=1&navpanes=0'}
+            className="h-[72vh] min-h-[520px] w-full bg-slate-100 dark:bg-slate-900"
+          />
+        </section>
+      )}
 
       {/* Consistency Feedback Banner */}
       {consistencyFeedback && (
@@ -1091,6 +1220,10 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {normalizedQuestions.map((q, i) => {
                 const displayCode = getQuestionDisplayCode(q);
+             const parakhBaseKey = String(q.questionNumber || '') + '::' + String(q.subQuestion || '');
+             const whyParakhKey = parakhBaseKey + '::why';
+             const improveParakhKey = parakhBaseKey + '::improve';
+
                 const compsCount = q.markingComponents?.length || (q.structuredEvidence?.markingComponents?.length) || 1;
                 const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
                 return (
@@ -1520,6 +1653,47 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                           );
                         })}
                       </div>
+                    </div>
+                  )}
+                </div>
+                <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 dark:border-indigo-900/70 dark:bg-indigo-950/20 print:hidden">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                      <Bot className="h-4 w-4" />
+                      Ask PARAKH
+                    </div>
+                    <span className="text-[10px] text-indigo-700/80 dark:text-indigo-300/80">Question-specific feedback · marks are not changed</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleAskParakh(q, 'why')}
+                      disabled={parakhLoadingKey === whyParakhKey}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-[11px] font-bold text-indigo-800 transition hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-slate-900 dark:text-indigo-200 dark:hover:bg-indigo-950"
+                    >
+                      {parakhLoadingKey === whyParakhKey && <RefreshCw className="h-3 w-3 animate-spin" />}
+                      Why were marks cut?
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleAskParakh(q, 'improve')}
+                      disabled={parakhLoadingKey === improveParakhKey}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {parakhLoadingKey === improveParakhKey && <RefreshCw className="h-3 w-3 animate-spin" />}
+                      How can I improve?
+                    </button>
+                  </div>
+                  {(parakhErrors[whyParakhKey] || parakhReplies[whyParakhKey]) && (
+                    <div className="mt-3 rounded-lg border border-indigo-200/80 bg-white p-3 text-xs leading-5 text-slate-700 dark:border-indigo-900 dark:bg-slate-950 dark:text-slate-200">
+                      <p className="mb-1 font-bold text-indigo-800 dark:text-indigo-300">Why were marks cut?</p>
+                      <p className="whitespace-pre-wrap">{parakhErrors[whyParakhKey] || parakhReplies[whyParakhKey]}</p>
+                    </div>
+                  )}
+                  {(parakhErrors[improveParakhKey] || parakhReplies[improveParakhKey]) && (
+                    <div className="mt-3 rounded-lg border border-indigo-200/80 bg-white p-3 text-xs leading-5 text-slate-700 dark:border-indigo-900 dark:bg-slate-950 dark:text-slate-200">
+                      <p className="mb-1 font-bold text-indigo-800 dark:text-indigo-300">How can I improve?</p>
+                      <p className="whitespace-pre-wrap">{parakhErrors[improveParakhKey] || parakhReplies[improveParakhKey]}</p>
                     </div>
                   )}
                 </div>
