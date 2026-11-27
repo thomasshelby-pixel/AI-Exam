@@ -1413,7 +1413,7 @@ const AppRoutes: React.FC = () => {
           element={
             <ProtectedStudentRoute>
               <PublicAndStudentLayout onOpenCreditsModal={() => setIsCreditsModalOpen(true)}>
-                <StudyPlannerPage />
+                <StudyPlannerAccessGate />
               </PublicAndStudentLayout>
             </ProtectedStudentRoute>
           }
