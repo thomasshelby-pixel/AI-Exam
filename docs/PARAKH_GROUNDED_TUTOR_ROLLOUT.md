@@ -4,7 +4,7 @@
 
 PARAKH's student-facing page is now a focused CA learning chat. The timetable, schedule, and revision-plan creation interface has been removed from the page.
 
-General learning responses use Gemini with retrieved context from the existing CA knowledge bank. For current-information, statutory, or explicitly requested searches, PARAKH retrieves web results and includes source links in the response. The default search provider is Bing RSS; deployments may configure a SearXNG JSON endpoint with `PARAKH_WEB_SEARCH_ENDPOINT`. Set `PARAKH_WEB_RESEARCH_ENABLED=false` to disable external research.
+All generated answers use the owner's self-hosted model at `LOCAL_MODEL_ENDPOINT` (a complete OpenAI-compatible `/v1/chat/completions` URL). Parakh sends no LLM requests to Gemini, OpenAI, Anthropic, or another hosted model provider. If the endpoint is missing, unavailable, or returns no usable response, Parakh fails closed; it does not fall back to a paid/cloud LLM. For current-information, statutory, or explicitly requested searches, PARAKH retrieves public web results and includes source links in the response. The default search provider is Bing RSS; deployments may configure a self-hosted SearXNG JSON endpoint with `PARAKH_WEB_SEARCH_ENDPOINT`. Set `PARAKH_WEB_RESEARCH_ENABLED=false` to disable external web research. Web search is separate from model inference.
 
 The chat page displays the source cards returned by the server. A lack of usable search results is disclosed; the assistant is instructed not to pretend it searched or cite sources it did not receive.
 
@@ -20,7 +20,7 @@ The new `POST /api/student/evaluations/:id/ask-parakh` endpoint is student-only,
 
 ## What “training” means at this stage
 
-This release activates **retrieval-grounded tutoring (RAG-style generation)**: Gemini is given curated CA material and relevant web excerpts as context when generating an explanation. It does not update Gemini's model weights and is not fine-tuning.
+This release activates **retrieval-grounded tutoring (RAG-style generation)**: the owner's self-hosted model is given curated CA material and relevant web excerpts as context when generating an explanation. It does not update model weights and is not fine-tuning.
 
 The separate model-training pipeline remains OFF. Student answer sheets are not exported as model-training examples. Fine-tuning requires, at minimum:
 1. A reviewed privacy/legal basis and clear student disclosure/consent and exclusion handling.
@@ -33,7 +33,9 @@ The admin PARAKH learning dashboard distinguishes active grounded tutor generati
 
 ## Runtime configuration
 
-- `GEMINI_API_KEY`: required for generative tutoring.
+- `LOCAL_MODEL_ENDPOINT`: required for generated answers; a self-hosted OpenAI-compatible chat-completions endpoint.
+- `LOCAL_MODEL_NAME`: optional model identifier sent to the self-hosted inference service.
+- `PARAKH_LOCAL_MODEL_TIMEOUT_MS`: optional request timeout (5–180 seconds).
 - `PARAKH_WEB_RESEARCH_ENABLED`: defaults to enabled unless set to `false`.
 - `PARAKH_WEB_SEARCH_ENDPOINT`: optional SearXNG JSON endpoint; blank uses Bing RSS.
 - `PARAKH_CONVERSATION_LEARNING_ENABLED`: remains opt-in and is not required for tutor answers.
