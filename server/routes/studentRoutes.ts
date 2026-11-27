@@ -2639,7 +2639,7 @@ router.post(
       }
 
       const record = db.prepare(`
-        SELECT e.id, e.result_json, e.status, e.certification_status, e.downloads_unlocked
+        SELECT e.id, e.result_json, e.status, e.certification_status, e.downloads_unlocked, e.admin_review_status
         FROM evaluations e
         LEFT JOIN users u ON u.id = e.student_id
         WHERE (e.id = ? OR e.display_id = ?) AND ${buildStudentOwnershipSql('e', 'u')}
@@ -2650,13 +2650,19 @@ router.post(
         status?: string;
         certification_status?: string;
         downloads_unlocked?: number;
+        admin_review_status?: string;
       } | undefined;
 
       if (!record) return res.status(404).json({ success: false, error: 'Evaluation report not found.' });
-      const status = String(record.status || '').toUpperCase();
-      const certified = status === 'COMPLETED'
-        || String(record.certification_status || '').toUpperCase() === 'CERTIFIED'
-        || Number(record.downloads_unlocked || 0) === 1;
+      const status = String(record.status || '').trim().toUpperCase();
+      const certificationStatus = String(record.certification_status || '').trim().toUpperCase();
+      const adminReviewPending =
+        ['NEEDS_REVIEW', 'REVIEW_REQUIRED'].includes(String(record.admin_review_status || '').trim().toUpperCase())
+        || status === 'NEEDS_REVIEW'
+        || certificationStatus === 'REVIEW_REQUIRED';
+      const certified = !adminReviewPending && (
+        status === 'COMPLETED' || certificationStatus === 'CERTIFIED'
+      );
       if (!certified) {
         return res.status(409).json({ success: false, error: 'PARAKH coaching is available after this evaluation is finalised.', code: 'EVALUATION_IN_PROGRESS' });
       }
