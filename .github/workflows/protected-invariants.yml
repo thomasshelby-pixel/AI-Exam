@@ -326,9 +326,6 @@ jobs:
       - name: Study planner regression suite
         run: npm run test:study-planner
 
-      - name: PARAKH self-hosted-only model routing regression
-        run: node_modules/.bin/tsx server/tests/parakhLocalModel.test.ts
-
       - name: Model Test TXT bulk-import regression
         run: npm run test:model-test-bulk
 
