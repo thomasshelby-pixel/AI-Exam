@@ -7,7 +7,7 @@ export interface ParakhWebResearchSource {
 
 export interface ParakhWebResearchResponse {
   available: boolean;
-  provider: 'searxng' | 'google-news-rss' | null;
+  provider: 'searxng' | 'bing-web-rss' | null;
   results: ParakhWebResearchSource[];
   reason?: 'disabled' | 'not_configured' | 'unavailable' | 'no_results';
 }
@@ -145,7 +145,7 @@ export async function searchParakhWebResearch(message: string): Promise<ParakhWe
   if (cached && cached.expiresAt > Date.now()) return cached.response;
 
   const configuredEndpoint = String(process.env.PARAKH_WEB_SEARCH_ENDPOINT || '').trim();
-  const provider: 'searxng' | 'google-news-rss' = configuredEndpoint ? 'searxng' : 'google-news-rss';
+  const provider: 'searxng' | 'bing-web-rss' = configuredEndpoint ? 'searxng' : 'bing-web-rss';
 
   try {
     let results: ParakhWebResearchSource[] = [];
@@ -161,11 +161,10 @@ export async function searchParakhWebResearch(message: string): Promise<ParakhWe
       const payload = await fetchWithTimeout(endpoint, 'application/json');
       results = parseSearxngResults(JSON.parse(payload));
     } else {
-      const endpoint = new URL('https://news.google.com/rss/search');
+      const endpoint = new URL('https://www.bing.com/search');
+      endpoint.searchParams.set('format', 'rss');
       endpoint.searchParams.set('q', query);
-      endpoint.searchParams.set('hl', 'en-IN');
-      endpoint.searchParams.set('gl', 'IN');
-      endpoint.searchParams.set('ceid', 'IN:en');
+      endpoint.searchParams.set('setlang', 'en-IN');
       const payload = await fetchWithTimeout(endpoint, 'application/rss+xml, application/xml, text/xml');
       results = parseGoogleNewsRss(payload);
     }
