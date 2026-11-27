@@ -594,7 +594,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
     if (!req.user || String(req.user.role).toUpperCase() !== 'STUDENT') {
       return res.status(403).json({
         success: false,
-        error: 'The study planner is currently available to student accounts only.',
+        error: 'PARAKH is currently available to student accounts only.',
       });
     }
 
@@ -646,7 +646,7 @@ router.post('/', authenticateToken, async (req: AuthRequest, res: Response) => {
       return res.status(400).json({
         success: false,
         status: 'profile_course_missing',
-        error: 'Your CA course is missing from your student profile. Please update your profile before using AI Planner.',
+        error: 'Your CA course is missing from your student profile. Please update your profile before using PARAKH AI.',
       });
     }
 
