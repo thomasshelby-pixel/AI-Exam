@@ -333,6 +333,17 @@ export const evaluationSubmissionRateLimiter = createRateLimiter({
   },
 });
 
+// PARAKH question coaching: limit per student to protect model usage while allowing follow-ups.
+export const parakhTutorRateLimiter = createRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 25,
+  message: 'PARAKH coaching limit reached. Please wait a few minutes before asking more questions.',
+  keyGenerator: (req) => {
+    const userId = (req as any).user?.id || getClientIp(req);
+    return `parakh_tutor:${userId}`;
+  },
+});
+
 // 9. MFA Recovery Request: 3 recovery requests per 15 minutes per IP
 export const mfaRecoveryRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
