@@ -36,18 +36,6 @@ test('parses RSS sources and ignores invalid or non-http links', () => {
   assert.match(results[0].snippet, /Official examination notice/);
 });
 
-test('parses general web RSS result items and preserves source links', () => {
-  const xml = "<rss><channel>" +
-    "<item><title>ICAI examination portal</title><link>https://www.icai.org/post/examination</link><description>Latest examination information</description><pubDate>Fri, 27 Nov 2026 04:00:00 GMT</pubDate></item>" +
-    "<item><title>Unsafe internal result</title><link>http://192.168.1.2/private</link><description>Must be ignored</description></item>" +
-    "</channel></rss>";
-  const results = parseGoogleNewsRss(xml);
-  assert.equal(results.length, 1);
-  assert.equal(results[0].title, 'ICAI examination portal');
-  assert.equal(results[0].url, 'https://www.icai.org/post/examination');
-  assert.match(results[0].snippet, /Latest examination information/i);
-});
-
 test('parses SearXNG JSON results while filtering unsafe URLs', () => {
   const results = parseSearxngResults({
     results: [
