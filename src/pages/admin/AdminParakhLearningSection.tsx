@@ -198,16 +198,9 @@ export const AdminParakhLearningSection: React.FC = () => {
   const stages = [
     {
       title: 'Policy-disclosed observation collection',
-      detail: 'Successfully completed evaluations are recorded as policy-covered review observations unless the student has requested exclusion.',
+      detail: 'Successfully completed evaluations are recorded as observations unless the student has requested exclusion.',
       status: 'ACTIVE',
       statusLabel: 'Active',
-      icon: CheckCircle2,
-    },
-    {
-      title: 'Self-hosted grounded tutor',
-      detail: 'The local-model adapter is implemented. Set LOCAL_MODEL_ENDPOINT to activate it; missing or unavailable endpoints fail closed without a cloud LLM fallback. This is retrieval-grounded answering, not model fine-tuning.',
-      status: 'PENDING',
-      statusLabel: 'Endpoint required',
       icon: CheckCircle2,
     },
     {
@@ -256,17 +249,14 @@ export const AdminParakhLearningSection: React.FC = () => {
                 PARAKH <span className="text-indigo-300">Learning Engine</span>
               </h1>
               <p className="mt-2 max-w-2xl text-xs leading-relaxed text-slate-300 sm:text-sm">
-                A grounded CA tutor is active alongside a policy-disclosed observation and review pipeline. PARAKH can use curated knowledge and web sources to explain answers; model fine-tuning remains gated by human verification and privacy safeguards.
+                A policy-disclosed learning pipeline that records successfully completed evaluations as observations unless a student has requested exclusion; selected samples receive human quality checks.
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2 lg:max-w-xs lg:justify-end">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-bold text-emerald-200">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Self-hosted route implemented
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-400/30 bg-blue-400/10 px-3 py-1.5 text-[10px] font-bold text-blue-200">
-              <ShieldCheck className="h-3.5 w-3.5" /> Web research available
+              <CheckCircle2 className="h-3.5 w-3.5" /> Policy collection active
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[10px] font-bold text-amber-200">
               <LockKeyhole className="h-3.5 w-3.5" /> Training OFF
@@ -630,14 +620,6 @@ export const AdminParakhLearningSection: React.FC = () => {
           </div>
           <div className="mt-4 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-3">
-              <span className="text-slate-500 dark:text-slate-400">Self-hosted model endpoint</span>
-              <strong className="text-amber-600 dark:text-amber-300">CONFIGURATION REQUIRED</strong>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-slate-500 dark:text-slate-400">Web research</span>
-              <strong className="text-emerald-600 dark:text-emerald-300">AVAILABLE</strong>
-            </div>
-            <div className="flex items-center justify-between gap-3">
               <span className="text-slate-500 dark:text-slate-400">Model training</span>
               <strong className="text-amber-600 dark:text-amber-300">OFF</strong>
             </div>
@@ -671,7 +653,7 @@ export const AdminParakhLearningSection: React.FC = () => {
             </div>
           </div>
           <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/70 p-3 text-[10px] leading-relaxed text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/30 dark:text-indigo-200">
-            Parakh now routes generation only to LOCAL_MODEL_ENDPOINT. Configure this variable to activate the owner's self-hosted model with curated CA knowledge and web-search excerpts. If it is missing or unavailable, PARAKH fails closed instead of calling a cloud LLM provider. The observation pipeline stores policy-covered review metadata, not student answer-sheet files. This does not update model weights.
+            PARAKH stores only a policy-covered evaluation reference and review metadata at this stage. It does not export student files, call another AI model, or update model weights.
           </div>
           <p className="mt-3 text-[10px] text-slate-400">
             Latest activity: {formatDate(metrics?.latestActivityAt)}
