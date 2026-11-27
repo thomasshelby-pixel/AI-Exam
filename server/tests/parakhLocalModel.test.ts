@@ -43,7 +43,7 @@ test('PARAKH refuses to call any model provider when the self-hosted endpoint is
       }),
       /PARAKH_LOCAL_MODEL_NOT_CONFIGURED/,
     );
-    assert.equal(fetchCount, 0, 'No HTTP/model-provider request is made without the owner's endpoint');
+    assert.equal(fetchCount, 0, "No HTTP/model-provider request is made without the owner endpoint");
   } finally {
     restoreEnvironment();
   }
