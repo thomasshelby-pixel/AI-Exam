@@ -4,7 +4,6 @@ import { EvaluationResult, QuestionEvaluation } from '../../types/index.js';
 import {
   FileCheck2,
   Eye,
-  Bot,
   Award,
   CheckCircle2,
   AlertTriangle,
@@ -57,9 +56,6 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
   const [checkedCopyPreviewVersion, setCheckedCopyPreviewVersion] = useState<string>('Current');
   const [isPreviewLoading, setIsPreviewLoading] = useState<boolean>(false);
   const [previewError, setPreviewError] = useState<string>('');
-  const [parakhReplies, setParakhReplies] = useState<Record<string, string>>({});
-  const [parakhErrors, setParakhErrors] = useState<Record<string, string>>({});
-  const [parakhLoadingKey, setParakhLoadingKey] = useState<string | null>(null);
 
   const [isRecheckModalOpen, setIsRecheckModalOpen] = useState<boolean>(false);
   const [selectedMode, setSelectedMode] = useState<'standard' | 'strict' | 'moderate'>(
@@ -196,41 +192,6 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
       setPreviewError(previewErr?.message || 'Could not load the checked copy preview.');
     } finally {
       setIsPreviewLoading(false);
-    }
-  };
-
-  const handleAskParakh = async (question: QuestionEvaluation, mode: 'why' | 'improve') => {
-    const baseKey = String(question.questionNumber || '') + '::' + String(question.subQuestion || '');
-    const actionKey = baseKey + '::' + mode;
-    try {
-      setParakhLoadingKey(actionKey);
-      setParakhErrors((current) => ({ ...current, [actionKey]: '' }));
-      const token = localStorage.getItem('ca_exam_checker_token') || localStorage.getItem('token') || '';
-      const response = await fetch('/api/student/evaluations/' + evaluationResult.evaluationId + '/ask-parakh', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: 'Bearer ' + token } : {}),
-        },
-        body: JSON.stringify({
-          mode,
-          questionNumber: question.questionNumber,
-          subQuestion: question.subQuestion || '',
-          questionId: question.questionId || '',
-          canonicalId: question.canonicalId || '',
-          checkingMode: selectedMode,
-        }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'PARAKH could not prepare this explanation.');
-      }
-      setParakhReplies((current) => ({ ...current, [actionKey]: String(data.answer || '') }));
-    } catch (askError: any) {
-      setParakhErrors((current) => ({ ...current, [actionKey]: askError?.message || 'PARAKH is temporarily unavailable.' }));
-    } finally {
-      setParakhLoadingKey(null);
     }
   };
 
@@ -1451,9 +1412,6 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
             const comps = q.markingComponents || q.structuredEvidence?.markingComponents || [];
             const isConseq = Boolean(q.consequentialErrorDetails?.isConsequential);
             const displayCode = getQuestionDisplayCode(q);
-            const parakhBaseKey = String(q.questionNumber || '') + '::' + String(q.subQuestion || '');
-            const whyParakhKey = parakhBaseKey + '::why';
-            const improveParakhKey = parakhBaseKey + '::improve';
 
             return (
               <div
@@ -1656,47 +1614,7 @@ export const EvaluationReportView: React.FC<EvaluationReportViewProps> = ({
                     </div>
                   )}
                 </div>
-                <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/70 p-3 dark:border-indigo-900/70 dark:bg-indigo-950/20 print:hidden">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-xs font-bold text-indigo-900 dark:text-indigo-200">
-                      <Bot className="h-4 w-4" />
-                      Ask PARAKH
-                    </div>
-                    <span className="text-[10px] text-indigo-700/80 dark:text-indigo-300/80">Question-specific feedback · marks are not changed</span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleAskParakh(q, 'why')}
-                      disabled={parakhLoadingKey === whyParakhKey}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-[11px] font-bold text-indigo-800 transition hover:bg-indigo-100 disabled:opacity-50 dark:border-indigo-800 dark:bg-slate-900 dark:text-indigo-200 dark:hover:bg-indigo-950"
-                    >
-                      {parakhLoadingKey === whyParakhKey && <RefreshCw className="h-3 w-3 animate-spin" />}
-                      Why were marks cut?
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleAskParakh(q, 'improve')}
-                      disabled={parakhLoadingKey === improveParakhKey}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-[11px] font-bold text-white transition hover:bg-indigo-700 disabled:opacity-50"
-                    >
-                      {parakhLoadingKey === improveParakhKey && <RefreshCw className="h-3 w-3 animate-spin" />}
-                      How can I improve?
-                    </button>
-                  </div>
-                  {(parakhErrors[whyParakhKey] || parakhReplies[whyParakhKey]) && (
-                    <div className="mt-3 rounded-lg border border-indigo-200/80 bg-white p-3 text-xs leading-5 text-slate-700 dark:border-indigo-900 dark:bg-slate-950 dark:text-slate-200">
-                      <p className="mb-1 font-bold text-indigo-800 dark:text-indigo-300">Why were marks cut?</p>
-                      <p className="whitespace-pre-wrap">{parakhErrors[whyParakhKey] || parakhReplies[whyParakhKey]}</p>
-                    </div>
-                  )}
-                  {(parakhErrors[improveParakhKey] || parakhReplies[improveParakhKey]) && (
-                    <div className="mt-3 rounded-lg border border-indigo-200/80 bg-white p-3 text-xs leading-5 text-slate-700 dark:border-indigo-900 dark:bg-slate-950 dark:text-slate-200">
-                      <p className="mb-1 font-bold text-indigo-800 dark:text-indigo-300">How can I improve?</p>
-                      <p className="whitespace-pre-wrap">{parakhErrors[improveParakhKey] || parakhReplies[improveParakhKey]}</p>
-                    </div>
-                  )}
-                </div>
+
               </div>
             );
           })}
