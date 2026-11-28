@@ -741,14 +741,20 @@ export function buildStructuredAnnotations(
   for (let pageNumber = 1; pageNumber <= safeTotalPages; pageNumber++) {
     if (!resultRequiresPageReview) continue;
     const audit = pageAuditByNumber.get(pageNumber);
+    const existingAnnotations = (pagesMap.get(pageNumber) || []).filter((a) => !a.pageReviewOnly);
+    const hasEvaluatedQuestionOnPage = existingAnnotations.length > 0;
     const reasons: string[] = [];
     if (!audit) {
-      reasons.push('This original page has no page-level analysis audit record.');
+      if (hasExplicitPageAnalysisAudit && !hasEvaluatedQuestionOnPage) {
+        reasons.push('This original page has no page-level analysis audit record.');
+      }
     } else {
       if (audit.analysisCompleted !== true) {
-        reasons.push(audit.analysisFailureCode
-          ? `Page analysis did not complete (${audit.analysisFailureCode}).`
-          : 'This original page has no completed page-analysis record.');
+        if (audit.analysisFailureCode) {
+          reasons.push(`Page analysis did not complete (${audit.analysisFailureCode}).`);
+        } else if (hasExplicitPageAnalysisAudit && !hasEvaluatedQuestionOnPage) {
+          reasons.push('This original page has no completed page-analysis record.');
+        }
       }
       if (audit.mappingReviewReason) reasons.push(audit.mappingReviewReason);
       if (audit.unresolvedAnswerBlocks?.length) {

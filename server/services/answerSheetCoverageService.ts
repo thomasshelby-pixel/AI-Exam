@@ -254,10 +254,20 @@ export function resolveMcqSelectionNumber(
   mcqs: AuthoritativePaperStructure['mcqs']
 ): string | undefined {
   const raw = String(rawKey || '').trim();
+  if (/(?:-|–|—|\bto\b)/i.test(raw)) return undefined;
   const flatMatch = raw.match(/^(?:MCQ|OBJECTIVE)\s*(\d{1,3})$/i) || raw.match(/^(\d{1,3})$/);
   if (flatMatch) {
     const flatNumber = flatMatch[1];
-    return (mcqs || []).some((mcq) => String(mcq.questionNumber).replace(/[^0-9]/g, '') === flatNumber)
+    return (mcqs || []).some((mcq) => {
+      const rangeMatch = String(mcq.questionNumber || '').match(/^(\d{1,2})\s*(?:-|–|—|\bto\b)\s*(\d{1,2})$/i);
+      if (rangeMatch) {
+        const start = parseInt(rangeMatch[1], 10);
+        const end = parseInt(rangeMatch[2], 10);
+        const num = parseInt(flatNumber, 10);
+        return num >= start && num <= end;
+      }
+      return String(mcq.questionNumber).replace(/[^0-9]/g, '') === flatNumber;
+    })
       ? flatNumber
       : undefined;
   }
@@ -1299,8 +1309,10 @@ export async function buildAnswerSheetCoverageMap(
 
   for (const pageRec of pageRecords) {
     for (const det of pageRec.detectedQuestions) {
+      const rangeMatch = det.isMcq ? String(det.questionNumber || det.fullQuestionCode || '').match(/(?:MCQ\s*)?(\d{1,2})\s*(?:-|–|—|\bto\b)\s*(\d{1,2})/i) : null;
+      const mcqDigits = rangeMatch ? rangeMatch[1] : String(det.questionNumber).replace(/[^0-9]/g, '');
       const code = det.isMcq
-        ? `MCQ${String(det.questionNumber).replace(/[^0-9]/g, '') || '1'}`
+        ? `MCQ${mcqDigits || '1'}`
         : toCanonicalQuestionId(det.fullQuestionCode || det.questionNumber, det.subQuestionNumber, paperStructure.subQuestions);
       const parsed = parseCanonicalQuestionIdentity(code);
 

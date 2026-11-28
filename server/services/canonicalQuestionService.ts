@@ -263,7 +263,8 @@ export function toCanonicalQuestionId(
     /MCQ/i.test(rawQ) ||
     rawSub.toUpperCase() === 'MCQ';
   if (isMcq) {
-    const num = rawQ.replace(/[^0-9]/g, '') || rawSub.replace(/[^0-9]/g, '') || '1';
+    const rangeMatch = rawQ.match(/(?:MCQ|OBJECTIVE)?\s*(\d{1,3})\s*(?:-|–|—|\bto\b)\s*(\d{1,3})/i);
+    const num = rangeMatch ? rangeMatch[1] : (rawQ.replace(/[^0-9]/g, '') || rawSub.replace(/[^0-9]/g, '') || '1');
     return 'MCQ' + num;
   }
 
@@ -327,7 +328,8 @@ export function parseCanonicalQuestionIdentity(rawCode: string): CanonicalQuesti
 
   const isMcq = /^(?:MCQ|OBJECTIVE)/i.test(trimmed) || /MCQ/i.test(trimmed);
   if (isMcq) {
-    const num = trimmed.replace(/[^0-9]/g, '') || '1';
+    const rangeMatch = trimmed.match(/(?:MCQ|OBJECTIVE)?\s*(\d{1,3})\s*(?:-|–|—|\bto\b)\s*(\d{1,3})/i);
+    const num = rangeMatch ? rangeMatch[1] : (trimmed.replace(/[^0-9]/g, '') || '1');
     return {
       canonicalId: 'MCQ' + num,
       questionNumber: num,

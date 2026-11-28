@@ -850,7 +850,8 @@ export function evaluateHardCompletionGate(
       questions.map((q) => {
         if (q.canonicalId) return q.canonicalId.toLowerCase();
         if (q.fullQuestionCode) return q.fullQuestionCode.toLowerCase();
-        const qNum = String(q.questionNumber).replace(/[^0-9]/g, '');
+        const rangeMatch = String(q.questionNumber || '').match(/(?:MCQ\s*)?(\d{1,2})\s*(?:-|–|—|\bto\b)\s*(\d{1,2})/i);
+        const qNum = rangeMatch ? rangeMatch[1] : String(q.questionNumber).replace(/[^0-9]/g, '');
         const sub = q.subQuestion ? String(q.subQuestion).toLowerCase() : '';
         return (sub ? `q${qNum}(${sub})` : String(q.questionNumber).startsWith('MCQ') ? `mcq${qNum}` : `q${qNum}`).toLowerCase();
       })

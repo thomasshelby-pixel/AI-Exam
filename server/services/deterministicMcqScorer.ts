@@ -292,7 +292,8 @@ export function evaluateAllAuthoritativeMcqsWithAudit(
   const totalMcqMaxPossible = mcqs.reduce((acc, m) => acc + (m.maximumMarks || 0), 0);
 
   const evaluatedQuestions: QuestionEvaluation[] = mcqs.map((mcq) => {
-    const cleanNum = String(mcq.questionNumber || '').replace(/[^0-9]/g, '') || '1';
+    const rangeMatch = String(mcq.questionNumber || '').match(/^(\d{1,2})\s*(?:-|–|—|\bto\b)\s*(\d{1,2})$/i);
+    const cleanNum = rangeMatch ? rangeMatch[1] : (String(mcq.questionNumber || '').replace(/[^0-9]/g, '') || '1');
     const qNum = cleanNum;
     const rawChoice = mcqSelections instanceof Map
       ? (mcqSelections.get(qNum) ?? (cleanNum ? mcqSelections.get(cleanNum) : undefined) ?? (cleanNum ? mcqSelections.get(`MCQ${cleanNum}`) : undefined) ?? (cleanNum ? mcqSelections.get(`MCQ ${cleanNum}`) : undefined) ?? '')

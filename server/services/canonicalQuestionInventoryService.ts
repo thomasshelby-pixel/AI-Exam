@@ -88,6 +88,33 @@ export function buildCanonicalQuestionInventory(options: {
   // 1. Process MCQs first if present (Division A / Objective Section)
   const mcqs = paperStructure.mcqs || [];
   for (const mcq of mcqs) {
+    const rangeMatch = String(mcq.questionNumber || mcq.fullQuestionCode || '').match(/(?:MCQ\s*)?(\d{1,2})\s*(?:-|–|—|\bto\b)\s*(\d{1,2})/i);
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[1], 10);
+      const end = parseInt(rangeMatch[2], 10);
+      if (end >= start && end - start <= 40) {
+        const count = end - start + 1;
+        const totalMarks = Number(mcq.maximumMarks) > 0 ? Number(mcq.maximumMarks) : 0;
+        const perMcqMarks = totalMarks > 0 && totalMarks !== count
+          ? totalMarks / count
+          : totalMarks > 0 ? 1 : 0;
+        for (let i = start; i <= end; i++) {
+          const canonicalId = `MCQ${i}`;
+          items.push({
+            questionId: canonicalId,
+            parentQuestionId: 'DIV_A_MCQ',
+            subQuestionId: String(i),
+            questionType: 'MCQ',
+            maxMarks: perMcqMarks,
+            sourceOrder: sourceOrder++,
+            canonicalTextAnchor: `Multiple Choice Question ${i}`,
+            isAlternative: false,
+            isRequiredOrOptional: 'REQUIRED',
+          });
+        }
+        continue;
+      }
+    }
     const rawNum = String(mcq.questionNumber).replace(/[^0-9]/g, '') || String(sourceOrder);
     const canonicalId = `MCQ${rawNum}`;
     items.push({
@@ -354,6 +381,8 @@ export function detectIndependentAttempts(options: {
   if (mcqSelections) {
     for (const [key, val] of Object.entries(mcqSelections)) {
       if (!val) continue;
+      const rangeMatch = key.match(/(?:MCQ\s*)?(\d{1,2})\s*(?:-|–|—|\bto\b)\s*(\d{1,2})/i);
+      if (rangeMatch) continue;
       const mcqNum = key.replace(/[^0-9]/g, '');
       const canonId = `MCQ${mcqNum}`;
 
