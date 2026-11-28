@@ -91,7 +91,7 @@ export function buildCloudEvaluationTaskId(evaluationId: string, dispatchId = cr
  * Re-dispatches use unique task IDs; the Firestore worker lease prevents
  * duplicate execution of the same evaluation.
  */
-export async function enqueueCloudEvaluationTask(evaluationId: string): Promise<void> {
+export async function enqueueCloudEvaluationTask(evaluationId: string, forceNewDispatch = false): Promise<void> {
   const config = readConfig();
   if (!config) {
     throw new Error(
@@ -109,7 +109,9 @@ export async function enqueueCloudEvaluationTask(evaluationId: string): Promise<
     config.projectId,
     config.location,
     config.queue,
-    buildCloudEvaluationTaskId(evaluationId),
+    forceNewDispatch
+      ? buildCloudEvaluationTaskId(evaluationId, crypto.randomUUID())
+      : buildCloudEvaluationTaskId(evaluationId),
   );
 
   try {
@@ -140,6 +142,7 @@ export async function enqueueCloudEvaluationTask(evaluationId: string): Promise<
   } catch (error: any) {
     const code = Number(error?.code);
     const message = String(error?.message || '');
+    if ((code === 6 || code === 409 || /ALREADY_EXISTS/i.test(message)) && !forceNewDispatch) return;
     if (code === 6 || code === 409 || /ALREADY_EXISTS/i.test(message)) {
       throw new Error(
         'CLOUD_TASK_NAME_COLLISION: A supposedly unique dispatch task ID already exists for evaluation ' + evaluationId + '. No new dispatch was confirmed.',
