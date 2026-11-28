@@ -1986,8 +1986,10 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
       console.log(`[DurableEvalQueue] Existing live queue record retained for ${job.evaluationId}; ensuring its Cloud Task exists.`);
     }
 
-    // This call is awaited before the student endpoint acknowledges acceptance.
-    await enqueueCloudEvaluationTask(job.evaluationId);
+    // Explicit admin recovery gets a fresh Cloud Tasks dispatch identity.
+    // Ordinary submissions retain deterministic/idempotent task naming.
+    // The Firestore worker lease remains the single-writer guard in both cases.
+    await enqueueCloudEvaluationTask(job.evaluationId, Boolean(job.isRecoveryRetry));
     return;
   }
 
