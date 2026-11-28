@@ -75,11 +75,12 @@ function getTasksClient(): CloudTasksClient {
  * lease remains the single-writer guard, so each explicit dispatch gets a
  * fresh task name while all tasks still target the same evaluationId.
  */
-export function buildCloudEvaluationTaskId(evaluationId: string, dispatchId = crypto.randomUUID()): string {
+export function buildCloudEvaluationTaskId(evaluationId: string, dispatchId?: string): string {
   if (!/^[A-Za-z0-9_-]{1,180}$/.test(evaluationId)) {
     throw new Error('Invalid evaluation ID for Cloud Tasks.');
   }
-  const normalizedDispatchId = String(dispatchId || '').replace(/[^A-Za-z0-9_-]/g, '');
+  if (dispatchId === undefined) return 'evaluation-' + evaluationId;
+  const normalizedDispatchId = String(dispatchId).replace(/[^A-Za-z0-9_-]/g, '');
   if (!normalizedDispatchId || normalizedDispatchId.length > 64) {
     throw new Error('Invalid Cloud Tasks dispatch ID.');
   }
