@@ -1558,12 +1558,14 @@ export async function executeEvaluationJob(job: EvaluationJobData): Promise<void
     // must be restored. An existing negative ledger entry prevents duplicates.
     if (
       finalStatus === 'COMPLETED' &&
-      ['PROMO', 'PERSONAL_FREE', 'PERSONAL_PURCHASED_CREDIT'].includes(String(entitlementSource || '').toUpperCase())
+      !['INSTITUTE_ALLOCATION', 'PERMANENT_FREE', 'FACULTY_MOCK_SPONSORED'].includes(String(entitlementSource || '').toUpperCase()) &&
+      (!job.requestedEvalSource || job.requestedEvalSource === 'PUBLIC') &&
+      !job.resolvedSponsoringInstituteId
     ) {
       const settlement = await settlePersonalEntitlementForSuccessfulEvaluation({
         userId: studentId,
         evaluationId,
-        entitlementSource,
+        entitlementSource: entitlementSource || 'PERSONAL_FREE',
       });
 
       if (settlement?.charged) {

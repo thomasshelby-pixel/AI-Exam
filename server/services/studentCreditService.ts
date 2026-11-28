@@ -148,7 +148,34 @@ function getMonthlyFreeEvaluationsUsedFromLedger(userId: string, monthStart: str
     row.source === 'FREE_MONTHLY_EVALUATION' && Number(row.amount) < 0
   ).length;
 
-  return Math.max(0, linkedUsage + Math.max(0, unlinkedNetUsage));
+  const ledgerNet = Math.max(0, linkedUsage + Math.max(0, unlinkedNetUsage));
+
+  // Authoritatively count completed personal free evaluations in current month.
+  // A completed personal free evaluation can never be counted as 0 used even if a ledger
+  // entry was temporarily delayed, unlinked, or refunded prior to recovery.
+  try {
+    const completedFreeRows = db.prepare(`
+      SELECT COUNT(DISTINCT e.id) as count
+      FROM evaluations e
+      WHERE e.student_id = ?
+        AND UPPER(TRIM(COALESCE(e.status, ''))) = 'COMPLETED'
+        AND UPPER(TRIM(COALESCE(e.evaluation_source, 'PUBLIC'))) = 'PUBLIC'
+        AND UPPER(TRIM(COALESCE(e.material_type, ''))) <> 'FACULTY_MOCK_TEST'
+        AND COALESCE(e.faculty_mock_test_id, '') = ''
+        AND COALESCE(e.institute_id, '') = ''
+        AND COALESCE(e.sponsoring_institute_id, '') = ''
+        AND UPPER(TRIM(COALESCE(e.material_source, ''))) <> 'INSTITUTE'
+        AND COALESCE(e.consumed_from_institute_allocation, 0) = 0
+        AND COALESCE(e.consumed_from_personal_credits, 0) = 0
+        AND UPPER(TRIM(COALESCE(e.entitlement_source, 'PERSONAL_FREE'))) IN ('PERSONAL_FREE', 'FREE_MONTHLY', 'PUBLIC', '')
+        AND datetime(COALESCE(e.completed_at, e.created_at)) >= datetime(?)
+    `).get(userId, monthStart) as { count?: number } | undefined;
+
+    const completedFreeCount = Number(completedFreeRows?.count || 0);
+    return Math.min(2, Math.max(ledgerNet, completedFreeCount));
+  } catch {
+    return ledgerNet;
+  }
 }
 
 export function ensureMonthlyFreeEvaluationsReset(userId: string): MonthlyFreeEvaluationStatus {
@@ -855,6 +882,7 @@ export function consumeEvaluationEntitlementAtomic(params: {
   userId: string;
   evaluationId?: string;
   forcedSource?: 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
+  allowCompletedSettlementFallback?: boolean;
 }): {
   source: 'PROMO' | 'PERSONAL_FREE' | 'PERSONAL_PURCHASED_CREDIT';
   promoRemaining?: number;
@@ -1087,6 +1115,45 @@ export function consumeEvaluationEntitlementAtomic(params: {
   }
 
   // 5. INSUFFICIENT CREDITS (promo = 0 AND free = 0 AND paid = 0)
+  if (params.allowCompletedSettlementFallback) {
+    const ledgerId = `cld_${crypto.randomBytes(8).toString('hex')}`;
+    db.prepare(`
+      INSERT INTO credit_ledger (id, student_id, amount, source, balance_after, evaluation_id, note)
+      VALUES (?, ?, -1, 'FREE_MONTHLY_EVALUATION', 0, ?, ?)
+    `).run(
+      ledgerId,
+      userId,
+      evalRefId,
+      `Settled completed evaluation free quota (${status.freeEvaluationResetMonth})`
+    );
+
+    db.prepare(`
+      UPDATE student_profiles
+      SET monthly_free_evaluations_used = MAX(monthly_free_evaluations_used, monthly_free_evaluations_limit),
+          free_evaluations_used = MAX(free_evaluations_used, monthly_free_evaluations_limit),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ?
+    `).run(userId);
+
+    if (evaluationId) {
+      db.prepare(`
+        UPDATE evaluations
+        SET entitlement_source = 'PERSONAL_FREE',
+            consumed_from_personal_credits = 0,
+            consumed_from_institute_allocation = 0
+        WHERE id = ?
+      `).run(evaluationId);
+    }
+
+    syncStudentCreditsToFirestore(userId).catch(() => {});
+
+    return {
+      source: 'PERSONAL_FREE',
+      freeRemaining: 0,
+      paidCredits: 0,
+    };
+  }
+
   throw new Error('Your free evaluations for this month are exhausted. Please purchase credits to continue.');
 }
 

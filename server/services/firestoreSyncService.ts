@@ -1567,6 +1567,9 @@ export async function hydrateFromFirestore(options: { requireComplete?: boolean 
             admin_reviewer_email = excluded.admin_reviewer_email,
             admin_review_notes = excluded.admin_review_notes,
             account_classification = COALESCE(excluded.account_classification, evaluations.account_classification, 'NORMAL'),
+            entitlement_source = COALESCE(excluded.entitlement_source, evaluations.entitlement_source, 'PERSONAL_FREE'),
+            consumed_from_personal_credits = COALESCE(excluded.consumed_from_personal_credits, evaluations.consumed_from_personal_credits, 0),
+            consumed_from_institute_allocation = COALESCE(excluded.consumed_from_institute_allocation, evaluations.consumed_from_institute_allocation, 0),
             completed_at = excluded.completed_at
         `).run(
           ev.id, ev.display_id || ev.displayId || null, ev.evaluation_sequence || ev.evaluationSequence || null,

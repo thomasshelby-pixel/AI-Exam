@@ -34,7 +34,7 @@ import { buildMaterialQuestionMappingAudit } from '../services/materialQuestionM
 import { getMaxModelTestNumberForLevel } from '../services/modelTestLimits.js';
 import { recordCreditPurchase, getValidStudentCreditBalance, consumeCreditFEFO, refundEvaluationCreditAtomic, syncStudentCreditsToFirestore, getStudentCreditStatus, ensureMonthlyFreeEvaluationsReset, consumeEvaluationEntitlementAtomic, getCurrentServerMonth } from '../services/studentCreditService.js';
 import { restoreFailedEvaluationEntitlementsForStudent } from '../services/evaluationEntitlementRecoveryService.js';
-import { settlePersonalEntitlementForSuccessfulEvaluation } from '../services/evaluationEntitlementSettlementService.js';
+import { settlePersonalEntitlementForSuccessfulEvaluation, reconcileStudentCompletedEvaluationCredits } from '../services/evaluationEntitlementSettlementService.js';
 import {
   reserveInstituteEvaluationCredit,
   releaseInstituteEvaluationCredit,
@@ -3923,6 +3923,7 @@ router.get('/students', (req: AuthRequest, res: Response) => {
         String(student.id),
         String(student.email || '').toLowerCase().trim()
       );
+      reconcileStudentCompletedEvaluationCredits(String(student.id));
     }
 
     // Authoritative enrichment using existing student evaluation entitlement and credit status systems
@@ -4050,6 +4051,7 @@ router.get('/students/:id', async (req: AuthRequest, res: Response) => {
       studentId,
       String(studentRaw.email || '').toLowerCase().trim()
     );
+    reconcileStudentCompletedEvaluationCredits(studentId);
 
     // Recent evaluations
     const recentEvals = db.prepare(`
@@ -4927,7 +4929,7 @@ router.post('/evaluations/auto-reconcile-reprocessed-entitlements', async (req: 
       INNER JOIN audit_logs reprocess
         ON reprocess.entity_id = e.id
        AND reprocess.entity_type = 'EVALUATION'
-       AND reprocess.action = 'EVALUATION_REPROCESS_STARTED'
+       AND reprocess.action IN ('EVALUATION_REPROCESS_STARTED', 'EVALUATION_RECOVERY_STARTED')
       WHERE UPPER(TRIM(COALESCE(e.status, ''))) = 'COMPLETED'
         AND UPPER(TRIM(COALESCE(e.evaluation_source, 'PUBLIC'))) = 'PUBLIC'
         AND UPPER(TRIM(COALESCE(e.material_type, ''))) <> 'FACULTY_MOCK_TEST'
