@@ -5852,9 +5852,11 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
   } catch (error: any) {
     console.error('[AdminRecovery] Recovery preflight failed:', error);
+    const msg = error instanceof Error ? error.message : String(error || '');
     return res.status(500).json({
-      error: 'Recovery preflight failed without changing evaluation status or credits.',
-      code: 'RECOVERY_PREFLIGHT_FAILED',
+      error: msg ? `Recovery preflight failed: ${msg}` : 'Recovery preflight failed without changing evaluation status or credits.',
+      code: error?.code || 'RECOVERY_PREFLIGHT_FAILED',
+      details: msg,
     });
   }
 });

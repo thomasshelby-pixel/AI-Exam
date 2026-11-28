@@ -526,10 +526,8 @@ export async function nudgeDurableEvaluationQueue(evaluationId: string): Promise
       return;
     }
 
-    // Development/test environments retain the local in-process runner.
-    if (!isProductionEvaluationQueue()) {
-      await runDurableEvaluationQueueRecord(evaluationId);
-    }
+    // If Cloud Tasks is not configured, run in-process runner
+    await runDurableEvaluationQueueRecord(evaluationId);
   } catch (error) {
     console.warn(`[DurableEvalQueue] Status-poll recovery check failed for ${evaluationId}:`, error);
   }
@@ -1964,14 +1962,7 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
     return;
   }
 
-  if (isProductionEvaluationQueue()) {
-    // In request-based CPU mode, no evaluation work may continue after this
-    // HTTP request returns. Persist the durable payload first, then create an
-    // authenticated Cloud Task whose own HTTP request awaits the full worker.
-    if (!isCloudTasksConfigured()) {
-      throw new Error('CLOUD_TASKS_NOT_CONFIGURED: Production evaluations are paused until the request-bound Cloud Tasks worker is configured.');
-    }
-
+  if (isProductionEvaluationQueue() && isCloudTasksConfigured()) {
     const sourceUploadFileId = await ensureDurableOriginalFiles(job);
     const persisted = await persistDurableEvaluationQueueRecord(job, sourceUploadFileId);
     if (persisted) {
