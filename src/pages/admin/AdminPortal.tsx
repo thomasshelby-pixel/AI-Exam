@@ -3373,7 +3373,22 @@ export const AdminPortal: React.FC = () => {
                                               const result = await apiRequest<any>(`/api/admin/evaluations/${ev.id}/recover`, { method: 'POST' });
                                               window.alert(result?.message || result?.status || 'Recovery preflight finished. Check the returned details.');
                                             } catch (error: any) {
-                                              window.alert(error?.message || 'Recovery preflight failed. No retry was started.');
+                                              const diagnostics = error?.data?.diagnostics;
+                                              const diagnosticLines = diagnostics
+                                                ? [
+                                                    'Database status: ' + (diagnostics.databaseStatus || '—'),
+                                                    'Progress stage: ' + (diagnostics.progressStage || '—'),
+                                                    'Updated at: ' + (diagnostics.updatedAt || '—'),
+                                                    'Canonical status: ' + (diagnostics.canonicalStatus || '—'),
+                                                    'Durable queue status: ' + (diagnostics.durableQueueStatus || '—'),
+                                                  ]
+                                                : [];
+                                              const code = error?.data?.code || error?.code;
+                                              window.alert([
+                                                error?.message || 'Recovery preflight failed. No retry was started.',
+                                                code ? 'Error code: ' + code : '',
+                                                diagnosticLines.length ? 'Diagnostics:\n' + diagnosticLines.join('\n') : '',
+                                              ].filter(Boolean).join('\n\n'));
                                             }
                                           }}
                                           className="px-2 py-1 rounded-md border border-amber-300 hover:bg-amber-50 text-amber-800 font-semibold transition cursor-pointer flex items-center gap-1 text-[11px]"
@@ -5650,6 +5665,37 @@ export const AdminPortal: React.FC = () => {
                   ))}
                 </div>
               </div>
+
+              {/* Processing diagnostics for stalled jobs */}
+              {['QUEUED', 'PROCESSING'].includes(String(viewEvaluationModal.evaluation?.status || '').toUpperCase()) && (
+                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
+                  <p className="font-bold text-amber-900 text-[11px] uppercase tracking-wider">Processing Diagnostics</p>
+                  <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                    <div>
+                      <span className="text-amber-700/70 block text-[10px]">Progress Stage:</span>
+                      <span className="font-mono font-semibold text-amber-950 break-words">{viewEvaluationModal.evaluation?.progress_stage || 'Not recorded'}</span>
+                    </div>
+                    <div>
+                      <span className="text-amber-700/70 block text-[10px]">Progress:</span>
+                      <span className="font-mono font-semibold text-amber-950">{Number.isFinite(Number(viewEvaluationModal.evaluation?.progress_percentage)) ? Number(viewEvaluationModal.evaluation.progress_percentage) + '%' : 'Not recorded'}</span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-amber-700/70 block text-[10px]">Progress Message:</span>
+                      <span className="text-amber-950 whitespace-pre-wrap break-words">{viewEvaluationModal.evaluation?.progress_message || 'No progress message was saved.'}</span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-amber-700/70 block text-[10px]">Last Updated:</span>
+                      <span className="text-amber-950">{viewEvaluationModal.evaluation?.updated_at ? formatDateTimeIST(viewEvaluationModal.evaluation.updated_at) : 'Not recorded'}</span>
+                    </div>
+                    {viewEvaluationModal.evaluation?.error_message && (
+                      <div className="col-span-2 border-t border-amber-200 pt-2">
+                        <span className="text-rose-700 block text-[10px] font-semibold">Last Error:</span>
+                        <span className="text-rose-900 whitespace-pre-wrap break-words">{viewEvaluationModal.evaluation.error_message}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Timestamps */}
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
