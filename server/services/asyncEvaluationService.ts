@@ -212,10 +212,11 @@ async function persistDurableEvaluationQueueRecord(
       const existingStatus = String(existing.status || '').toUpperCase();
       const leaseUntil = Date.parse(String(existing.leaseExpiresAt || ''));
       const leaseIsLive = existingStatus === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now();
-      if (
-        ['QUEUED', 'RUNNING'].includes(existingStatus) &&
-        (existingStatus === 'QUEUED' || leaseIsLive)
-      ) {
+      // A QUEUED record has no active worker lease. Replace its payload with
+      // the freshly reconstructed original-PDF/reference snapshot so admin
+      // recovery can repair an incomplete or stale queued payload. Only a live
+      // RUNNING lease blocks replacement; expired RUNNING jobs are recoverable.
+      if (existingStatus === 'RUNNING' && leaseIsLive) {
         return false;
       }
     }
@@ -225,7 +226,7 @@ async function persistDurableEvaluationQueueRecord(
 
   if (persisted === true) return true;
   if (persisted === false) {
-    // A false result means a duplicate active job only after confirming the
+    // A false result means a live worker lease only after confirming the
     // authoritative document. A transaction timeout also returns a falsey
     // fallback in the Firestore adapter and must never be acknowledged as queued.
     const existing = await getFirestoreDoc<DurableEvaluationQueueRecord>(
@@ -235,7 +236,7 @@ async function persistDurableEvaluationQueueRecord(
     );
     const status = String(existing?.status || '').toUpperCase();
     const leaseUntil = Date.parse(String(existing?.leaseExpiresAt || ''));
-    if (status === 'QUEUED' || (status === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now())) {
+    if (status === 'RUNNING' && Number.isFinite(leaseUntil) && leaseUntil > Date.now()) {
       return false;
     }
   }
@@ -1985,8 +1986,10 @@ export async function enqueueEvaluation(job: EvaluationJobData): Promise<void> {
       console.log(`[DurableEvalQueue] Existing live queue record retained for ${job.evaluationId}; ensuring its Cloud Task exists.`);
     }
 
-    // This call is awaited before the student endpoint acknowledges acceptance.
-    await enqueueCloudEvaluationTask(job.evaluationId);
+    // Explicit admin recovery gets a fresh Cloud Tasks dispatch identity.
+    // Ordinary submissions retain deterministic/idempotent task naming.
+    // The Firestore worker lease remains the single-writer guard in both cases.
+    await enqueueCloudEvaluationTask(job.evaluationId, Boolean(job.isRecoveryRetry));
     return;
   }
 

@@ -273,6 +273,9 @@ jobs:
       - name: Durable evaluation job payload recovery regression
         run: node_modules/.bin/tsx server/tests/durableEvaluationJobPayload.test.ts
 
+      - name: Cloud Tasks recovery dispatch identity regression
+        run: node_modules/.bin/tsx server/tests/cloudTasksRecoveryDispatch.test.ts
+
       - name: Failed evaluation credit refund regression
         run: node_modules/.bin/tsx server/tests/creditPersistenceAndConsumptionMaster.test.ts
 

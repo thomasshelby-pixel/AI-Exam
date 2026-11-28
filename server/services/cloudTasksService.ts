@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { CloudTasksClient } from '@google-cloud/tasks';
 import { OAuth2Client } from 'google-auth-library';
 
@@ -66,10 +67,32 @@ function getTasksClient(): CloudTasksClient {
 }
 
 /**
- * Creates one durable Cloud Tasks HTTP task for an evaluation.
- * A deterministic task name makes repeated submissions/status nudges idempotent.
+ * Build a unique dispatch identity for an evaluation.
+ *
+ * Cloud Tasks retains recently-used task names. Reusing a deterministic name
+ * can make a legitimate recovery dispatch look successful when createTask
+ * actually returns ALREADY_EXISTS for an older dispatch. Firestore's durable
+ * lease remains the single-writer guard, so each explicit dispatch gets a
+ * fresh task name while all tasks still target the same evaluationId.
  */
-export async function enqueueCloudEvaluationTask(evaluationId: string): Promise<void> {
+export function buildCloudEvaluationTaskId(evaluationId: string, dispatchId?: string): string {
+  if (!/^[A-Za-z0-9_-]{1,180}$/.test(evaluationId)) {
+    throw new Error('Invalid evaluation ID for Cloud Tasks.');
+  }
+  if (dispatchId === undefined) return 'evaluation-' + evaluationId;
+  const normalizedDispatchId = String(dispatchId).replace(/[^A-Za-z0-9_-]/g, '');
+  if (!normalizedDispatchId || normalizedDispatchId.length > 64) {
+    throw new Error('Invalid Cloud Tasks dispatch ID.');
+  }
+  return 'evaluation-' + evaluationId + '-' + normalizedDispatchId;
+}
+
+/**
+ * Creates one durable Cloud Tasks HTTP task for an evaluation.
+ * Re-dispatches use unique task IDs; the Firestore worker lease prevents
+ * duplicate execution of the same evaluation.
+ */
+export async function enqueueCloudEvaluationTask(evaluationId: string, forceNewDispatch = false): Promise<void> {
   const config = readConfig();
   if (!config) {
     throw new Error(
@@ -87,7 +110,9 @@ export async function enqueueCloudEvaluationTask(evaluationId: string): Promise<
     config.projectId,
     config.location,
     config.queue,
-    'evaluation-' + evaluationId,
+    forceNewDispatch
+      ? buildCloudEvaluationTaskId(evaluationId, crypto.randomUUID())
+      : buildCloudEvaluationTaskId(evaluationId),
   );
 
   try {
@@ -118,7 +143,12 @@ export async function enqueueCloudEvaluationTask(evaluationId: string): Promise<
   } catch (error: any) {
     const code = Number(error?.code);
     const message = String(error?.message || '');
-    if (code === 6 || code === 409 || /ALREADY_EXISTS/i.test(message)) return;
+    if ((code === 6 || code === 409 || /ALREADY_EXISTS/i.test(message)) && !forceNewDispatch) return;
+    if (code === 6 || code === 409 || /ALREADY_EXISTS/i.test(message)) {
+      throw new Error(
+        'CLOUD_TASK_NAME_COLLISION: A supposedly unique dispatch task ID already exists for evaluation ' + evaluationId + '. No new dispatch was confirmed.',
+      );
+    }
     throw new Error(
       'CLOUD_TASK_ENQUEUE_FAILED: Could not schedule evaluation ' +
       evaluationId + ': ' + (message || 'Unknown Cloud Tasks error'),
