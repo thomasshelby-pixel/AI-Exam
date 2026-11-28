@@ -4,7 +4,7 @@ runConfig:
   minInstances: 1
   # Request-bound Cloud Tasks workers; autoscaling up to 20 instances.
   maxInstances: 20
-  concurrency: 4
+  concurrency: 8
   cpu: 1
   # Request-based CPU: evaluation work is executed inside authenticated Cloud Tasks HTTP requests.
   cpuAlwaysAllocated: false
