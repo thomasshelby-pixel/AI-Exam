@@ -5289,14 +5289,14 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     // alone cannot protect against a live worker lease held by another instance.
     const usesDurableProductionQueue =
       process.env.NODE_ENV === 'production' || Boolean(process.env.K_SERVICE || process.env.K_REVISION);
-    if (reprocessNeedsReview && usesDurableProductionQueue) {
+    if (usesDurableProductionQueue) {
       let durableQueueRecord: any = null;
       try {
         durableQueueRecord = await getFirestoreDoc<any>('evaluation_jobs', evaluationId, { failOnError: true });
       } catch (queueReadError) {
-        console.error('[AdminReprocess] Could not verify the durable worker lease:', evaluationId, queueReadError);
+        console.error('[AdminRecovery] Could not verify the durable worker lease:', evaluationId, queueReadError);
         return res.status(503).json({
-          error: 'The active evaluation queue could not be verified. No reprocess was started; refresh and retry after queue status is available.',
+          error: 'The durable evaluation queue could not be verified. No retry was started; refresh and retry after queue status is available.',
           code: 'DURABLE_QUEUE_STATUS_UNAVAILABLE',
           evaluationId,
         });
@@ -5305,12 +5305,17 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
       const durableStatus = String(durableQueueRecord?.status || '').trim().toUpperCase();
       durableQueueStatus = durableStatus || null;
       const leaseExpiresAt = Date.parse(String(durableQueueRecord?.leaseExpiresAt || ''));
-      const durableJobIsActive =
-        durableStatus === 'QUEUED' ||
-        (durableStatus === 'RUNNING' && Number.isFinite(leaseExpiresAt) && leaseExpiresAt > Date.now());
-      if (durableJobIsActive) {
+      const durableWorkerOwnsEvaluation =
+        durableStatus === 'RUNNING' &&
+        Number.isFinite(leaseExpiresAt) &&
+        leaseExpiresAt > Date.now();
+
+      // QUEUED records are deliberately re-dispatched during admin recovery.
+      // A new Cloud Tasks dispatch ID plus the Firestore claim transaction
+      // prevents stale task-name collisions and duplicate AI execution.
+      if (durableWorkerOwnsEvaluation) {
         return res.status(409).json({
-          error: 'A durable worker already owns this evaluation. Wait for its lease to finish before reprocessing.',
+          error: 'A live durable worker still owns this evaluation. Its lease must expire before a safe retry can start.',
           code: 'EVALUATION_DURABLE_JOB_ACTIVE',
           evaluationId,
           queueStatus: durableStatus,
@@ -5598,18 +5603,6 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
             (? = 0 AND UPPER(TRIM(COALESCE(status, ''))) IN ('QUEUED', 'PROCESSING'))
             OR (? = 1 AND UPPER(TRIM(COALESCE(status, ''))) = 'NEEDS_REVIEW')
           )
-          AND (
-            -- An explicit NEEDS_REVIEW reprocess reaches this SQL only after
-            -- process-local active-job and durable Firestore lease checks above.
-            -- Allow it to reclaim an orphaned RECOVERY_CLAIMED marker, but only
-            -- while the row is still NEEDS_REVIEW. The first claimant atomically
-            -- changes status to QUEUED, so a simultaneous second admin request
-            -- cannot pass this predicate.
-            (? = 1 AND UPPER(TRIM(COALESCE(status, ''))) = 'NEEDS_REVIEW')
-            OR COALESCE(progress_stage, '') <> 'RECOVERY_CLAIMED'
-            OR updated_at < datetime('now', '-2 minutes')
-            OR updated_at IS NULL
-          )
 `;
       const claimParameters = [
 
@@ -5634,7 +5627,6 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         reprocessNeedsReview ? 1 : 0,
         evaluationId,
         reprocessNeedsReview ? 0 : 1,
-        reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
 
       ];
