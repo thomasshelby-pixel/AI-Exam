@@ -5677,7 +5677,7 @@ export const AdminPortal: React.FC = () => {
                     </div>
                     <div>
                       <span className="text-amber-700/70 block text-[10px]">Progress:</span>
-                      <span className="font-mono font-semibold text-amber-950">{Number.isFinite(Number(viewEvaluationModal.evaluation?.progress_percentage)) ? Number(viewEvaluationModal.evaluation.progress_percentage) + '%' : 'Not recorded'}</span>
+                      <span className="font-mono font-semibold text-amber-950">{viewEvaluationModal.evaluation?.progress_percentage !== null && viewEvaluationModal.evaluation?.progress_percentage !== undefined && Number.isFinite(Number(viewEvaluationModal.evaluation.progress_percentage)) ? Number(viewEvaluationModal.evaluation.progress_percentage) + '%' : 'Not recorded'}</span>
                     </div>
                     <div className="col-span-2">
                       <span className="text-amber-700/70 block text-[10px]">Progress Message:</span>
