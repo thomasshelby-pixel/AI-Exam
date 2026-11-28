@@ -1,14 +1,14 @@
 # Firebase App Hosting Configuration
 # Controls Cloud Run runtime settings for production deployments
 runConfig:
-  minInstances: 0
-  # Request-bound Cloud Tasks workers; cap concurrent instances to bound cold-start hydration.
-  maxInstances: 3
-  concurrency: 80
+  minInstances: 1
+  # Request-bound Cloud Tasks workers; autoscaling up to 20 instances.
+  maxInstances: 20
+  concurrency: 4
   cpu: 1
   # Request-based CPU: evaluation work is executed inside authenticated Cloud Tasks HTTP requests.
   cpuAlwaysAllocated: false
-  memoryMiB: 1024
+  memoryMiB: 2048
 
 scripts:
   buildCommand: npm run build

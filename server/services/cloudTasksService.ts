@@ -130,7 +130,7 @@ export async function enqueueCloudEvaluationTask(evaluationId: string, forceNewD
             audience: config.audience,
           },
         },
-        dispatchDeadline: { seconds: 300 },
+        dispatchDeadline: { seconds: 1200 },
         retryConfig: {
           maxAttempts: 100,
           maxRetryDuration: '86400s',

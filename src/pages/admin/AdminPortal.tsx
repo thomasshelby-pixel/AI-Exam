@@ -26,6 +26,7 @@ import { AdminUsageMetricsPanel } from '../../components/admin/AdminUsageMetrics
 import { getAttemptsForLevel, fetchExamAttempts, ExamAttempt } from '../../lib/attempts.js';
 import {
   LayoutDashboard,
+  Activity,
   KeyRound,
   Users,
   GraduationCap,
@@ -5666,37 +5667,6 @@ export const AdminPortal: React.FC = () => {
                 </div>
               </div>
 
-              {/* Processing diagnostics for stalled jobs */}
-              {['QUEUED', 'PROCESSING'].includes(String(viewEvaluationModal.evaluation?.status || '').toUpperCase()) && (
-                <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 space-y-2">
-                  <p className="font-bold text-amber-900 text-[11px] uppercase tracking-wider">Processing Diagnostics</p>
-                  <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
-                    <div>
-                      <span className="text-amber-700/70 block text-[10px]">Progress Stage:</span>
-                      <span className="font-mono font-semibold text-amber-950 break-words">{viewEvaluationModal.evaluation?.progress_stage || 'Not recorded'}</span>
-                    </div>
-                    <div>
-                      <span className="text-amber-700/70 block text-[10px]">Progress:</span>
-                      <span className="font-mono font-semibold text-amber-950">{viewEvaluationModal.evaluation?.progress_percentage !== null && viewEvaluationModal.evaluation?.progress_percentage !== undefined && Number.isFinite(Number(viewEvaluationModal.evaluation.progress_percentage)) ? Number(viewEvaluationModal.evaluation.progress_percentage) + '%' : 'Not recorded'}</span>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-amber-700/70 block text-[10px]">Progress Message:</span>
-                      <span className="text-amber-950 whitespace-pre-wrap break-words">{viewEvaluationModal.evaluation?.progress_message || 'No progress message was saved.'}</span>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-amber-700/70 block text-[10px]">Last Updated:</span>
-                      <span className="text-amber-950">{viewEvaluationModal.evaluation?.updated_at ? formatDateTimeIST(viewEvaluationModal.evaluation.updated_at) : 'Not recorded'}</span>
-                    </div>
-                    {viewEvaluationModal.evaluation?.error_message && (
-                      <div className="col-span-2 border-t border-amber-200 pt-2">
-                        <span className="text-rose-700 block text-[10px] font-semibold">Last Error:</span>
-                        <span className="text-rose-900 whitespace-pre-wrap break-words">{viewEvaluationModal.evaluation.error_message}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
               {/* Timestamps */}
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">
                 <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wider">Timestamps</p>
@@ -6180,6 +6150,91 @@ export const AdminPortal: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {/* Evaluation Pipeline Diagnostics Panel */}
+              <div className="p-3.5 bg-slate-900 text-white rounded-xl border border-slate-800 space-y-3 shadow-sm">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-emerald-400 animate-pulse" />
+                    <p className="font-bold text-xs uppercase tracking-wider text-slate-200">
+                      Evaluation Pipeline Diagnostics
+                    </p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                    viewEvaluationModal.evaluation?.status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                    viewEvaluationModal.evaluation?.status === 'PROCESSING' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30 animate-pulse' :
+                    viewEvaluationModal.evaluation?.status === 'QUEUED' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                    viewEvaluationModal.evaluation?.status === 'NEEDS_REVIEW' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                    'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                  }`}>
+                    {viewEvaluationModal.evaluation?.status || 'UNKNOWN'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-[11px]">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Current Stage:</span>
+                    <span className="font-mono font-semibold text-emerald-300">
+                      {viewEvaluationModal.evaluation?.progress_stage || 'INITIALIZING'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Progress %:</span>
+                    <span className="font-mono font-semibold text-amber-300">
+                      {viewEvaluationModal.evaluation?.progress_percentage !== null && viewEvaluationModal.evaluation?.progress_percentage !== undefined
+                        ? `${viewEvaluationModal.evaluation.progress_percentage}%`
+                        : '—'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">AI Model Used:</span>
+                    <span className="font-mono text-cyan-300 truncate block">
+                      {viewEvaluationModal.evaluation?.model_name || viewEvaluationModal.evaluation?.model_attribution || 'Gemini 2.5'}
+                    </span>
+                  </div>
+                  <div className="col-span-2 sm:col-span-3">
+                    <span className="text-slate-400 block text-[10px]">Stage Message:</span>
+                    <span className="text-slate-300 text-xs italic">
+                      "{viewEvaluationModal.evaluation?.progress_message || 'No live stage message available.'}"
+                    </span>
+                  </div>
+                  {viewEvaluationModal.evaluation?.error_message && (
+                    <div className="col-span-2 sm:col-span-3 p-2 bg-rose-950/50 border border-rose-800/60 rounded-lg">
+                      <span className="text-rose-400 block text-[10px] font-bold uppercase tracking-wider">Error Details:</span>
+                      <span className="text-rose-200 text-xs break-words">{viewEvaluationModal.evaluation.error_message}</span>
+                    </div>
+                  )}
+                  {viewEvaluationModal.evaluation?.rejection_reason && (
+                    <div className="col-span-2 sm:col-span-3 p-2 bg-amber-950/50 border border-amber-800/60 rounded-lg">
+                      <span className="text-amber-400 block text-[10px] font-bold uppercase tracking-wider">Rejection Reason:</span>
+                      <span className="text-amber-200 text-xs break-words">{viewEvaluationModal.evaluation.rejection_reason}</span>
+                    </div>
+                  )}
+                  <div className="col-span-2 sm:col-span-3 flex items-center justify-between pt-1 border-t border-slate-800 text-[10px] text-slate-400">
+                    <span>Last Worker Heartbeat: <strong className="text-slate-300">{viewEvaluationModal.evaluation?.updated_at ? formatDateTimeIST(viewEvaluationModal.evaluation.updated_at) : '—'}</strong></span>
+                    {['QUEUED', 'PROCESSING', 'NEEDS_REVIEW'].includes(String(viewEvaluationModal.evaluation?.status || '').toUpperCase()) && (
+                      <button
+                        onClick={async () => {
+                          const evId = viewEvaluationModal.evaluation?.id;
+                          if (!evId) return;
+                          if (!window.confirm('Trigger recovery for this evaluation?')) return;
+                          try {
+                            const res = await apiRequest<any>(`/api/admin/evaluations/${evId}/recover`, { method: 'POST' });
+                            window.alert(res?.message || 'Recovery queued successfully.');
+                            handleViewEvaluationDetails(evId);
+                          } catch (err: any) {
+                            window.alert(err?.message || 'Recovery failed.');
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-semibold cursor-pointer transition flex items-center gap-1.5"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Recover This Evaluation Now
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
 
               {/* Timestamps */}
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5">

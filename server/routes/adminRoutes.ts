@@ -5626,7 +5626,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
         evaluationId,
-        reprocessNeedsReview ? 0 : 1,
+        reprocessNeedsReview ? 1 : 0,
         reprocessNeedsReview ? 1 : 0,
 
       ];
