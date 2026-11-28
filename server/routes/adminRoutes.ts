@@ -5325,9 +5325,9 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     }
 
     const status = String(evaluation.status || '').trim().toUpperCase();
-    if (status === 'FAILED' || status === 'PERSISTENCE_FAILED' || status === 'REJECTED') {
+    if (status === 'PERSISTENCE_FAILED' || status === 'REJECTED') {
       return res.status(409).json({
-        error: 'Recovery is only available for stalled QUEUED or PROCESSING evaluations. Failed evaluations are not eligible.',
+        error: 'Recovery is only available for stalled QUEUED, PROCESSING or FAILED evaluations. Rejected submissions are not eligible.',
         code: 'FAILED_EVALUATION_NOT_RECOVERABLE',
         evaluationId,
         status,
@@ -5340,11 +5340,11 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
         evaluationId,
       });
     }
-    if (status !== 'QUEUED' && status !== 'PROCESSING' && !(reprocessNeedsReview && status === 'NEEDS_REVIEW')) {
+    if (status !== 'QUEUED' && status !== 'PROCESSING' && status !== 'FAILED' && !(reprocessNeedsReview && status === 'NEEDS_REVIEW')) {
       return res.status(409).json({
         error: reprocessNeedsReview
           ? 'The evaluation status changed before the reprocess request could be accepted.'
-          : 'Recovery is only available for stalled QUEUED or PROCESSING evaluations.',
+          : 'Recovery is only available for stalled QUEUED, PROCESSING or FAILED evaluations.',
         code: 'EVALUATION_STATUS_NOT_RECOVERABLE',
         evaluationId,
         status,
@@ -5573,7 +5573,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
     try {
       const claimSql = `
         UPDATE evaluations
-        SET status = CASE WHEN ? = 1 THEN 'QUEUED' ELSE status END,
+        SET status = 'QUEUED',
             certification_status = CASE WHEN ? = 1 THEN 'REVIEW_REQUIRED' ELSE certification_status END,
             downloads_unlocked = 0,
             progress_stage = 'RECOVERY_CLAIMED',
@@ -5581,7 +5581,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
             progress_message = CASE WHEN ? = 1
               THEN 'Admin reprocess claimed; preparing a fresh evaluation from the original submission'
               ELSE 'Admin recovery claimed; validating retry inputs' END,
-            error_message = CASE WHEN ? = 1 THEN NULL ELSE error_message END,
+            error_message = NULL,
             rejection_reason = NULL,
             total_marks = CASE WHEN ? = 1 THEN 0 ELSE total_marks END,
             percentage = CASE WHEN ? = 1 THEN 0 ELSE percentage END,
@@ -5600,7 +5600,7 @@ router.post('/evaluations/:id/recover', async (req: AuthRequest, res: Response) 
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
           AND (
-            (? = 0 AND UPPER(TRIM(COALESCE(status, ''))) IN ('QUEUED', 'PROCESSING'))
+            (? = 0 AND UPPER(TRIM(COALESCE(status, ''))) IN ('QUEUED', 'PROCESSING', 'FAILED'))
             OR (? = 1 AND UPPER(TRIM(COALESCE(status, ''))) = 'NEEDS_REVIEW')
           )
 `;

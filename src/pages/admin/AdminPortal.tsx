@@ -3362,8 +3362,8 @@ export const AdminPortal: React.FC = () => {
                                         </button>
                                       )}
 
-                                      {/* Recovery preflight for stalled evaluations */}
-                                      {['QUEUED', 'PROCESSING'].includes(String(ev.status || '').toUpperCase()) && (
+                                      {/* Recovery preflight for stalled or failed evaluations */}
+                                      {['QUEUED', 'PROCESSING', 'FAILED'].includes(String(ev.status || '').toUpperCase()) && (
                                         <button
                                           onClick={async () => {
                                             const confirmed = window.confirm(
@@ -6212,7 +6212,7 @@ export const AdminPortal: React.FC = () => {
                   )}
                   <div className="col-span-2 sm:col-span-3 flex items-center justify-between pt-1 border-t border-slate-800 text-[10px] text-slate-400">
                     <span>Last Worker Heartbeat: <strong className="text-slate-300">{viewEvaluationModal.evaluation?.updated_at ? formatDateTimeIST(viewEvaluationModal.evaluation.updated_at) : '—'}</strong></span>
-                    {['QUEUED', 'PROCESSING', 'NEEDS_REVIEW'].includes(String(viewEvaluationModal.evaluation?.status || '').toUpperCase()) && (
+                    {['QUEUED', 'PROCESSING', 'NEEDS_REVIEW', 'FAILED'].includes(String(viewEvaluationModal.evaluation?.status || '').toUpperCase()) && (
                       <button
                         onClick={async () => {
                           const evId = viewEvaluationModal.evaluation?.id;
